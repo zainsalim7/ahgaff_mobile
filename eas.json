@@ -3,17 +3,11 @@
     "version": ">= 5.0.0"
   },
   "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "ios": {
-        "simulator": true
-      }
-    },
     "preview": {
       "android": {
         "buildType": "apk",
-        "image": "latest"
+        "image": "ubuntu-22.04-jdk-17-ndk-r26b",
+        "gradleCommand": ":app:assembleRelease"
       },
       "distribution": "internal",
       "env": {
@@ -23,9 +17,6 @@
     "production": {
       "android": {
         "buildType": "app-bundle"
-      },
-      "ios": {
-        "resourceClass": "m-medium"
       }
     }
   }
