@@ -67,7 +67,8 @@ export default function CourseLecturesScreen() {
   const { hasPermission, user, isLoading: authLoading } = useAuth();
   // فقط المدير ومن لديه صلاحية manage_lectures يمكنهم إدارة المحاضرات
   // المدرس لا يستطيع إضافة أو توليد محاضرات - فقط عرض وتسجيل حضور
-  const canManageLectures = hasPermission(PERMISSIONS.MANAGE_LECTURES) || user?.role === 'admin';
+  const isTeacher = user?.role === 'teacher';
+  const canManageLectures = !isTeacher && (hasPermission(PERMISSIONS.MANAGE_LECTURES) || user?.role === 'admin');
   
   const [course, setCourse] = useState<any>(null);
   const [lectures, setLectures] = useState<Lecture[]>([]);
