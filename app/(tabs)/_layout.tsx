@@ -9,8 +9,26 @@ import { institutionAPI } from '../../src/services/api';
 export default function TabsLayout() {
   const user = useAuthStore((state) => state.user);
   const role = user?.role || 'student';
+  const permissions = user?.permissions || [];
   const pendingCount = useOfflineSyncStore((state) => state.getPendingRecordsCount());
   const [institutionName, setInstitutionName] = useState('نظام الحضور');
+
+  // التحقق من الصلاحيات الإدارية
+  const hasAdminPermissions = role === 'admin' || 
+    permissions.includes('manage_users') || 
+    permissions.includes('manage_students') ||
+    permissions.includes('manage_faculties') ||
+    permissions.includes('manage_departments') ||
+    permissions.includes('manage_courses') ||
+    permissions.includes('manage_roles');
+  
+  // التحقق من صلاحية المقررات
+  const hasCoursesPermission = role === 'admin' || 
+    role === 'teacher' ||
+    permissions.includes('manage_courses') ||
+    permissions.includes('view_courses') ||
+    permissions.includes('manage_lectures') ||
+    permissions.includes('record_attendance');
 
   // جلب اسم المؤسسة حسب المستخدم
   useEffect(() => {
@@ -80,7 +98,7 @@ export default function TabsLayout() {
             </View>
           ),
           headerTitle: 'لوحة الإدارة',
-          href: role === 'admin' ? undefined : null,
+          href: hasAdminPermissions ? undefined : null,
         }}
       />
 
@@ -92,7 +110,7 @@ export default function TabsLayout() {
             <Ionicons name="book" size={size} color={color} />
           ),
           headerTitle: 'المقررات الدراسية',
-          href: role === 'admin' || role === 'teacher' ? undefined : null,
+          href: hasCoursesPermission ? undefined : null,
         }}
       />
 

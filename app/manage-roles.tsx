@@ -250,9 +250,9 @@ export default function ManageRolesScreen() {
     return <LoadingScreen />;
   }
 
-  // السماح للمدير فقط
+  // السماح للمدير أو من لديه صلاحية إدارة الأدوار
   const userRole = user.role;
-  const canAccess = userRole === 'admin';
+  const canAccess = userRole === 'admin' || hasPermission('manage_roles');
   
   if (!canAccess) {
     return (

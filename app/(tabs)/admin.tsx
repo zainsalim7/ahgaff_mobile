@@ -205,13 +205,22 @@ export default function AdminScreen() {
 
   // تصفية العناصر حسب صلاحيات المستخدم
   const menuItems = allMenuItems.filter(item => {
-    // للمدير فقط
+    // للمدير أو من لديه صلاحيات إدارية كاملة
     if (item.adminOnly) {
-      return userRole === 'admin';
+      // السماح للمدير أو أي دور لديه صلاحيات إدارية
+      if (userRole === 'admin') return true;
+      // رئيس الجامعة وعمداء الكليات يمكنهم الوصول للإعدادات
+      if (userPermissions?.includes('manage_faculties') || 
+          userPermissions?.includes('manage_users') ||
+          userPermissions?.includes('manage_roles')) {
+        return true;
+      }
+      return false;
     }
     // للمعلم والمدير
     if (item.teacherOnly) {
-      return userRole === 'admin' || userRole === 'teacher';
+      return userRole === 'admin' || userRole === 'teacher' || 
+             userPermissions?.includes('record_attendance');
     }
     // للصلاحيات المحددة
     if (item.permission) {

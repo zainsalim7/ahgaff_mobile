@@ -459,9 +459,12 @@ export default function ManageUsersScreen() {
     return <LoadingScreen />;
   }
 
-  // السماح للمدير فقط - الشرط البسيط والموثوق
+  // السماح للمدير أو من لديه صلاحية إدارة المستخدمين
   const userRole = user.role;
-  const canAccess = userRole === 'admin' || hasPermission('manage_users');
+  const canAccess = userRole === 'admin' || 
+                   hasPermission('manage_users') || 
+                   hasPermission('manage_students') ||
+                   hasPermission('manage_faculties');
   
   if (!canAccess) {
     return (
