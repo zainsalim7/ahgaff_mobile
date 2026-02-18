@@ -1829,6 +1829,25 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
+  saveButton: {
+    flexDirection: 'row',
+    backgroundColor: '#4caf50',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 16,
+    marginBottom: 32,
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#a5d6a7',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
   previewSection: {
     padding: 24,
     borderRadius: 12,
