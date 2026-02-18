@@ -16,8 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LoadingScreen } from '../src/components/LoadingScreen';
-import api, { settingsAPI, semestersAPI } from '../src/services/api';
+import api, { settingsAPI, semestersAPI, facultiesAPI } from '../src/services/api';
 import { useAuth } from '../src/contexts/AuthContext';
+import { Picker } from '@react-native-picker/picker';
 
 // Interfaces
 interface University {
@@ -142,6 +143,31 @@ export default function GeneralSettingsScreen() {
     academic_years: [],
   });
   const [sectionsInput, setSectionsInput] = useState('');
+  
+  // Faculty settings states
+  const [selectedFacultyId, setSelectedFacultyId] = useState<string>('');
+  const [facultySettings, setFacultySettings] = useState<{
+    levels_count: number;
+    sections: string[];
+    attendance_late_minutes: number;
+    max_absence_percent: number;
+    primary_color: string;
+    secondary_color: string;
+    phone: string;
+    whatsapp: string;
+    email: string;
+  }>({
+    levels_count: 5,
+    sections: ['أ', 'ب', 'ج'],
+    attendance_late_minutes: 15,
+    max_absence_percent: 25,
+    primary_color: '#1565c0',
+    secondary_color: '#ff9800',
+    phone: '',
+    whatsapp: '',
+    email: '',
+  });
+  const [facultySectionsInput, setFacultySectionsInput] = useState('أ، ب، ج');
 
   // Helper functions
   const showMessage = (title: string, message: string) => {
@@ -831,168 +857,280 @@ export default function GeneralSettingsScreen() {
   );
 
   // ==================== Render Settings Tab ====================
-  const renderSettingsTab = () => (
-    <ScrollView style={styles.tabContent}>
-      {/* Academic Settings - إعدادات الكلية */}
-      <View style={styles.card}>
-        <View style={styles.cardSectionHeader}>
-          <Ionicons name="school" size={22} color="#4caf50" />
-          <Text style={styles.cardSectionTitle}>إعدادات الكلية</Text>
-        </View>
-        <Text style={styles.settingsNote}>
-          هذه الإعدادات خاصة بالكلية المرتبط بها حسابك
-        </Text>
+  const renderSettingsTab = () => {
+    // دالة لجلب إعدادات الكلية المختارة
+    const loadFacultySettings = async (facultyId: string) => {
+      if (!facultyId) return;
+      try {
+        const response = await facultiesAPI.getById(facultyId);
+        const data = response.data;
+        setFacultySettings({
+          levels_count: data.levels_count || 5,
+          sections: data.sections || ['أ', 'ب', 'ج'],
+          attendance_late_minutes: data.attendance_late_minutes || 15,
+          max_absence_percent: data.max_absence_percent || 25,
+          primary_color: data.primary_color || '#1565c0',
+          secondary_color: data.secondary_color || '#ff9800',
+          phone: data.phone || '',
+          whatsapp: data.whatsapp || '',
+          email: data.email || '',
+        });
+        setFacultySectionsInput((data.sections || ['أ', 'ب', 'ج']).join('، '));
+      } catch (error) {
+        console.error('Error loading faculty settings:', error);
+      }
+    };
 
-        <Text style={styles.label}>عدد المستويات الدراسية</Text>
-        <View style={styles.optionsRow}>
-          {[4, 5, 6, 8].map(num => (
-            <TouchableOpacity
-              key={num}
-              style={[
-                styles.optionBtn,
-                settings.levels_count === num && styles.optionBtnActive
-              ]}
-              onPress={() => setSettings({ ...settings, levels_count: num })}
-            >
-              <Text style={[
-                styles.optionText,
-                settings.levels_count === num && styles.optionTextActive
-              ]}>{num}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+    // دالة لحفظ إعدادات الكلية
+    const saveFacultySettings = async () => {
+      if (!selectedFacultyId) {
+        showMessage('خطأ', 'يرجى اختيار كلية أولاً');
+        return;
+      }
+      
+      setSaving(true);
+      try {
+        const sections = facultySectionsInput
+          .split(/[،,]/)
+          .map(s => s.trim())
+          .filter(s => s);
+        
+        await facultiesAPI.updateSettings(selectedFacultyId, {
+          ...facultySettings,
+          sections,
+        });
+        
+        showMessage('نجاح', 'تم حفظ إعدادات الكلية بنجاح');
+      } catch (error: any) {
+        showMessage('خطأ', error.response?.data?.detail || 'فشل في حفظ الإعدادات');
+      } finally {
+        setSaving(false);
+      }
+    };
 
-        <Text style={styles.label}>الشُعب المتاحة (مفصولة بفاصلة)</Text>
-        <TextInput
-          style={styles.input}
-          value={sectionsInput}
-          onChangeText={setSectionsInput}
-          placeholder="أ، ب، ج"
-        />
-      </View>
-
-      {/* Attendance Settings */}
-      <View style={styles.card}>
-        <View style={styles.cardSectionHeader}>
-          <Ionicons name="time" size={22} color="#ff9800" />
-          <Text style={styles.cardSectionTitle}>إعدادات الحضور</Text>
-        </View>
-
-        <Text style={styles.label}>دقائق التأخير المسموحة</Text>
-        <View style={styles.optionsRow}>
-          {[5, 10, 15, 20, 30].map(min => (
-            <TouchableOpacity
-              key={min}
-              style={[
-                styles.optionBtn,
-                settings.attendance_late_minutes === min && styles.optionBtnActive
-              ]}
-              onPress={() => setSettings({ ...settings, attendance_late_minutes: min })}
-            >
-              <Text style={[
-                styles.optionText,
-                settings.attendance_late_minutes === min && styles.optionTextActive
-              ]}>{min} د</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <Text style={styles.label}>نسبة الغياب القصوى المسموحة (%)</Text>
-        <View style={styles.optionsRow}>
-          {[15, 20, 25, 30, 35].map(percent => (
-            <TouchableOpacity
-              key={percent}
-              style={[
-                styles.optionBtn,
-                settings.max_absence_percent === percent && styles.optionBtnActive
-              ]}
-              onPress={() => setSettings({ ...settings, max_absence_percent: percent })}
-            >
-              <Text style={[
-                styles.optionText,
-                settings.max_absence_percent === percent && styles.optionTextActive
-              ]}>{percent}%</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      {/* Colors */}
-      <View style={styles.card}>
-        <View style={styles.cardSectionHeader}>
-          <Ionicons name="color-palette" size={22} color="#9c27b0" />
-          <Text style={styles.cardSectionTitle}>ألوان الواجهة</Text>
+    return (
+      <ScrollView style={styles.tabContent}>
+        {/* اختيار الكلية */}
+        <View style={styles.card}>
+          <View style={styles.cardSectionHeader}>
+            <Ionicons name="business" size={22} color="#1565c0" />
+            <Text style={styles.cardSectionTitle}>اختر الكلية</Text>
+          </View>
+          
+          {faculties.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="school-outline" size={48} color="#ccc" />
+              <Text style={styles.emptyText}>لا توجد كليات</Text>
+              <Text style={styles.emptySubText}>قم بإنشاء كليات من تبويب "الجامعة" أولاً</Text>
+            </View>
+          ) : (
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={selectedFacultyId}
+                onValueChange={(value) => {
+                  setSelectedFacultyId(value);
+                  if (value) loadFacultySettings(value);
+                }}
+                style={styles.picker}
+              >
+                <Picker.Item label="-- اختر كلية --" value="" />
+                {faculties.map(faculty => (
+                  <Picker.Item
+                    key={faculty.id}
+                    label={faculty.name}
+                    value={faculty.id}
+                  />
+                ))}
+              </Picker>
+            </View>
+          )}
         </View>
 
-        <Text style={styles.label}>اللون الرئيسي</Text>
-        <View style={styles.colorRow}>
-          {['#1565c0', '#2196f3', '#00bcd4', '#009688', '#4caf50', '#8bc34a'].map(color => (
-            <TouchableOpacity
-              key={color}
-              style={[
-                styles.colorOption,
-                { backgroundColor: color },
-                settings.primary_color === color && styles.colorOptionActive
-              ]}
-              onPress={() => setSettings({ ...settings, primary_color: color })}
-            >
-              {settings.primary_color === color && (
-                <Ionicons name="checkmark" size={20} color="#fff" />
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <Text style={styles.label}>اللون الثانوي</Text>
-        <View style={styles.colorRow}>
-          {['#ff9800', '#ff5722', '#f44336', '#e91e63', '#9c27b0', '#673ab7'].map(color => (
-            <TouchableOpacity
-              key={color}
-              style={[
-                styles.colorOption,
-                { backgroundColor: color },
-                settings.secondary_color === color && styles.colorOptionActive
-              ]}
-              onPress={() => setSettings({ ...settings, secondary_color: color })}
-            >
-              {settings.secondary_color === color && (
-                <Ionicons name="checkmark" size={20} color="#fff" />
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
-      {/* Preview */}
-      <View style={[styles.previewSection, { backgroundColor: settings.primary_color }]}>
-        <Text style={styles.previewTitle}>{settings.college_name || 'اسم الكلية'}</Text>
-        <Text style={styles.previewSubtitle}>{settings.college_name_en || 'College Name'}</Text>
-        <View style={[styles.previewBadge, { backgroundColor: settings.secondary_color }]}>
-          <Text style={styles.previewBadgeText}>
-            {settings.academic_year} - {settings.current_semester}
-          </Text>
-        </View>
-      </View>
-
-      {/* Save Button */}
-      <TouchableOpacity
-        style={[styles.bigSaveBtn, saving && styles.savingBtn]}
-        onPress={handleSaveSettings}
-        disabled={saving}
-      >
-        {saving ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
+        {/* إعدادات الكلية المختارة */}
+        {selectedFacultyId && (
           <>
-            <Ionicons name="save" size={20} color="#fff" />
-            <Text style={styles.bigSaveBtnText}>حفظ الإعدادات</Text>
+            {/* الإعدادات الأكاديمية */}
+            <View style={styles.card}>
+              <View style={styles.cardSectionHeader}>
+                <Ionicons name="school" size={22} color="#4caf50" />
+                <Text style={styles.cardSectionTitle}>الإعدادات الأكاديمية</Text>
+              </View>
+
+              <Text style={styles.label}>عدد المستويات الدراسية</Text>
+              <View style={styles.optionsRow}>
+                {[4, 5, 6, 8].map(num => (
+                  <TouchableOpacity
+                    key={num}
+                    style={[
+                      styles.optionBtn,
+                      facultySettings.levels_count === num && styles.optionBtnActive
+                    ]}
+                    onPress={() => setFacultySettings({ ...facultySettings, levels_count: num })}
+                  >
+                    <Text style={[
+                      styles.optionText,
+                      facultySettings.levels_count === num && styles.optionTextActive
+                    ]}>{num}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.label}>الشُعب المتاحة (مفصولة بفاصلة)</Text>
+              <TextInput
+                style={styles.input}
+                value={facultySectionsInput}
+                onChangeText={setFacultySectionsInput}
+                placeholder="أ، ب، ج"
+              />
+            </View>
+
+            {/* إعدادات الحضور */}
+            <View style={styles.card}>
+              <View style={styles.cardSectionHeader}>
+                <Ionicons name="time" size={22} color="#ff9800" />
+                <Text style={styles.cardSectionTitle}>إعدادات الحضور</Text>
+              </View>
+
+              <Text style={styles.label}>دقائق التأخير المسموحة</Text>
+              <View style={styles.optionsRow}>
+                {[5, 10, 15, 20, 30].map(min => (
+                  <TouchableOpacity
+                    key={min}
+                    style={[
+                      styles.optionBtn,
+                      facultySettings.attendance_late_minutes === min && styles.optionBtnActive
+                    ]}
+                    onPress={() => setFacultySettings({ ...facultySettings, attendance_late_minutes: min })}
+                  >
+                    <Text style={[
+                      styles.optionText,
+                      facultySettings.attendance_late_minutes === min && styles.optionTextActive
+                    ]}>{min} د</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.label}>نسبة الغياب القصوى المسموحة (%)</Text>
+              <View style={styles.optionsRow}>
+                {[15, 20, 25, 30, 35].map(percent => (
+                  <TouchableOpacity
+                    key={percent}
+                    style={[
+                      styles.optionBtn,
+                      facultySettings.max_absence_percent === percent && styles.optionBtnActive
+                    ]}
+                    onPress={() => setFacultySettings({ ...facultySettings, max_absence_percent: percent })}
+                  >
+                    <Text style={[
+                      styles.optionText,
+                      facultySettings.max_absence_percent === percent && styles.optionTextActive
+                    ]}>{percent}%</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* معلومات التواصل */}
+            <View style={styles.card}>
+              <View style={styles.cardSectionHeader}>
+                <Ionicons name="call" size={22} color="#2196f3" />
+                <Text style={styles.cardSectionTitle}>معلومات التواصل</Text>
+              </View>
+
+              <Text style={styles.label}>رقم الهاتف</Text>
+              <TextInput
+                style={styles.input}
+                value={facultySettings.phone}
+                onChangeText={(text) => setFacultySettings({ ...facultySettings, phone: text })}
+                placeholder="رقم الهاتف"
+                keyboardType="phone-pad"
+              />
+
+              <Text style={styles.label}>رقم الواتساب</Text>
+              <TextInput
+                style={styles.input}
+                value={facultySettings.whatsapp}
+                onChangeText={(text) => setFacultySettings({ ...facultySettings, whatsapp: text })}
+                placeholder="رقم الواتساب"
+                keyboardType="phone-pad"
+              />
+
+              <Text style={styles.label}>البريد الإلكتروني</Text>
+              <TextInput
+                style={styles.input}
+                value={facultySettings.email}
+                onChangeText={(text) => setFacultySettings({ ...facultySettings, email: text })}
+                placeholder="البريد الإلكتروني"
+                keyboardType="email-address"
+              />
+            </View>
+
+            {/* ألوان الواجهة */}
+            <View style={styles.card}>
+              <View style={styles.cardSectionHeader}>
+                <Ionicons name="color-palette" size={22} color="#9c27b0" />
+                <Text style={styles.cardSectionTitle}>ألوان الواجهة</Text>
+              </View>
+
+              <Text style={styles.label}>اللون الرئيسي</Text>
+              <View style={styles.colorRow}>
+                {['#1565c0', '#2196f3', '#00bcd4', '#009688', '#4caf50', '#8bc34a'].map(color => (
+                  <TouchableOpacity
+                    key={color}
+                    style={[
+                      styles.colorOption,
+                      { backgroundColor: color },
+                      facultySettings.primary_color === color && styles.colorOptionActive
+                    ]}
+                    onPress={() => setFacultySettings({ ...facultySettings, primary_color: color })}
+                  >
+                    {facultySettings.primary_color === color && (
+                      <Ionicons name="checkmark" size={20} color="#fff" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.label}>اللون الثانوي</Text>
+              <View style={styles.colorRow}>
+                {['#ff9800', '#ff5722', '#f44336', '#e91e63', '#9c27b0', '#673ab7'].map(color => (
+                  <TouchableOpacity
+                    key={color}
+                    style={[
+                      styles.colorOption,
+                      { backgroundColor: color },
+                      facultySettings.secondary_color === color && styles.colorOptionActive
+                    ]}
+                    onPress={() => setFacultySettings({ ...facultySettings, secondary_color: color })}
+                  >
+                    {facultySettings.secondary_color === color && (
+                      <Ionicons name="checkmark" size={20} color="#fff" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* زر الحفظ */}
+            <TouchableOpacity
+              style={[styles.saveButton, saving && styles.saveButtonDisabled]}
+              onPress={saveFacultySettings}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="save" size={20} color="#fff" />
+                  <Text style={styles.saveButtonText}>حفظ إعدادات الكلية</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </>
         )}
-      </TouchableOpacity>
-
-      <View style={{ height: 40 }} />
-    </ScrollView>
-  );
+      </ScrollView>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -1423,6 +1561,11 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 12,
   },
+  emptySubText: {
+    fontSize: 13,
+    color: '#999',
+    marginTop: 8,
+  },
   emptyBtn: {
     marginTop: 16,
     backgroundColor: '#1565c0',
@@ -1434,6 +1577,17 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  // Picker styles
+  pickerContainer: {
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    overflow: 'hidden',
+  },
+  picker: {
+    height: 50,
   },
   // Faculty card
   facultyCard: {

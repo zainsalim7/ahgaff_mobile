@@ -493,6 +493,7 @@ export const facultiesAPI = {
   update: (id: string, data: { name?: string; code?: string; description?: string }) =>
     api.put(`/faculties/${id}`, data),
   delete: (id: string) => api.delete(`/faculties/${id}`),
+  updateSettings: (id: string, data: any) => api.put(`/faculties/${id}/settings`, data),
 };
 
 export default api;
