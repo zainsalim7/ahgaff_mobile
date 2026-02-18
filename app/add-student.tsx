@@ -92,7 +92,8 @@ export default function AddStudentScreen() {
   const { hasPermission, user, isLoading: authLoading } = useAuth();
   
   // التحقق من الصلاحيات - يجب أن يكون لديه صلاحية إدارة الطلاب
-  const canManageStudents = hasPermission(PERMISSIONS.MANAGE_STUDENTS) || user?.role === 'admin';
+  // انتظر حتى يتم تحميل بيانات المستخدم
+  const canManageStudents = user ? (hasPermission(PERMISSIONS.MANAGE_STUDENTS) || user.role === 'admin') : false;
   
   const [departments, setDepartments] = useState<Department[]>([]);
   const [students, setStudents] = useState<Student[]>([]);

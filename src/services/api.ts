@@ -14,14 +14,30 @@ const getApiUrl = () => {
   console.log('EXPO_PUBLIC_BACKEND_URL:', expoBackendUrl);
   
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    // في الويب، استخدم الـ origin الحالي
+    // في الويب
     const origin = window.location.origin;
     console.log('Web origin:', origin);
+    
     // إذا كنا على localhost:3000، نستخدم localhost:8001 للـ backend
     if (origin.includes('localhost:3000')) {
       return 'http://localhost:8001';
     }
-    // للـ preview URLs الخارجية، استخدم نفس الـ origin
+    
+    // إذا كنا على Emergent preview
+    if (origin.includes('preview.emergentagent.com')) {
+      return origin;
+    }
+    
+    // إذا كنا على Railway (ahgaffweb)، استخدم Backend URL الثابت
+    if (origin.includes('railway.app')) {
+      return 'https://web-production-1ebc5.up.railway.app';
+    }
+    
+    // للمواقع الأخرى، استخدم الـ env variable
+    if (expoBackendUrl) {
+      return expoBackendUrl;
+    }
+    
     return origin;
   }
   

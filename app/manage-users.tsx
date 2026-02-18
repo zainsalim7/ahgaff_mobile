@@ -435,13 +435,12 @@ export default function ManageUsersScreen() {
     }));
   };
 
-  if (loading || authLoading) {
+  if (loading || authLoading || !user) {
     return <LoadingScreen />;
   }
 
   // السماح للمدير فقط - الشرط البسيط والموثوق
-  // user موجود من cachedUser في AuthContext
-  const userRole = user?.role;
+  const userRole = user.role;
   const canAccess = userRole === 'admin' || hasPermission('manage_users');
   
   if (!canAccess) {

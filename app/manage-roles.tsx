@@ -241,12 +241,12 @@ export default function ManageRolesScreen() {
     return acc;
   }, {} as Record<string, Permission[]>);
 
-  if (loading || authLoading) {
+  if (loading || authLoading || !user) {
     return <LoadingScreen />;
   }
 
   // السماح للمدير فقط
-  const userRole = user?.role;
+  const userRole = user.role;
   const canAccess = userRole === 'admin';
   
   if (!canAccess) {
