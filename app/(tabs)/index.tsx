@@ -18,7 +18,6 @@ import { useAuthStore } from '../../src/store/authStore';
 import { useOfflineStore } from '../../src/store/offlineStore';
 import { reportsAPI, attendanceAPI, studentsAPI, departmentsAPI, settingsAPI, coursesAPI, enrollmentAPI, lecturesAPI } from '../../src/services/api';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { QuickNav } from '../../src/components/QuickNav';
 import QRCode from 'react-native-qrcode-svg';
 
 interface CourseStats {
@@ -849,9 +848,6 @@ export default function HomeScreen() {
           </>
         )}
       </ScrollView>
-      
-      {/* Quick Navigation Button */}
-      <QuickNav currentRoute="/" />
     </SafeAreaView>
   );
 }

@@ -450,7 +450,12 @@ export default function ManageUsersScreen() {
     }));
   };
 
-  if (loading || authLoading || !user) {
+  if (loading || authLoading) {
+    return <LoadingScreen />;
+  }
+
+  // انتظر حتى يتم تحميل بيانات المستخدم
+  if (!user || !user.role) {
     return <LoadingScreen />;
   }
 

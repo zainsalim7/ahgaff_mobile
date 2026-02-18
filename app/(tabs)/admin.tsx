@@ -14,7 +14,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usersAPI, studentsAPI, departmentsAPI, coursesAPI } from '../../src/services/api';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { QuickNav } from '../../src/components/QuickNav';
 
 // دالة للتحقق من الصلاحيات
 const checkPermission = (userRole: string, userPermissions: string[], requiredPermission: string): boolean => {
@@ -248,9 +247,6 @@ export default function AdminScreen() {
           </TouchableOpacity>
         ))}
       </ScrollView>
-      
-      {/* Quick Navigation Button */}
-      <QuickNav currentRoute="/admin" />
     </SafeAreaView>
   );
 }

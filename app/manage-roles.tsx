@@ -241,7 +241,12 @@ export default function ManageRolesScreen() {
     return acc;
   }, {} as Record<string, Permission[]>);
 
-  if (loading || authLoading || !user) {
+  if (loading || authLoading) {
+    return <LoadingScreen />;
+  }
+  
+  // انتظر حتى يتم تحميل بيانات المستخدم
+  if (!user || !user.role) {
     return <LoadingScreen />;
   }
 
