@@ -68,11 +68,21 @@ interface StudentStats {
 export default function CourseStudentsScreen() {
   const { courseId } = useLocalSearchParams<{ courseId: string }>();
   const router = useRouter();
-  const { hasPermission } = useAuth();
+  const { hasPermission, user: authUser, isLoading: authLoading } = useAuth();
   const user = useAuthStore((state) => state.user);
   
+  // الطالب لا يمكنه الوصول لهذه الصفحة
+  const isStudent = user?.role === 'student' || authUser?.role === 'student';
+  
   // التحقق من صلاحية إدارة الطلاب
-  const canManageStudents = hasPermission(PERMISSIONS.MANAGE_STUDENTS) || user?.role === 'admin';
+  const canManageStudents = !isStudent && (hasPermission(PERMISSIONS.MANAGE_STUDENTS) || user?.role === 'admin');
+  
+  // إعادة توجيه الطالب
+  useEffect(() => {
+    if (!authLoading && isStudent) {
+      router.replace('/');
+    }
+  }, [isStudent, authLoading]);
   
   const [course, setCourse] = useState<any>(null);
   const [enrolledStudents, setEnrolledStudents] = useState<EnrolledStudent[]>([]);

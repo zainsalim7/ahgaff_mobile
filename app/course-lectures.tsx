@@ -65,10 +65,21 @@ export default function CourseLecturesScreen() {
   
   // صلاحيات
   const { hasPermission, user, isLoading: authLoading } = useAuth();
+  
+  // الطالب لا يمكنه الوصول لهذه الصفحة
+  const isStudent = user?.role === 'student';
+  
   // فقط المدير ومن لديه صلاحية manage_lectures يمكنهم إدارة المحاضرات
   // المدرس لا يستطيع إضافة أو توليد محاضرات - فقط عرض وتسجيل حضور
   const isTeacher = user?.role === 'teacher';
-  const canManageLectures = !isTeacher && (hasPermission(PERMISSIONS.MANAGE_LECTURES) || user?.role === 'admin');
+  const canManageLectures = !isTeacher && !isStudent && (hasPermission(PERMISSIONS.MANAGE_LECTURES) || user?.role === 'admin');
+  
+  // إعادة توجيه الطالب
+  useEffect(() => {
+    if (!authLoading && isStudent) {
+      router.replace('/');
+    }
+  }, [isStudent, authLoading]);
   
   const [course, setCourse] = useState<any>(null);
   const [lectures, setLectures] = useState<Lecture[]>([]);

@@ -91,9 +91,19 @@ export default function AddStudentScreen() {
   const router = useRouter();
   const { hasPermission, user, isLoading: authLoading } = useAuth();
   
+  // الطالب لا يمكنه الوصول لهذه الصفحة
+  const isStudent = user?.role === 'student';
+  
   // التحقق من الصلاحيات - يجب أن يكون لديه صلاحية إدارة الطلاب
   // انتظر حتى يتم تحميل بيانات المستخدم
-  const canManageStudents = user ? (hasPermission(PERMISSIONS.MANAGE_STUDENTS) || user.role === 'admin') : false;
+  const canManageStudents = user ? (!isStudent && (hasPermission(PERMISSIONS.MANAGE_STUDENTS) || user.role === 'admin')) : false;
+  
+  // إعادة توجيه الطالب
+  useEffect(() => {
+    if (!authLoading && isStudent) {
+      router.replace('/');
+    }
+  }, [isStudent, authLoading]);
   
   const [departments, setDepartments] = useState<Department[]>([]);
   const [students, setStudents] = useState<Student[]>([]);

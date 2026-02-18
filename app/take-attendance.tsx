@@ -58,16 +58,26 @@ export default function TakeAttendanceScreen() {
     loadFromStorage,
   } = useOfflineSyncStore();
   
-  const { hasPermission } = useAuth();
+  const { hasPermission, user: authUser, isLoading: authLoading } = useAuth();
   const user = useAuthStore((state) => state.user);
+  
+  // الطالب لا يمكنه الوصول لهذه الصفحة
+  const isStudent = user?.role === 'student' || authUser?.role === 'student';
   
   // المدير والمعلم يمكنهم تسجيل الحضور بشكل افتراضي
   // ندعم كلا الصلاحيتين للتوافق مع الأدوار المختلفة
-  const canRecordAttendance = hasPermission(PERMISSIONS.RECORD_ATTENDANCE) || 
+  const canRecordAttendance = !isStudent && (hasPermission(PERMISSIONS.RECORD_ATTENDANCE) || 
                               hasPermission(PERMISSIONS.TAKE_ATTENDANCE) || 
                               user?.role === 'admin' || 
-                              user?.role === 'teacher';
+                              user?.role === 'teacher');
   const canEditAttendance = hasPermission(PERMISSIONS.EDIT_ATTENDANCE) || user?.role === 'admin';
+  
+  // إعادة توجيه الطالب
+  useEffect(() => {
+    if (!authLoading && isStudent) {
+      router.replace('/');
+    }
+  }, [isStudent, authLoading]);
   
   const [lecture, setLecture] = useState<LectureDetails | null>(null);
   const [course, setCourse] = useState<CourseDetails | null>(null);
