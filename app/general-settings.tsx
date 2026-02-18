@@ -833,36 +833,15 @@ export default function GeneralSettingsScreen() {
   // ==================== Render Settings Tab ====================
   const renderSettingsTab = () => (
     <ScrollView style={styles.tabContent}>
-      {/* Institution Info */}
-      <View style={styles.card}>
-        <View style={styles.cardSectionHeader}>
-          <Ionicons name="business" size={22} color="#1565c0" />
-          <Text style={styles.cardSectionTitle}>معلومات المؤسسة</Text>
-        </View>
-        
-        <Text style={styles.label}>اسم الكلية (عربي)</Text>
-        <TextInput
-          style={styles.input}
-          value={settings.college_name}
-          onChangeText={(text) => setSettings({ ...settings, college_name: text })}
-          placeholder="كلية الشريعة والقانون"
-        />
-
-        <Text style={styles.label}>اسم الكلية (إنجليزي)</Text>
-        <TextInput
-          style={styles.input}
-          value={settings.college_name_en}
-          onChangeText={(text) => setSettings({ ...settings, college_name_en: text })}
-          placeholder="Faculty of Sharia and Law"
-        />
-      </View>
-
-      {/* Academic Settings */}
+      {/* Academic Settings - إعدادات الكلية */}
       <View style={styles.card}>
         <View style={styles.cardSectionHeader}>
           <Ionicons name="school" size={22} color="#4caf50" />
-          <Text style={styles.cardSectionTitle}>الإعدادات الأكاديمية</Text>
+          <Text style={styles.cardSectionTitle}>إعدادات الكلية</Text>
         </View>
+        <Text style={styles.settingsNote}>
+          هذه الإعدادات خاصة بالكلية المرتبط بها حسابك
+        </Text>
 
         <Text style={styles.label}>عدد المستويات الدراسية</Text>
         <View style={styles.optionsRow}>
@@ -1259,6 +1238,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
+  },
+  settingsNote: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 16,
+    paddingHorizontal: 4,
+    fontStyle: 'italic',
   },
   // University styles
   universityIcon: {

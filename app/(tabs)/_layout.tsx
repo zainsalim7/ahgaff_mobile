@@ -1,14 +1,32 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Tabs } from 'expo-router';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { useOfflineSyncStore } from '../../src/store/offlineSyncStore';
+import { institutionAPI } from '../../src/services/api';
 
 export default function TabsLayout() {
   const user = useAuthStore((state) => state.user);
   const role = user?.role || 'student';
   const pendingCount = useOfflineSyncStore((state) => state.getPendingRecordsCount());
+  const [institutionName, setInstitutionName] = useState('نظام الحضور');
+
+  // جلب اسم المؤسسة حسب المستخدم
+  useEffect(() => {
+    const fetchInstitution = async () => {
+      if (!user) return;
+      try {
+        const response = await institutionAPI.get();
+        if (response.data?.name) {
+          setInstitutionName(response.data.name);
+        }
+      } catch (error) {
+        console.log('Error fetching institution:', error);
+      }
+    };
+    fetchInstitution();
+  }, [user]);
 
   return (
     <Tabs
@@ -43,7 +61,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home" size={size} color={color} />
           ),
-          headerTitle: 'نظام الحضور',
+          headerTitle: institutionName,
         }}
       />
       

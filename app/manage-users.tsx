@@ -206,6 +206,21 @@ export default function ManageUsersScreen() {
       }
       return;
     }
+
+    // التحقق من اختيار الكلية (إجباري لغير المدير)
+    const selectedRole = roles.find(r => r.id === formData.role_id);
+    const systemKey = (selectedRole as any)?.system_key || '';
+    const roleName = selectedRole?.name?.toLowerCase() || '';
+    const isAdmin = systemKey === 'admin' || roleName.includes('مدير النظام');
+    
+    if (!isAdmin && !formData.faculty_id) {
+      if (Platform.OS === 'web') {
+        window.alert('يرجى اختيار الكلية للمستخدم');
+      } else {
+        Alert.alert('خطأ', 'يرجى اختيار الكلية للمستخدم');
+      }
+      return;
+    }
     
     setSaving(true);
     try {
@@ -666,18 +681,23 @@ export default function ManageUsersScreen() {
                 ))}
               </View>
               
-              {/* حقل الكلية - يظهر للعميد ومدير التسجيل */}
+              {/* حقل الكلية - إجباري لجميع المستخدمين */}
               {formData.role_id && (() => {
                 const selectedRole = roles.find(r => r.id === formData.role_id);
                 const roleName = selectedRole?.name?.toLowerCase() || '';
-                const needsFaculty = roleName.includes('عميد') || roleName.includes('dean') || 
-                                    roleName.includes('تسجيل') || roleName.includes('registration');
+                const systemKey = (selectedRole as any)?.system_key || '';
+                
+                // المدير لا يحتاج لكلية
+                const isAdmin = systemKey === 'admin' || roleName.includes('مدير النظام');
+                
+                // بعض الأدوار تحتاج قسم بالإضافة للكلية
                 const needsDepartment = roleName.includes('رئيس قسم') || roleName.includes('department_head') ||
                                        roleName.includes('مدرس') || roleName.includes('مشرف');
                 
                 return (
                   <>
-                    {needsFaculty && (
+                    {/* الكلية - إجباري لجميع المستخدمين ما عدا المدير */}
+                    {!isAdmin && (
                       <>
                         <Text style={styles.inputLabel}>الكلية *</Text>
                         <View style={styles.scopeSelector}>
@@ -688,7 +708,11 @@ export default function ManageUsersScreen() {
                                 styles.scopeItem,
                                 formData.faculty_id === faculty.id && styles.scopeItemActive
                               ]}
-                              onPress={() => setFormData(prev => ({ ...prev, faculty_id: faculty.id }))}
+                              onPress={() => setFormData(prev => ({ 
+                                ...prev, 
+                                faculty_id: faculty.id,
+                                department_id: '' // إعادة تعيين القسم عند تغيير الكلية
+                              }))}
                             >
                               <Text style={[
                                 styles.scopeItemText,
@@ -699,14 +723,20 @@ export default function ManageUsersScreen() {
                             </TouchableOpacity>
                           ))}
                         </View>
+                        {!formData.faculty_id && (
+                          <Text style={styles.requiredHint}>⚠️ يجب اختيار الكلية</Text>
+                        )}
                       </>
                     )}
                     
-                    {needsDepartment && (
+                    {/* القسم - للأدوار التي تحتاجه */}
+                    {needsDepartment && formData.faculty_id && (
                       <>
                         <Text style={styles.inputLabel}>القسم *</Text>
                         <View style={styles.scopeSelector}>
-                          {departments.map(dept => (
+                          {departments
+                            .filter(dept => dept.faculty_id === formData.faculty_id)
+                            .map(dept => (
                             <TouchableOpacity
                               key={dept.id}
                               style={[
@@ -1318,6 +1348,12 @@ const styles = StyleSheet.create({
   scopeItemText: {
     fontSize: 13,
     color: '#666',
+  },
+  requiredHint: {
+    fontSize: 12,
+    color: '#f44336',
+    marginTop: 4,
+    marginBottom: 8,
   },
   scopeItemTextActive: {
     color: '#1565c0',

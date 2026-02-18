@@ -137,6 +137,12 @@ export const settingsAPI = {
   getSemesters: () => api.get('/settings/semesters'),
 };
 
+// Institution API - بيانات المؤسسة حسب المستخدم
+export const institutionAPI = {
+  get: () => api.get('/my-institution'),
+  update: (data: any) => api.put('/my-institution', data),
+};
+
 // Departments API
 export const departmentsAPI = {
   create: (data: any) => api.post('/departments', data),
