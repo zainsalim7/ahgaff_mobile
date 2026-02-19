@@ -97,6 +97,16 @@ export default function AdminScreen() {
   // تعريف عناصر القائمة مع الصلاحيات المطلوبة
   const allMenuItems = [
     {
+      title: 'إدارة الكليات',
+      icon: 'school',
+      color: '#673ab7',
+      bg: '#ede7f6',
+      count: counts.faculties || 0,
+      route: '/general-settings',
+      permission: 'manage_faculties',
+      description: 'إدارة الكليات وإعداداتها',
+    },
+    {
       title: 'إدارة الأقسام',
       icon: 'business',
       color: '#e91e63',
@@ -205,28 +215,42 @@ export default function AdminScreen() {
 
   // تصفية العناصر حسب صلاحيات المستخدم
   const menuItems = allMenuItems.filter(item => {
-    // للمدير أو من لديه صلاحيات إدارية كاملة
-    if (item.adminOnly) {
-      // السماح للمدير أو أي دور لديه صلاحيات إدارية
-      if (userRole === 'admin') return true;
-      // رئيس الجامعة وعمداء الكليات يمكنهم الوصول للإعدادات
-      if (userPermissions?.includes('manage_faculties') || 
-          userPermissions?.includes('manage_users') ||
-          userPermissions?.includes('manage_roles')) {
-        return true;
-      }
-      return false;
-    }
-    // للمعلم والمدير
+    // المدير يرى كل شيء
+    if (userRole === 'admin') return true;
+    
+    // للمعلم فقط
     if (item.teacherOnly) {
-      return userRole === 'admin' || userRole === 'teacher' || 
-             userPermissions?.includes('record_attendance');
+      return userRole === 'teacher' || userPermissions?.includes('record_attendance');
     }
-    // للصلاحيات المحددة
+    
+    // العناصر التي تتطلب صلاحيات محددة
     if (item.permission) {
       return checkPermission(userRole, userPermissions, item.permission);
     }
-    return true;
+    
+    // العناصر الخاصة بالمدير فقط (adminOnly)
+    if (item.adminOnly) {
+      // الإعدادات العامة - فقط للمدير أو من لديه صلاحيات شاملة
+      if (item.route === '/general-settings') {
+        // يجب أن يكون لديه صلاحيات متعددة ليصل للإعدادات العامة
+        const hasMultiplePermissions = userPermissions?.filter(p => 
+          ['manage_users', 'manage_faculties', 'manage_departments', 'manage_courses', 'manage_roles'].includes(p)
+        ).length >= 3;
+        return hasMultiplePermissions;
+      }
+      // سجلات النشاط - للمدير فقط
+      if (item.route === '/activity-logs') {
+        return false; // فقط للمدير
+      }
+      // إدارة الأدوار - يتطلب صلاحية manage_roles
+      if (item.route === '/manage-roles') {
+        return userPermissions?.includes('manage_roles');
+      }
+      // باقي العناصر adminOnly - للمدير فقط
+      return false;
+    }
+    
+    return false;
   });
 
   return (
