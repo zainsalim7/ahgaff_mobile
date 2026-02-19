@@ -143,6 +143,11 @@ export const institutionAPI = {
   update: (data: any) => api.put('/my-institution', data),
 };
 
+// Scope API - نطاق صلاحيات المستخدم
+export const scopeAPI = {
+  get: () => api.get('/my-scope'),
+};
+
 // Departments API
 export const departmentsAPI = {
   create: (data: any) => api.post('/departments', data),

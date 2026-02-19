@@ -118,6 +118,8 @@ export default function ManageUsersScreen() {
     scope_id: '',    // معرف القسم أو المقرر
     faculty_id: '',  // معرف الكلية
     department_id: '', // معرف القسم
+    permission_level: '', // مستوى الصلاحية (university, faculty, department)
+    permissions: [] as string[], // صلاحيات مخصصة
   });
   
   // Permission form
@@ -695,16 +697,93 @@ export default function ManageUsersScreen() {
                 // المدير لا يحتاج لكلية
                 const isAdmin = systemKey === 'admin' || roleName.includes('مدير النظام');
                 
-                // بعض الأدوار تحتاج قسم بالإضافة للكلية
-                const needsDepartment = roleName.includes('رئيس قسم') || roleName.includes('department_head') ||
-                                       roleName.includes('مدرس') || roleName.includes('مشرف');
+                // التحقق من الصلاحيات المحددة
+                const userPermissions = formData.permissions || (selectedRole as any)?.permissions || [];
+                const hasUniversityPermission = userPermissions.includes('manage_university');
+                const hasFacultyPermission = userPermissions.includes('manage_faculties');
+                const hasDepartmentPermission = userPermissions.includes('manage_departments');
+                const hasStudentsPermission = userPermissions.includes('manage_students');
+                const hasCoursesPermission = userPermissions.includes('manage_courses');
+                
+                // تحديد مستوى التخصيص المطلوب
+                const needsFacultySelection = !isAdmin && !hasUniversityPermission;
+                const needsDepartmentSelection = hasDepartmentPermission || 
+                                                roleName.includes('رئيس قسم') || 
+                                                roleName.includes('مدرس') || 
+                                                roleName.includes('معلم');
                 
                 return (
                   <>
-                    {/* الكلية - إجباري لجميع المستخدمين ما عدا المدير */}
+                    {/* مستوى الصلاحية */}
                     {!isAdmin && (
+                      <View style={styles.permissionLevelSection}>
+                        <Text style={styles.inputLabel}>مستوى الصلاحية *</Text>
+                        <View style={styles.levelSelector}>
+                          {hasUniversityPermission && (
+                            <TouchableOpacity
+                              style={[
+                                styles.levelBtn,
+                                formData.permission_level === 'university' && styles.levelBtnActive
+                              ]}
+                              onPress={() => setFormData(prev => ({ 
+                                ...prev, 
+                                permission_level: 'university',
+                                faculty_id: '',
+                                faculty_ids: [],
+                                department_id: '',
+                                department_ids: []
+                              }))}
+                            >
+                              <Ionicons name="globe" size={20} color={formData.permission_level === 'university' ? '#fff' : '#666'} />
+                              <Text style={[styles.levelText, formData.permission_level === 'university' && styles.levelTextActive]}>
+                                الجامعة كلها
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                          
+                          <TouchableOpacity
+                            style={[
+                              styles.levelBtn,
+                              formData.permission_level === 'faculty' && styles.levelBtnActive
+                            ]}
+                            onPress={() => setFormData(prev => ({ 
+                              ...prev, 
+                              permission_level: 'faculty',
+                              department_id: '',
+                              department_ids: []
+                            }))}
+                          >
+                            <Ionicons name="school" size={20} color={formData.permission_level === 'faculty' ? '#fff' : '#666'} />
+                            <Text style={[styles.levelText, formData.permission_level === 'faculty' && styles.levelTextActive]}>
+                              كلية محددة
+                            </Text>
+                          </TouchableOpacity>
+                          
+                          <TouchableOpacity
+                            style={[
+                              styles.levelBtn,
+                              formData.permission_level === 'department' && styles.levelBtnActive
+                            ]}
+                            onPress={() => setFormData(prev => ({ 
+                              ...prev, 
+                              permission_level: 'department'
+                            }))}
+                          >
+                            <Ionicons name="business" size={20} color={formData.permission_level === 'department' ? '#fff' : '#666'} />
+                            <Text style={[styles.levelText, formData.permission_level === 'department' && styles.levelTextActive]}>
+                              قسم محدد
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                    
+                    {/* اختيار الكلية */}
+                    {needsFacultySelection && formData.permission_level && formData.permission_level !== 'university' && (
                       <>
-                        <Text style={styles.inputLabel}>الكلية *</Text>
+                        <Text style={styles.inputLabel}>
+                          {formData.permission_level === 'faculty' ? 'الكلية المسؤول عنها *' : 'الكلية *'}
+                        </Text>
                         <View style={styles.scopeSelector}>
                           {faculties.map(faculty => (
                             <TouchableOpacity
@@ -716,7 +795,7 @@ export default function ManageUsersScreen() {
                               onPress={() => setFormData(prev => ({ 
                                 ...prev, 
                                 faculty_id: faculty.id,
-                                department_id: '' // إعادة تعيين القسم عند تغيير الكلية
+                                department_id: ''
                               }))}
                             >
                               <Text style={[
@@ -734,10 +813,10 @@ export default function ManageUsersScreen() {
                       </>
                     )}
                     
-                    {/* القسم - للأدوار التي تحتاجه */}
-                    {needsDepartment && formData.faculty_id && (
+                    {/* اختيار القسم */}
+                    {formData.permission_level === 'department' && formData.faculty_id && (
                       <>
-                        <Text style={styles.inputLabel}>القسم *</Text>
+                        <Text style={styles.inputLabel}>القسم المسؤول عنه *</Text>
                         <View style={styles.scopeSelector}>
                           {departments
                             .filter(dept => dept.faculty_id === formData.faculty_id)
@@ -759,6 +838,9 @@ export default function ManageUsersScreen() {
                             </TouchableOpacity>
                           ))}
                         </View>
+                        {!formData.department_id && departments.filter(d => d.faculty_id === formData.faculty_id).length > 0 && (
+                          <Text style={styles.requiredHint}>⚠️ يجب اختيار القسم</Text>
+                        )}
                       </>
                     )}
                   </>
@@ -1359,6 +1441,39 @@ const styles = StyleSheet.create({
     color: '#f44336',
     marginTop: 4,
     marginBottom: 8,
+  },
+  permissionLevelSection: {
+    marginBottom: 16,
+    backgroundColor: '#f5f5f5',
+    padding: 12,
+    borderRadius: 8,
+  },
+  levelSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  levelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    gap: 8,
+  },
+  levelBtnActive: {
+    backgroundColor: '#1565c0',
+    borderColor: '#1565c0',
+  },
+  levelText: {
+    fontSize: 13,
+    color: '#666',
+  },
+  levelTextActive: {
+    color: '#fff',
   },
   scopeItemTextActive: {
     color: '#1565c0',

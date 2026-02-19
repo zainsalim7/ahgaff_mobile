@@ -12,7 +12,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { usersAPI, studentsAPI, departmentsAPI, coursesAPI } from '../../src/services/api';
+import { usersAPI, studentsAPI, departmentsAPI, coursesAPI, scopeAPI } from '../../src/services/api';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 
 // دالة للتحقق من الصلاحيات
@@ -27,6 +27,7 @@ export default function AdminScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [userRole, setUserRole] = useState<string>('');
   const [userPermissions, setUserPermissions] = useState<string[]>([]);
+  const [userScope, setUserScope] = useState<any>(null); // نطاق صلاحيات المستخدم
   const [counts, setCounts] = useState({
     teachers: 0,
     students: 0,
@@ -52,6 +53,14 @@ export default function AdminScreen() {
 
   const fetchCounts = useCallback(async () => {
     try {
+      // جلب نطاق صلاحيات المستخدم
+      try {
+        const scopeRes = await scopeAPI.get();
+        setUserScope(scopeRes.data);
+      } catch (e) {
+        console.log('Error fetching scope:', e);
+      }
+      
       const [teachers, students, departments, courses] = await Promise.all([
         usersAPI.getAll('teacher'),
         studentsAPI.getAll(),
@@ -64,6 +73,7 @@ export default function AdminScreen() {
         students: students.data?.length || 0,
         departments: departments.data?.length || 0,
         courses: courses.data?.length || 0,
+        faculties: 0,
       });
     } catch (error) {
       console.error('Error fetching counts:', error);
@@ -73,6 +83,7 @@ export default function AdminScreen() {
         students: 0,
         departments: 0,
         courses: 0,
+        faculties: 0,
       });
     } finally {
       setLoading(false);
@@ -213,7 +224,7 @@ export default function AdminScreen() {
     },
   ];
 
-  // تصفية العناصر حسب صلاحيات المستخدم
+  // تصفية العناصر حسب صلاحيات المستخدم ونطاقه
   const menuItems = allMenuItems.filter(item => {
     // المدير يرى كل شيء
     if (userRole === 'admin') return true;
@@ -225,22 +236,33 @@ export default function AdminScreen() {
     
     // العناصر التي تتطلب صلاحيات محددة
     if (item.permission) {
-      return checkPermission(userRole, userPermissions, item.permission);
+      // التحقق من الصلاحية ومن النطاق
+      const hasPermission = checkPermission(userRole, userPermissions, item.permission);
+      if (!hasPermission) return false;
+      
+      // إذا كان لديه الصلاحية، تحقق من النطاق
+      // إدارة الكليات - يظهر فقط إذا كان لديه صلاحية على مستوى كلية أو أعلى
+      if (item.permission === 'manage_faculties') {
+        return userScope?.level === 'university' || userScope?.level === 'faculty';
+      }
+      
+      // إدارة الأقسام - يظهر إذا كان لديه صلاحية على مستوى قسم أو أعلى
+      if (item.permission === 'manage_departments') {
+        return userScope?.level === 'university' || userScope?.level === 'faculty' || userScope?.level === 'department';
+      }
+      
+      return true;
     }
     
     // العناصر الخاصة بالمدير فقط (adminOnly)
     if (item.adminOnly) {
-      // الإعدادات العامة - فقط للمدير أو من لديه صلاحيات شاملة
+      // الإعدادات العامة - فقط للمدير أو من لديه صلاحية على مستوى الجامعة
       if (item.route === '/general-settings') {
-        // يجب أن يكون لديه صلاحيات متعددة ليصل للإعدادات العامة
-        const hasMultiplePermissions = userPermissions?.filter(p => 
-          ['manage_users', 'manage_faculties', 'manage_departments', 'manage_courses', 'manage_roles'].includes(p)
-        ).length >= 3;
-        return hasMultiplePermissions;
+        return userScope?.can_manage_settings === true || userScope?.level === 'university';
       }
       // سجلات النشاط - للمدير فقط
       if (item.route === '/activity-logs') {
-        return false; // فقط للمدير
+        return false;
       }
       // إدارة الأدوار - يتطلب صلاحية manage_roles
       if (item.route === '/manage-roles') {
