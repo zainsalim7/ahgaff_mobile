@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { departmentsAPI, facultiesAPI } from '../src/services/api';
+import { departmentsAPI, facultiesAPI, scopeAPI } from '../src/services/api';
 import { Department } from '../src/types';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { useAuth, PERMISSIONS } from '../src/contexts/AuthContext';
@@ -48,6 +48,14 @@ interface DeptDetails {
   teachers: Array<{ id: string; full_name: string; username: string }>;
 }
 
+interface UserScope {
+  level: string;
+  university_access: boolean;
+  faculties: Array<{ id: string; name: string }>;
+  departments: Array<{ id: string; name: string; faculty_id?: string }>;
+  can_manage_settings: boolean;
+}
+
 export default function AddDepartmentScreen() {
   const [departments, setDepartments] = useState<DeptStats[]>([]);
   const [faculties, setFaculties] = useState<Faculty[]>([]);
@@ -55,9 +63,10 @@ export default function AddDepartmentScreen() {
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingDept, setEditingDept] = useState<Department | null>(null);
+  const [userScope, setUserScope] = useState<UserScope | null>(null);
   
   // صلاحيات
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canManageDepts = hasPermission(PERMISSIONS.MANAGE_DEPARTMENTS);
   
   // Details modal
@@ -77,12 +86,61 @@ export default function AddDepartmentScreen() {
 
   const fetchData = useCallback(async () => {
     try {
+      // جلب نطاق صلاحيات المستخدم أولاً
+      let scope: UserScope | null = null;
+      try {
+        const scopeRes = await scopeAPI.get();
+        scope = scopeRes.data;
+        setUserScope(scope);
+      } catch (e) {
+        console.log('Error fetching scope:', e);
+      }
+
       const [deptsRes, facultiesRes] = await Promise.all([
         departmentsAPI.getStats(),
         facultiesAPI.getAll(),
       ]);
-      setDepartments(deptsRes.data);
-      setFaculties(facultiesRes.data || []);
+      
+      let filteredDepts = deptsRes.data || [];
+      let filteredFaculties = facultiesRes.data || [];
+      
+      // تصفية حسب نطاق المستخدم
+      if (scope && user?.role !== 'admin') {
+        // إذا كان لديه صلاحية على مستوى الجامعة، يرى كل شيء
+        if (scope.level === 'university') {
+          // لا تصفية
+        }
+        // إذا كان لديه صلاحية على مستوى كلية
+        else if (scope.level === 'faculty' && scope.faculties?.length > 0) {
+          const allowedFacultyIds = scope.faculties.map(f => f.id);
+          filteredDepts = filteredDepts.filter((d: DeptStats) => 
+            allowedFacultyIds.includes(d.faculty_id || '')
+          );
+          filteredFaculties = filteredFaculties.filter((f: Faculty) => 
+            allowedFacultyIds.includes(f.id)
+          );
+        }
+        // إذا كان لديه صلاحية على مستوى قسم
+        else if (scope.level === 'department' && scope.departments?.length > 0) {
+          const allowedDeptIds = scope.departments.map(d => d.id);
+          filteredDepts = filteredDepts.filter((d: DeptStats) => 
+            allowedDeptIds.includes(d.id)
+          );
+          // عرض الكليات التابعة للأقسام المسموح بها فقط
+          const allowedFacultyIds = [...new Set(scope.departments.map(d => d.faculty_id).filter(Boolean))];
+          filteredFaculties = filteredFaculties.filter((f: Faculty) => 
+            allowedFacultyIds.includes(f.id)
+          );
+        }
+        // إذا لم يكن لديه نطاق محدد، لا يرى شيء
+        else if (scope.level === 'none') {
+          filteredDepts = [];
+          filteredFaculties = [];
+        }
+      }
+      
+      setDepartments(filteredDepts);
+      setFaculties(filteredFaculties);
     } catch (error) {
       console.error('Error fetching data:', error);
       // Fallback to regular getAll
@@ -95,7 +153,7 @@ export default function AddDepartmentScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     fetchData();
