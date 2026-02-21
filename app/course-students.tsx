@@ -17,12 +17,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { coursesAPI, studentsAPI, enrollmentAPI, lecturesAPI, attendanceAPI } from '../src/services/api';
+import { coursesAPI, studentsAPI, enrollmentAPI, lecturesAPI, attendanceAPI, API_URL } from '../src/services/api';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { useAuth, PERMISSIONS } from '../src/contexts/AuthContext';
 import { useAuthStore } from '../src/store/authStore';
-
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
 interface EnrolledStudent {
   enrollment_id: string;
@@ -226,7 +224,7 @@ export default function CourseStudentsScreen() {
 
     setSaving(true);
     try {
-      await enrollmentAPI.enrollMultiple(courseId!, selectedStudents);
+      await enrollmentAPI.enroll(courseId!, selectedStudents);
       Alert.alert('نجاح', `تم تسجيل ${selectedStudents.length} طالب`);
       setShowAddModal(false);
       setSelectedStudents([]);

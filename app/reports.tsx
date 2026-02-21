@@ -20,12 +20,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { departmentsAPI, coursesAPI, reportsAPI, exportAPI } from '../src/services/api';
+import { departmentsAPI, coursesAPI, reportsAPI, exportAPI, API_URL } from '../src/services/api';
 import { useAuthStore } from '../src/store/authStore';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { Department, Course } from '../src/types';
-
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 
 // دالة التحقق من الصلاحيات
 const checkPermission = (userRole: string, userPermissions: string[], permission: string): boolean => {

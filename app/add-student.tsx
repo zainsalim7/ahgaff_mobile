@@ -18,7 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { Picker } from '@react-native-picker/picker';
-import { departmentsAPI, studentsAPI, exportAPI, API_URL } from '../src/services/api';
+import { departmentsAPI, studentsAPI, exportAPI, coursesAPI, enrollmentAPI, API_URL } from '../src/services/api';
 import { Department, Student } from '../src/types';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { useAuth, PERMISSIONS } from '../src/contexts/AuthContext';
@@ -125,6 +125,12 @@ export default function AddStudentScreen() {
   const [importDept, setImportDept] = useState<string>('');
   const [importSection, setImportSection] = useState<string>('');
   const [importLevel, setImportLevel] = useState<string>('1');
+  const [importCourse, setImportCourse] = useState<string>(''); // المقرر للتسجيل فيه
+  const [courses, setCourses] = useState<any[]>([]); // قائمة المقررات
+  
+  // الملف المحدد للاستيراد
+  const [selectedFile, setSelectedFile] = useState<any>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
   
   // Search
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -156,6 +162,7 @@ export default function AddStudentScreen() {
     phone: '',
     email: '',
     password: '',
+    course_id: '', // المقرر لتسجيل الطالب فيه
   });
 
   const fetchData = useCallback(async () => {
@@ -163,12 +170,14 @@ export default function AddStudentScreen() {
     if (!canManageStudents) return;
     
     try {
-      const [deptsRes, studentsRes] = await Promise.all([
+      const [deptsRes, studentsRes, coursesRes] = await Promise.all([
         departmentsAPI.getAll(),
         studentsAPI.getAll(),
+        coursesAPI.getAll(),
       ]);
       setDepartments(deptsRes.data);
       setStudents(studentsRes.data);
+      setCourses(coursesRes.data || []);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -227,6 +236,12 @@ export default function AddStudentScreen() {
       Alert.alert('خطأ', 'الرجاء ملء جميع الحقول المطلوبة');
       return;
     }
+    
+    // المقرر إلزامي عند إضافة طالب جديد
+    if (!editingStudent && !formData.course_id) {
+      Alert.alert('خطأ', 'الرجاء اختيار المقرر');
+      return;
+    }
 
     setSaving(true);
     try {
@@ -243,12 +258,22 @@ export default function AddStudentScreen() {
         Alert.alert('نجاح', 'تم تحديث بيانات الطالب بنجاح');
       } else {
         // Create new student
-        await studentsAPI.create({
+        const newStudentRes = await studentsAPI.create({
           ...formData,
           level: parseInt(formData.level),
           password: formData.password || undefined,
         });
-        Alert.alert('نجاح', 'تم إضافة الطالب بنجاح');
+        
+        // تسجيل الطالب في المقرر المحدد
+        if (formData.course_id && newStudentRes.data?.id) {
+          try {
+            await enrollmentAPI.enroll(formData.course_id, [newStudentRes.data.id]);
+          } catch (enrollError) {
+            console.error('Error enrolling student:', enrollError);
+          }
+        }
+        
+        Alert.alert('نجاح', 'تم إضافة الطالب وتسجيله في المقرر بنجاح');
       }
       resetForm();
       setShowForm(false);
@@ -272,6 +297,7 @@ export default function AddStudentScreen() {
       phone: '',
       email: '',
       password: '',
+      course_id: '',
     });
   };
 
@@ -350,171 +376,147 @@ export default function AddStudentScreen() {
     setShowForm(true);
   };
 
-  // استيراد الطلاب من Excel
-  const handleImportExcel = async () => {
-    console.log('=== handleImportExcel START ===');
-    console.log('importDept:', importDept);
-    console.log('importLevel:', importLevel);
-    console.log('importSection:', importSection);
-    
-    if (!importDept) {
-      Alert.alert('تنبيه', 'اختر قسماً للاستيراد من إعدادات الاستيراد');
-      return;
-    }
-    
+  // اختيار ملف Excel للاستيراد
+  const handleSelectFile = async () => {
     try {
-      console.log('Opening document picker...');
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
         copyToCacheDirectory: true,
       });
       
-      console.log('Document picker result:', JSON.stringify(result));
-      
       if (result.canceled) {
-        console.log('Document picker was cancelled');
         return;
       }
       
       const file = result.assets[0];
-      console.log('File selected:', file.name, 'URI:', file.uri, 'Size:', file.size, 'mimeType:', file.mimeType);
-      setImporting(true);
-      
-      // Build the URL - استخدم importDept بدلاً من selectedDeptFilter
-      let url = `${API_URL}/api/import/students?department_id=${importDept}`;
-      if (importLevel) url += `&level=${importLevel}`;
-      if (importSection) url += `&section=${importSection}`;
-      console.log('Upload URL:', url);
-      
-      // Get auth token
+      console.log('File selected:', file.name);
+      setSelectedFile(file);
+      setUploadProgress(0);
+    } catch (error) {
+      console.error('Error selecting file:', error);
+      Alert.alert('خطأ', 'فشل في اختيار الملف');
+    }
+  };
+
+  // رفع الملف المحدد
+  const handleUploadFile = async () => {
+    if (!selectedFile) {
+      Alert.alert('تنبيه', 'اختر ملفاً أولاً');
+      return;
+    }
+    
+    if (!importDept) {
+      Alert.alert('تنبيه', 'اختر قسماً للاستيراد');
+      return;
+    }
+    
+    if (!importCourse) {
+      Alert.alert('تنبيه', 'اختر مقرراً لتسجيل الطلاب فيه');
+      return;
+    }
+    
+    setImporting(true);
+    setUploadProgress(10);
+    
+    try {
       const token = await AsyncStorage.getItem('token');
-      console.log('Token exists:', !!token);
+      // استخدام endpoint واحد للاستيراد والتسجيل معاً
+      const url = `${API_URL}/api/students/import/${importCourse}`;
+      
+      console.log('Upload URL:', url);
+      console.log('Selected file:', selectedFile.name);
+      setUploadProgress(20);
+      
+      // إنشاء FormData
+      const formData = new FormData();
       
       if (Platform.OS === 'web') {
-        // Web: Use FormData with fetch
-        console.log('Web platform - using FormData...');
-        try {
-          const response = await fetch(file.uri);
-          const blob = await response.blob();
-          
-          const fileName = file.name || 'students.xlsx';
-          const fileType = blob.type || file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-          const fileObject = new File([blob], fileName, { type: fileType });
-          
-          const formDataObj = new FormData();
-          formDataObj.append('file', fileObject, fileName);
-          
-          const uploadResponse = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Accept': 'application/json',
-            },
-            body: formDataObj,
-          });
-          
-          const data = await uploadResponse.json();
-          console.log('Web upload response:', data);
-          
-          if (!uploadResponse.ok) {
-            throw { response: { data, status: uploadResponse.status } };
-          }
-          
-          let msg = String(data.message || 'تم الاستيراد');
-          if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
-            msg += '\n\nأخطاء:\n' + data.errors.slice(0, 5).map(String).join('\n');
-          }
-          Alert.alert('نتيجة الاستيراد', msg);
-          fetchData();
-        } catch (error: any) {
-          throw error;
-        }
-      } else {
-        // Mobile: Use fetch with FormData - more reliable than FileSystem.uploadAsync
-        console.log('Mobile platform - using fetch with FormData...');
-        console.log('Creating FormData for mobile...');
+        // Web: fetch blob and append
+        console.log('Fetching blob from:', selectedFile.uri);
+        const response = await fetch(selectedFile.uri);
+        const blob = await response.blob();
+        console.log('Blob size:', blob.size);
+        formData.append('file', blob, selectedFile.name);
+        setUploadProgress(40);
         
-        const formData = new FormData();
+        console.log('Sending request to:', url);
+        const uploadResponse = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+          body: formData,
+        });
+        
+        setUploadProgress(80);
+        const data = await uploadResponse.json();
+        console.log('Response:', data);
+        
+        if (!uploadResponse.ok) {
+          throw { response: { data, status: uploadResponse.status } };
+        }
+        
+        setUploadProgress(100);
+        
+        // عرض نتيجة الاستيراد
+        const resultMsg = `تم استيراد ${data.imported} طالب جديد\nتم تسجيل ${data.enrolled} طالب في المقرر`;
+        Alert.alert('نجاح ✅', resultMsg);
+        
+        setSelectedFile(null);
+        setImportMode(false);
+        fetchData();
+        
+      } else {
+        // Mobile
         formData.append('file', {
-          uri: file.uri,
-          name: file.name || 'students.xlsx',
-          type: file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          uri: selectedFile.uri,
+          type: selectedFile.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          name: selectedFile.name,
         } as any);
         
-        console.log('Sending fetch request to:', url);
+        setUploadProgress(40);
         
-        try {
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Accept': 'application/json',
-              // Don't set Content-Type for FormData - let fetch set it with boundary
-            },
-            body: formData,
-          });
-          
-          console.log('Mobile fetch response status:', response.status);
-          const responseText = await response.text();
-          console.log('Mobile fetch response text:', responseText);
-          
-          if (response.ok) {
-            const data = JSON.parse(responseText);
-            let msg = String(data.message || 'تم الاستيراد');
-            if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
-              msg += '\n\nأخطاء:\n' + data.errors.slice(0, 5).map(String).join('\n');
-            }
-            Alert.alert('نتيجة الاستيراد', msg);
-            fetchData();
-          } else {
-            let errorData;
-            try {
-              errorData = JSON.parse(responseText);
-            } catch {
-              errorData = { detail: responseText };
-            }
-            throw { response: { data: errorData, status: response.status } };
-          }
-        } catch (fetchError: any) {
-          console.error('Mobile fetch error:', fetchError);
-          if (fetchError.message === 'Network request failed') {
-            throw { message: 'فشل الاتصال بالخادم. تحقق من اتصالك بالإنترنت.' };
-          }
-          throw fetchError;
+        const uploadResponse = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+          body: formData,
+        });
+        
+        setUploadProgress(80);
+        const data = await uploadResponse.json();
+        console.log('Response:', data);
+        
+        if (!uploadResponse.ok) {
+          throw { response: { data, status: uploadResponse.status } };
         }
+        
+        setUploadProgress(100);
+        
+        // عرض نتيجة الاستيراد
+        const resultMsg = `تم استيراد ${data.imported} طالب جديد\nتم تسجيل ${data.enrolled} طالب في المقرر`;
+        Alert.alert('نجاح ✅', resultMsg);
+        
+        setSelectedFile(null);
+        setImportMode(false);
+        fetchData();
       }
+      
     } catch (error: any) {
-      console.error('Import error:', error);
-      console.error('Error response:', error.response?.data);
-      console.error('Error message:', error.message);
-      
-      // Ensure error message is always a string
-      let errorMessage = 'فشل في استيراد البيانات';
-      
-      // Check for custom message from our XHR handler
-      if (error.message && typeof error.message === 'string') {
-        errorMessage = error.message;
-      } else if (error.response?.data?.detail) {
-        if (typeof error.response.data.detail === 'string') {
-          errorMessage = error.response.data.detail;
-        } else if (Array.isArray(error.response.data.detail)) {
-          errorMessage = error.response.data.detail.map((e: any) => e.msg || String(e)).join('\n');
-        } else {
-          errorMessage = JSON.stringify(error.response.data.detail);
-        }
-      } else if (error.response?.data) {
-        errorMessage = JSON.stringify(error.response.data);
-      }
-      
-      // Add network error hint
-      if (errorMessage === 'فشل في استيراد البيانات' || errorMessage.includes('Network')) {
-        errorMessage = 'خطأ في الاتصال بالخادم. تأكد من اتصالك بالإنترنت وأعد المحاولة.';
-      }
-      
-      Alert.alert('خطأ', errorMessage);
+      console.error('Upload error:', error);
+      const message = error.response?.data?.detail || error.message || 'فشل في رفع الملف';
+      Alert.alert('خطأ', message);
     } finally {
       setImporting(false);
+      setUploadProgress(0);
     }
+  };
+
+  // إلغاء الملف المحدد
+  const handleCancelFile = () => {
+    setSelectedFile(null);
+    setUploadProgress(0);
   };
 
   // تحميل قالب Excel
@@ -727,41 +729,30 @@ export default function AddStudentScreen() {
             />
 
             <Text style={styles.label}>القسم *</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.optionsRow}>
-              {departments.map(dept => (
-                <TouchableOpacity
-                  key={dept.id}
-                  style={[
-                    styles.optionBtn,
-                    formData.department_id === dept.id && styles.optionBtnActive
-                  ]}
-                  onPress={() => setFormData({ ...formData, department_id: dept.id })}
-                >
-                  <Text style={[
-                    styles.optionText,
-                    formData.department_id === dept.id && styles.optionTextActive
-                  ]}>{dept.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={formData.department_id}
+                onValueChange={(value) => setFormData({ ...formData, department_id: value })}
+                style={styles.formPicker}
+              >
+                <Picker.Item label="اختر القسم..." value="" />
+                {departments.map(dept => (
+                  <Picker.Item key={dept.id} label={dept.name} value={dept.id} />
+                ))}
+              </Picker>
+            </View>
 
             <Text style={styles.label}>المستوى *</Text>
-            <View style={styles.optionsRow}>
-              {LEVELS.map(level => (
-                <TouchableOpacity
-                  key={level}
-                  style={[
-                    styles.optionBtn,
-                    formData.level === level && styles.optionBtnActive
-                  ]}
-                  onPress={() => setFormData({ ...formData, level })}
-                >
-                  <Text style={[
-                    styles.optionText,
-                    formData.level === level && styles.optionTextActive
-                  ]}>{level}</Text>
-                </TouchableOpacity>
-              ))}
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={formData.level}
+                onValueChange={(value) => setFormData({ ...formData, level: value })}
+                style={styles.formPicker}
+              >
+                {LEVELS.map(level => (
+                  <Picker.Item key={level} label={`المستوى ${level}`} value={level} />
+                ))}
+              </Picker>
             </View>
 
             <Text style={styles.label}>الشعبة (اختياري)</Text>
@@ -771,6 +762,25 @@ export default function AddStudentScreen() {
               onChangeText={(text) => setFormData({ ...formData, section: text })}
               placeholder="مثال: A أو B"
             />
+
+            {/* المقرر - إلزامي عند الإضافة */}
+            {!editingStudent && (
+              <>
+                <Text style={styles.label}>المقرر *</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={formData.course_id}
+                    onValueChange={(value) => setFormData({ ...formData, course_id: value })}
+                    style={styles.formPicker}
+                  >
+                    <Picker.Item label="اختر المقرر..." value="" />
+                    {courses.map(course => (
+                      <Picker.Item key={course.id} label={course.name} value={course.id} />
+                    ))}
+                  </Picker>
+                </View>
+              </>
+            )}
 
             <Text style={styles.label}>رقم الهاتف</Text>
             <TextInput
@@ -909,7 +919,7 @@ export default function AddStudentScreen() {
                   </View>
                   
                   <View style={styles.dropdownContainer}>
-                    <Text style={styles.dropdownLabel}>المستوى</Text>
+                    <Text style={styles.dropdownLabel}>المستوى *</Text>
                     <View style={styles.pickerWrapper}>
                       <Picker
                         selectedValue={importLevel}
@@ -934,19 +944,79 @@ export default function AddStudentScreen() {
                   </View>
                 </View>
                 
+                {/* المقرر - صف منفصل */}
+                <View style={styles.dropdownRow}>
+                  <View style={[styles.dropdownContainer, { flex: 2 }]}>
+                    <Text style={styles.dropdownLabel}>المقرر (تسجيل تلقائي) *</Text>
+                    <View style={styles.pickerWrapper}>
+                      <Picker
+                        selectedValue={importCourse}
+                        onValueChange={(value) => setImportCourse(value)}
+                        style={styles.picker}
+                      >
+                        <Picker.Item label="اختر المقرر..." value="" />
+                        {courses.map(course => (
+                          <Picker.Item key={course.id} label={course.name} value={course.id} />
+                        ))}
+                      </Picker>
+                    </View>
+                  </View>
+                </View>
+                
+                {/* الملف المحدد */}
+                {selectedFile && (
+                  <View style={styles.selectedFileContainer}>
+                    <View style={styles.selectedFileInfo}>
+                      <Ionicons name="document" size={24} color="#4caf50" />
+                      <View style={styles.selectedFileDetails}>
+                        <Text style={styles.selectedFileName}>{selectedFile.name}</Text>
+                        <Text style={styles.selectedFileSize}>
+                          {selectedFile.size ? `${(selectedFile.size / 1024).toFixed(1)} KB` : ''}
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity onPress={handleCancelFile} style={styles.removeFileBtn}>
+                      <Ionicons name="close-circle" size={24} color="#f44336" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+                
+                {/* شريط التقدم */}
+                {importing && uploadProgress > 0 && (
+                  <View style={styles.progressContainer}>
+                    <View style={styles.progressBar}>
+                      <View style={[styles.progressFill, { width: `${uploadProgress}%` }]} />
+                    </View>
+                    <Text style={styles.progressText}>{uploadProgress}%</Text>
+                  </View>
+                )}
+                
                 <View style={styles.importButtonsRow}>
-                  <TouchableOpacity 
-                    style={[styles.importActionBtn, !importDept && styles.importButtonDisabled]} 
-                    onPress={handleImportExcel}
-                    disabled={importing || !importDept}
-                  >
-                    {importing ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Ionicons name="cloud-upload" size={20} color="#fff" />
-                    )}
-                    <Text style={styles.importActionBtnText}>رفع ملف Excel</Text>
-                  </TouchableOpacity>
+                  {!selectedFile ? (
+                    <TouchableOpacity 
+                      style={[styles.importActionBtn, (!importDept || !importCourse) && styles.importButtonDisabled]} 
+                      onPress={handleSelectFile}
+                      disabled={!importDept || !importCourse}
+                    >
+                      <Ionicons name="folder-open" size={20} color="#fff" />
+                      <Text style={styles.importActionBtnText}>اختيار ملف Excel</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity 
+                      style={[styles.importActionBtn, importing && styles.importButtonDisabled]} 
+                      onPress={handleUploadFile}
+                      disabled={importing}
+                    >
+                      {importing ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Ionicons name="cloud-upload" size={20} color="#fff" />
+                      )}
+                      <Text style={styles.importActionBtnText}>
+                        {importing ? 'جاري الرفع...' : 'رفع وتسجيل الطلاب'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                   
                   <TouchableOpacity style={styles.templateActionBtn} onPress={handleDownloadTemplate}>
                     <Ionicons name="download-outline" size={20} color="#1565c0" />
@@ -1168,6 +1238,66 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+  // الملف المحدد
+  selectedFileContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#e8f5e9',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#4caf50',
+  },
+  selectedFileInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  selectedFileDetails: {
+    flex: 1,
+  },
+  selectedFileName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2e7d32',
+  },
+  selectedFileSize: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  removeFileBtn: {
+    padding: 4,
+  },
+  // شريط التقدم
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+  },
+  progressBar: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4caf50',
+    borderRadius: 4,
+  },
+  progressText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4caf50',
+    width: 40,
+    textAlign: 'right',
+  },
   dropdownRow: {
     flexDirection: 'row',
     gap: 8,
@@ -1190,6 +1320,18 @@ const styles = StyleSheet.create({
   picker: {
     height: 45,
     fontSize: 13,
+  },
+  pickerContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  formPicker: {
+    height: 50,
+    fontSize: 14,
   },
   dropdownInput: {
     backgroundColor: '#fff',
