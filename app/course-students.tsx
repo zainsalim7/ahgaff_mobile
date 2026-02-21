@@ -5,6 +5,7 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  Pressable,
   Alert,
   TextInput,
   ActivityIndicator,
@@ -589,9 +590,19 @@ export default function CourseStudentsScreen() {
               <Text style={styles.actionBtnText}>إضافة طلاب</Text>
             </TouchableOpacity>
             
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.importBtn, importing && styles.importingBtn]}
-              onPress={handleImportExcel}
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionBtn, 
+                styles.importBtn, 
+                importing && styles.importingBtn,
+                pressed && { opacity: 0.7 }
+              ]}
+              onPress={() => {
+                console.log('Import button pressed!');
+                if (!importing) {
+                  handleImportExcel();
+                }
+              }}
               disabled={importing}
             >
               {importing ? (
@@ -605,7 +616,7 @@ export default function CourseStudentsScreen() {
                   <Text style={styles.actionBtnText}>استيراد Excel</Text>
                 </>
               )}
-            </TouchableOpacity>
+            </Pressable>
           </View>
         )}
 
