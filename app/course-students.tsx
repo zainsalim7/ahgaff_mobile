@@ -277,51 +277,74 @@ export default function CourseStudentsScreen() {
   };
 
   const handleImportExcel = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
-        copyToCacheDirectory: true,
-      });
-
-      if (result.canceled) return;
-
-      const file = result.assets[0];
-      console.log('Selected file:', file.name);
-      setImporting(true);
-
-      const token = await AsyncStorage.getItem('token');
-      const url = `${API_URL}/api/students/import/${courseId}`;
-      console.log('Upload URL:', url);
+    console.log('Import button pressed!');
+    
+    if (Platform.OS === 'web') {
+      // Web: استخدام input file مباشرة
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
       
-      const formData = new FormData();
-      
-      if (Platform.OS === 'web') {
-        // Web: fetch blob and append
-        console.log('Web platform - fetching blob');
-        const response = await fetch(file.uri);
-        const blob = await response.blob();
-        console.log('Blob size:', blob.size);
-        formData.append('file', blob, file.name);
+      input.onchange = async (e: any) => {
+        const file = e.target.files[0];
+        if (!file) return;
         
-        const uploadResponse = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-          body: formData,
+        console.log('Selected file:', file.name, 'Size:', file.size);
+        setImporting(true);
+        
+        try {
+          const token = await AsyncStorage.getItem('token');
+          const url = `${API_URL}/api/students/import/${courseId}`;
+          console.log('Upload URL:', url);
+          
+          const formData = new FormData();
+          formData.append('file', file, file.name);
+          
+          console.log('Sending request...');
+          const uploadResponse = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+            body: formData,
+          });
+
+          const data = await uploadResponse.json();
+          console.log('Response:', data);
+
+          if (uploadResponse.ok) {
+            Alert.alert('نجاح ✅', `تم استيراد ${data.imported} طالب جديد\nتم تسجيل ${data.enrolled} طالب في المقرر`);
+            fetchData();
+          } else {
+            Alert.alert('خطأ', data.detail || 'فشل في استيراد الملف');
+          }
+        } catch (error: any) {
+          console.error('Upload error:', error);
+          Alert.alert('خطأ', error.message || 'فشل في استيراد الملف');
+        } finally {
+          setImporting(false);
+        }
+      };
+      
+      input.click();
+    } else {
+      // Mobile: استخدام DocumentPicker
+      try {
+        const result = await DocumentPicker.getDocumentAsync({
+          type: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'],
+          copyToCacheDirectory: true,
         });
 
-        const data = await uploadResponse.json();
-        console.log('Response:', data);
+        if (result.canceled) return;
 
-        if (uploadResponse.ok) {
-          Alert.alert('نجاح ✅', `تم استيراد ${data.imported} طالب جديد\nتم تسجيل ${data.enrolled} طالب في المقرر`);
-          fetchData();
-        } else {
-          Alert.alert('خطأ', data.detail || 'فشل في استيراد الملف');
-        }
-      } else {
-        // Mobile
+        const file = result.assets[0];
+        console.log('Selected file:', file.name);
+        setImporting(true);
+
+        const token = await AsyncStorage.getItem('token');
+        const url = `${API_URL}/api/students/import/${courseId}`;
+        
+        const formData = new FormData();
         formData.append('file', {
           uri: file.uri,
           type: file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -345,12 +368,12 @@ export default function CourseStudentsScreen() {
         } else {
           Alert.alert('خطأ', data.detail || 'فشل في استيراد الملف');
         }
+      } catch (error) {
+        console.error('Import error:', error);
+        Alert.alert('خطأ', 'فشل في استيراد الملف');
+      } finally {
+        setImporting(false);
       }
-    } catch (error) {
-      console.error('Import error:', error);
-      Alert.alert('خطأ', 'فشل في استيراد الملف');
-    } finally {
-      setImporting(false);
     }
   };
 
