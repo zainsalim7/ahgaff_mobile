@@ -392,6 +392,17 @@ export default function ManageUsersScreen() {
 
   const openEditModal = (user: User) => {
     setSelectedUser(user);
+    
+    // تحديد مستوى الصلاحية بناءً على البيانات الموجودة
+    let permissionLevel = '';
+    if (user.department_id) {
+      permissionLevel = 'department';
+    } else if (user.faculty_id) {
+      permissionLevel = 'faculty';
+    } else if (user.role === 'admin' || (user as any).role_id) {
+      permissionLevel = 'university';
+    }
+    
     setFormData({
       username: user.username,
       password: '',
@@ -401,6 +412,10 @@ export default function ManageUsersScreen() {
       phone: user.phone || '',
       scope_type: (user as any).scope_type || '',
       scope_id: (user as any).scope_id || '',
+      faculty_id: user.faculty_id || '',
+      department_id: user.department_id || '',
+      permission_level: permissionLevel,
+      permissions: [],
     });
     setShowEditModal(true);
   };
@@ -926,6 +941,137 @@ export default function ManageUsersScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
+              
+              {/* حقول الكلية والقسم للتعديل */}
+              {formData.role_id && (() => {
+                const selectedRole = roles.find(r => r.id === formData.role_id);
+                const roleName = selectedRole?.name?.toLowerCase() || '';
+                const systemKey = (selectedRole as any)?.system_key || '';
+                const isAdminRole = systemKey === 'admin' || roleName.includes('مدير النظام');
+                
+                if (isAdminRole) return null;
+                
+                return (
+                  <>
+                    {/* مستوى الصلاحية */}
+                    <View style={styles.permissionLevelSection}>
+                      <Text style={styles.inputLabel}>مستوى الصلاحية</Text>
+                      <View style={styles.levelSelector}>
+                        <TouchableOpacity
+                          style={[
+                            styles.levelBtn,
+                            formData.permission_level === 'university' && styles.levelBtnActive
+                          ]}
+                          onPress={() => setFormData(prev => ({ 
+                            ...prev, 
+                            permission_level: 'university',
+                            faculty_id: '',
+                            department_id: ''
+                          }))}
+                        >
+                          <Ionicons name="globe" size={20} color={formData.permission_level === 'university' ? '#fff' : '#666'} />
+                          <Text style={[styles.levelText, formData.permission_level === 'university' && styles.levelTextActive]}>
+                            الجامعة كلها
+                          </Text>
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          style={[
+                            styles.levelBtn,
+                            formData.permission_level === 'faculty' && styles.levelBtnActive
+                          ]}
+                          onPress={() => setFormData(prev => ({ 
+                            ...prev, 
+                            permission_level: 'faculty',
+                            department_id: ''
+                          }))}
+                        >
+                          <Ionicons name="school" size={20} color={formData.permission_level === 'faculty' ? '#fff' : '#666'} />
+                          <Text style={[styles.levelText, formData.permission_level === 'faculty' && styles.levelTextActive]}>
+                            كلية محددة
+                          </Text>
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          style={[
+                            styles.levelBtn,
+                            formData.permission_level === 'department' && styles.levelBtnActive
+                          ]}
+                          onPress={() => setFormData(prev => ({ 
+                            ...prev, 
+                            permission_level: 'department'
+                          }))}
+                        >
+                          <Ionicons name="business" size={20} color={formData.permission_level === 'department' ? '#fff' : '#666'} />
+                          <Text style={[styles.levelText, formData.permission_level === 'department' && styles.levelTextActive]}>
+                            قسم محدد
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    
+                    {/* اختيار الكلية */}
+                    {formData.permission_level && formData.permission_level !== 'university' && (
+                      <>
+                        <Text style={styles.inputLabel}>
+                          {formData.permission_level === 'faculty' ? 'الكلية المسؤول عنها' : 'الكلية'}
+                        </Text>
+                        <View style={styles.scopeSelector}>
+                          {faculties.map(faculty => (
+                            <TouchableOpacity
+                              key={faculty.id}
+                              style={[
+                                styles.scopeItem,
+                                formData.faculty_id === faculty.id && styles.scopeItemActive
+                              ]}
+                              onPress={() => setFormData(prev => ({ 
+                                ...prev, 
+                                faculty_id: faculty.id,
+                                department_id: ''
+                              }))}
+                            >
+                              <Text style={[
+                                styles.scopeItemText,
+                                formData.faculty_id === faculty.id && styles.scopeItemTextActive
+                              ]}>
+                                {faculty.name}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </>
+                    )}
+                    
+                    {/* اختيار القسم */}
+                    {formData.permission_level === 'department' && formData.faculty_id && (
+                      <>
+                        <Text style={styles.inputLabel}>القسم المسؤول عنه</Text>
+                        <View style={styles.scopeSelector}>
+                          {departments
+                            .filter(dept => dept.faculty_id === formData.faculty_id)
+                            .map(dept => (
+                            <TouchableOpacity
+                              key={dept.id}
+                              style={[
+                                styles.scopeItem,
+                                formData.department_id === dept.id && styles.scopeItemActive
+                              ]}
+                              onPress={() => setFormData(prev => ({ ...prev, department_id: dept.id }))}
+                            >
+                              <Text style={[
+                                styles.scopeItemText,
+                                formData.department_id === dept.id && styles.scopeItemTextActive
+                              ]}>
+                                {dept.name}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
               
               <Text style={styles.inputLabel}>البريد الإلكتروني</Text>
               <TextInput
