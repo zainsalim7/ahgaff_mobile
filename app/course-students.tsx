@@ -285,31 +285,65 @@ export default function CourseStudentsScreen() {
       if (result.canceled) return;
 
       const file = result.assets[0];
+      console.log('Selected file:', file.name);
       setImporting(true);
 
-      const formData = new FormData();
-      formData.append('file', {
-        uri: file.uri,
-        type: file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        name: file.name,
-      } as any);
-
       const token = await AsyncStorage.getItem('token');
-      const response = await fetch(`${API_URL}/api/students/import/${courseId}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        body: formData,
-      });
+      const url = `${API_URL}/api/students/import/${courseId}`;
+      console.log('Upload URL:', url);
+      
+      const formData = new FormData();
+      
+      if (Platform.OS === 'web') {
+        // Web: fetch blob and append
+        console.log('Web platform - fetching blob');
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        console.log('Blob size:', blob.size);
+        formData.append('file', blob, file.name);
+        
+        const uploadResponse = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+          body: formData,
+        });
 
-      const data = await response.json();
+        const data = await uploadResponse.json();
+        console.log('Response:', data);
 
-      if (response.ok) {
-        Alert.alert('نجاح', `تم استيراد ${data.imported_count || 0} طالب`);
-        fetchData();
+        if (uploadResponse.ok) {
+          Alert.alert('نجاح ✅', `تم استيراد ${data.imported} طالب جديد\nتم تسجيل ${data.enrolled} طالب في المقرر`);
+          fetchData();
+        } else {
+          Alert.alert('خطأ', data.detail || 'فشل في استيراد الملف');
+        }
       } else {
-        Alert.alert('خطأ', data.detail || 'فشل في استيراد الملف');
+        // Mobile
+        formData.append('file', {
+          uri: file.uri,
+          type: file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          name: file.name,
+        } as any);
+
+        const uploadResponse = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+          body: formData,
+        });
+
+        const data = await uploadResponse.json();
+        console.log('Response:', data);
+
+        if (uploadResponse.ok) {
+          Alert.alert('نجاح ✅', `تم استيراد ${data.imported} طالب جديد\nتم تسجيل ${data.enrolled} طالب في المقرر`);
+          fetchData();
+        } else {
+          Alert.alert('خطأ', data.detail || 'فشل في استيراد الملف');
+        }
       }
     } catch (error) {
       console.error('Import error:', error);
