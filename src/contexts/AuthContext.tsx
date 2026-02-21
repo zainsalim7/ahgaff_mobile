@@ -41,11 +41,19 @@ export const PERMISSIONS = {
   TAKE_ATTENDANCE: 'take_attendance',
   VIEW_ATTENDANCE: 'view_attendance',
   EDIT_ATTENDANCE: 'edit_attendance',
-  // صلاحيات التقارير
+  // صلاحيات التقارير العامة
   VIEW_REPORTS: 'view_reports',
   VIEW_STATISTICS: 'view_statistics',
   EXPORT_REPORTS: 'export_reports',
   IMPORT_DATA: 'import_data',
+  // صلاحيات التقارير الفردية
+  REPORT_ATTENDANCE_OVERVIEW: 'report_attendance_overview',
+  REPORT_ABSENT_STUDENTS: 'report_absent_students',
+  REPORT_WARNINGS: 'report_warnings',
+  REPORT_DAILY: 'report_daily',
+  REPORT_STUDENT: 'report_student',
+  REPORT_COURSE: 'report_course',
+  REPORT_TEACHER_WORKLOAD: 'report_teacher_workload',
   // صلاحيات المحاضرات
   MANAGE_LECTURES: 'manage_lectures',
   VIEW_LECTURES: 'view_lectures',

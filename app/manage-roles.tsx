@@ -43,7 +43,7 @@ const LoadingScreen = () => (
 
 export default function ManageRolesScreen() {
   const router = useRouter();
-  const { isAdmin, isLoading: authLoading, user } = useAuth();
+  const { isAdmin, isLoading: authLoading, user, hasPermission } = useAuth();
   
   const [roles, setRoles] = useState<Role[]>([]);
   const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
