@@ -152,7 +152,7 @@ export default function AdminScreen() {
       color: '#1565c0',
       bg: '#e3f2fd',
       count: counts.students,
-      route: '/add-student',
+      route: '/students',
       permission: 'manage_students',
     },
     {
