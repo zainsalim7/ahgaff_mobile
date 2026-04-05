@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import { Stack, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../src/store/authStore';
 import { useOfflineSyncStore } from '../src/store/offlineSyncStore';
-import { View, StyleSheet, I18nManager, TouchableOpacity, Platform } from 'react-native';
+import { View, StyleSheet, I18nManager, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthProvider } from '../src/contexts/AuthContext';
 import { SideMenu } from '../src/components/SideMenu';
+import { observeWebVitals } from '../src/utils/performanceUtils';
 
 // Enable RTL for Arabic
 I18nManager.allowRTL(true);
@@ -48,6 +49,9 @@ export default function RootLayout() {
     
     // بدء مراقبة حالة الاتصال
     const unsubscribe = startNetworkMonitoring();
+
+    // بدء مراقبة Core Web Vitals (ويب فقط)
+    observeWebVitals();
     
     return () => {
       unsubscribe();
@@ -62,6 +66,13 @@ export default function RootLayout() {
     <AuthProvider>
       <View style={styles.container}>
         <StatusBar style="light" />
+        <Suspense
+          fallback={
+            <View style={styles.suspenseFallback}>
+              <ActivityIndicator size="large" color="#fff" />
+            </View>
+          }
+        >
         <Stack
           screenOptions={{
             headerStyle: { backgroundColor: '#1565c0' },
@@ -103,6 +114,7 @@ export default function RootLayout() {
           <Stack.Screen name="course-students" options={{ title: 'طلاب المقرر' }} />
           <Stack.Screen name="notifications" options={{ title: 'الإشعارات' }} />
         </Stack>
+        </Suspense>
 
         {/* زر القائمة العائم - يظهر في جميع الصفحات عند تسجيل الدخول */}
         {showMenu && (
@@ -129,6 +141,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#1565c0',
+  },
+  suspenseFallback: {
+    flex: 1,
+    backgroundColor: '#1565c0',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   floatingMenuBtn: {
     position: 'absolute',

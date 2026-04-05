@@ -4,7 +4,7 @@ import { View, Text, StyleSheet, Platform, ActivityIndicator } from 'react-nativ
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { useOfflineSyncStore } from '../../src/store/offlineSyncStore';
-import { institutionAPI } from '../../src/services/api';
+import { cachedAPI } from '../../src/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function TabsLayout() {
@@ -94,7 +94,7 @@ export default function TabsLayout() {
     const fetchInstitution = async () => {
       if (!user) return;
       try {
-        const response = await institutionAPI.get();
+        const response = await cachedAPI.getInstitution();
         if (response.data?.name) {
           setInstitutionName(response.data.name);
         }
