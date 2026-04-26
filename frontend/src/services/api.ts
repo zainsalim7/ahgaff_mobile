@@ -2,6 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import { withCache, invalidateCachePrefix, clearCache, TTL } from '../utils/apiCache';
 
 // استخدام URL صحيح حسب البيئة
 const getApiUrl = () => {
@@ -69,7 +70,7 @@ const api = axios.create({
   },
 });
 
-// Add auth token to requests
+// Add auth token to requests + stamp request start time for perf tracking
 api.interceptors.request.use(async (config) => {
   const token = await AsyncStorage.getItem('token');
   if (token) {
@@ -86,6 +87,9 @@ api.interceptors.request.use(async (config) => {
     console.log('FormData detected, removing Content-Type header');
     delete config.headers['Content-Type'];
   }
+  
+  // Stamp the request start time so the response interceptor can log duration
+  (config as any)._startTime = Date.now();
   
   console.log('API Request:', config.method?.toUpperCase(), config.url, 'isFormData:', isFormData);
   
@@ -104,7 +108,20 @@ const shouldCache = (url: string) => {
 
 api.interceptors.response.use(
   async (response) => {
-    // حفظ في الكاش إذا كان GET وقابل للتخزين
+    // Log request duration for performance monitoring
+    const startTime = (response.config as any)._startTime;
+    if (startTime) {
+      const duration = Date.now() - startTime;
+      const method = response.config.method?.toUpperCase() ?? 'GET';
+      const url = response.config.url ?? '';
+      if (duration > 2000) {
+        console.warn(`[Perf] 🔴 Slow API – ${method} ${url}: ${duration}ms`);
+      } else if (duration > 500) {
+        console.warn(`[Perf] ⚠️  API – ${method} ${url}: ${duration}ms`);
+      }
+    }
+
+    // حفظ في الكاش إذا كان GET وقابل للتخزين (offline fallback)
     if (response.config.method === 'get' && shouldCache(response.config.url || '')) {
       const cacheKey = `cache_${response.config.url}`;
       try {
@@ -114,6 +131,15 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
+    // Log failed request duration
+    const startTime = (error.config as any)?._startTime;
+    if (startTime) {
+      const duration = Date.now() - startTime;
+      const method = error.config?.method?.toUpperCase() ?? 'GET';
+      const url = error.config?.url ?? '';
+      console.warn(`[Perf] 🔴 Failed API – ${method} ${url}: ${duration}ms (${error.response?.status ?? 'network error'})`);
+    }
+
     // إذا لا يوجد استجابة (أوفلاين) وكان GET، حاول جلب من الكاش
     if (!error.response && error.config?.method === 'get' && shouldCache(error.config.url || '')) {
       const cacheKey = `cache_${error.config.url}`;
@@ -628,3 +654,42 @@ export const facultiesAPI = {
 };
 
 export default api;
+
+// ─── Re-export cache utilities so consumers can invalidate on mutations ────────
+export { withCache, invalidateCachePrefix, clearCache, TTL } from '../utils/apiCache';
+
+// ─── Cached read helpers ──────────────────────────────────────────────────────
+// These wrap the most-called GET endpoints with an in-memory TTL cache so
+// repeated renders / navigations don't fire redundant network requests.
+
+export const cachedAPI = {
+  /** Departments list – changes rarely; cache for 15 min */
+  getDepartments: () =>
+    withCache('departments', () => departmentsAPI.getAll(), TTL.LONG),
+
+  /** Settings – changes rarely; cache for 15 min */
+  getSettings: () =>
+    withCache('settings', () => settingsAPI.get(), TTL.LONG),
+
+  /** Institution info – near-static; cache for 1 hour */
+  getInstitution: () =>
+    withCache('institution', () => institutionAPI.get(), TTL.VERY_LONG),
+
+  /** Courses list – cache for 5 min */
+  getCourses: (params?: { teacher_id?: string; department_id?: string }) => {
+    const key = `courses:${JSON.stringify(params ?? {})}`;
+    return withCache(key, () => coursesAPI.getAll(params), TTL.MEDIUM);
+  },
+
+  /** Today's lectures – short cache (1 min) since they change during the day */
+  getTodayLectures: () =>
+    withCache('lectures:today', () => lecturesAPI.getToday(), TTL.SHORT),
+
+  /** Reports summary – cache for 5 min */
+  getReportsSummary: () =>
+    withCache('reports:summary', () => reportsAPI.getSummary(), TTL.MEDIUM),
+
+  /** Permissions list – near-static; cache for 1 hour */
+  getAvailablePermissions: () =>
+    withCache('permissions:available', () => permissionsAPI.getAvailable(), TTL.VERY_LONG),
+};

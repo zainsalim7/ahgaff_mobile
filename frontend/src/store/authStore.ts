@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User } from '../types';
+import { clearCache } from '../utils/apiCache';
 
 interface AuthState {
   user: User | null;
@@ -33,6 +34,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: async () => {
     await AsyncStorage.removeItem('token');
     await AsyncStorage.removeItem('user');
+    // Clear in-memory API cache so stale data isn't served to the next user
+    clearCache();
     set({ user: null, token: null, isAuthenticated: false, isLoading: false });
   },
 

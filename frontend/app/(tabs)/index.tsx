@@ -16,8 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../src/store/authStore';
 import { useOfflineStore } from '../../src/store/offlineStore';
-import { reportsAPI, attendanceAPI, studentsAPI, departmentsAPI, settingsAPI, coursesAPI, enrollmentAPI, lecturesAPI } from '../../src/services/api';
+import { reportsAPI, attendanceAPI, studentsAPI, departmentsAPI, settingsAPI, coursesAPI, enrollmentAPI, lecturesAPI, cachedAPI } from '../../src/services/api';
 import api from '../../src/services/api';
+import { markNavigationEnd } from '../../src/utils/performanceUtils';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import QRCode from 'react-native-qrcode-svg';
 import { formatGregorianDate, formatMonthYear, GREGORIAN_MONTHS_AR, WEEKDAYS_AR } from '../../src/utils/dateUtils';
@@ -140,7 +141,7 @@ export default function HomeScreen() {
       } catch (e) {}
 
       if (user?.role === 'admin') {
-        const response = await reportsAPI.getSummary();
+        const response = await cachedAPI.getReportsSummary();
         setSummary(response.data);
       } else if (user?.role === 'student') {
         // جلب بيانات الطالب
@@ -148,17 +149,17 @@ export default function HomeScreen() {
           const studentRes = await studentsAPI.getMe();
           setStudentInfo(studentRes.data);
           
-          // جلب اسم القسم
+          // جلب اسم القسم (مع كاش)
           if (studentRes.data?.department_id) {
-            const deptsRes = await departmentsAPI.getAll();
+            const deptsRes = await cachedAPI.getDepartments();
             const dept = deptsRes.data.find((d: any) => d.id === studentRes.data.department_id);
             if (dept) {
               setDepartmentName(dept.name);
             }
           }
           
-          // جلب إعدادات النظام
-          const settingsRes = await settingsAPI.get();
+          // جلب إعدادات النظام (مع كاش)
+          const settingsRes = await cachedAPI.getSettings();
           const maxAbsence = settingsRes.data?.max_absence_percent || 25;
           setMaxAbsencePercent(maxAbsence);
           
@@ -169,9 +170,9 @@ export default function HomeScreen() {
             setCollegeName(settingsRes.data.college_name);
           }
           
-          // جلب المقررات وإحصائيات كل مقرر على حدة
+          // جلب المقررات وإحصائيات كل مقرر على حدة (مع كاش)
           if (studentRes.data?.id) {
-            const coursesRes = await coursesAPI.getAll();
+            const coursesRes = await cachedAPI.getCourses();
             console.log('Total courses from API:', coursesRes.data.length);
             const studentCourses = coursesRes.data.filter((c: any) => 
               c.department_id === studentRes.data.department_id &&
@@ -233,12 +234,12 @@ export default function HomeScreen() {
           console.log('Error fetching student info:', e);
         }
       } else if (user?.role === 'teacher') {
-        // جلب بيانات المعلم - محاضرات اليوم والشهر وإعدادات الفصل
+        // جلب بيانات المعلم - محاضرات اليوم والشهر وإعدادات الفصل (مع كاش)
         try {
           const [todayRes, monthRes, settingsRes] = await Promise.all([
-            lecturesAPI.getToday(),
+            cachedAPI.getTodayLectures(),
             lecturesAPI.getMonth(currentMonth.getFullYear(), currentMonth.getMonth() + 1),
-            settingsAPI.get()
+            cachedAPI.getSettings()
           ]);
           setTodayLectures(todayRes.data || []);
           setMonthLectures(monthRes.data || { dates: [], lectures_by_date: {}, total_lectures: 0 });
@@ -260,6 +261,7 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+      markNavigationEnd('HomeScreen');
     }
   }, [user?.role, currentMonth]);
 

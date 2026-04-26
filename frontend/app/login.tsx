@@ -10,15 +10,15 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
-  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../src/store/authStore';
 import { authAPI } from '../src/services/api';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LazyImage } from '../src/components/LazyImage';
+import { markNavigationEnd } from '../src/utils/performanceUtils';
 
 // شعار جامعة الأحقاف
 const UNIVERSITY_LOGO = 'https://ahgaff.edu.ye/pluginfile.php/1/theme_lambda2/favicon/1769931878/University%20Logo.png';
@@ -38,6 +38,8 @@ export default function LoginScreen() {
   useEffect(() => {
     initializeAdmin();
     loadSavedCredentials();
+    // Mark that the login screen has finished its initial render
+    markNavigationEnd('LoginScreen');
   }, []);
 
   const loadSavedCredentials = async () => {
@@ -144,10 +146,11 @@ export default function LoginScreen() {
         >
           <View style={styles.header}>
             <View style={styles.logoContainer}>
-              <Image 
+              <LazyImage
                 source={{ uri: UNIVERSITY_LOGO }}
                 style={styles.logo}
                 resizeMode="contain"
+                alt="شعار جامعة الأحقاف"
               />
             </View>
             <Text style={styles.title}>جامعة الأحقاف</Text>
