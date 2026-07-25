@@ -11,7 +11,7 @@ from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
 from .deps import get_db, get_current_user, log_activity
-from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data
+from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures, _sync_summary
 
 router = APIRouter(tags=["الحلحلة الذكية"])
 
@@ -446,6 +446,7 @@ async def resolver_commit(
     # ===== تنفيذ فعلي بنفس الترتيب =====
     now = datetime.now(timezone.utc)
     moved, placed = 0, 0
+    lec_sync = {"updated": 0, "deleted": 0, "skipped_attendance": 0, "skipped_rescheduled": 0, "skipped_conflict": 0}
     for mv in data.moves:
         orig = await db.weekly_schedule.find_one({"_id": ObjectId(mv.slot_id)})
         upd = {"day": mv.to_day, "slot_number": mv.to_slot,
@@ -458,6 +459,12 @@ async def resolver_commit(
             moved += 1
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail=f"{stale} (رفض فريد عند النقلة {moved + 1})")
+        # 🔄 (جدول ← نظام) المحاضرات اليومية المستقبلية تتبع الموقع الجديد
+        if orig:
+            res = await _sync_future_lectures(db, orig, "move", new_day=mv.to_day, new_slot_number=mv.to_slot,
+                                              new_room_id=mv.room_id if mv.room_id else None)
+            for k in lec_sync:
+                lec_sync[k] += res.get(k, 0)
 
     for pl in data.placements:
         course = await db.courses.find_one({"_id": ObjectId(pl.course_id)})
@@ -475,6 +482,6 @@ async def resolver_commit(
             raise HTTPException(status_code=409, detail=f"{stale} (رفض فريد عند الإدراج {placed + 1})")
 
     await log_activity(current_user, "resolve_unscheduled_commit", "weekly_schedule", data.department_id, None,
-                       {"faculty_id": data.faculty_id, "moves": moved, "placements": placed})
+                       {"faculty_id": data.faculty_id, "moves": moved, "placements": placed, "lectures_synced": lec_sync["updated"]})
     return {"moved": moved, "placed": placed,
-            "message": f"✅ تم تنفيذ الخطة: {placed} إدراج" + (f" و{moved} نقلة" if moved else "")}
+            "message": f"✅ تم تنفيذ الخطة: {placed} إدراج" + (f" و{moved} نقلة" if moved else "") + _sync_summary(lec_sync)}

@@ -1050,6 +1050,14 @@ async def update_schedule_slot(
         if room_busy:
             raise HTTPException(status_code=409, detail="تعارض: القاعة مشغولة في نفس الفترة")
 
+    teacher_changed = "teacher_id" in update and update["teacher_id"] != existing.get("teacher_id")
+
+    # 🔄 (جدول ← نظام) تغيير الأستاذ يحدّث إسناد المقرر كاملاً + العبء التدريسي
+    # (يُنفَّذ قبل تحديث الخلية: لو وُجد تعارض في بقية الخلايا يُرفض الطلب كاملاً دون أي كتابة)
+    cascade_msg = ""
+    if teacher_changed:
+        cascade_msg = await _cascade_slot_teacher_to_course(db, existing, slot_id, update["teacher_id"], current_user)
+
     try:
         await db.weekly_schedule.update_one({"_id": ObjectId(slot_id)}, {"$set": update})
     except DuplicateKeyError as e:
@@ -1063,7 +1071,22 @@ async def update_schedule_slot(
         else:
             msg = "تعارض في الجدول (تكرار مرفوض من قاعدة البيانات)"
         raise HTTPException(status_code=409, detail=msg)
-    return {"message": "تم التحديث"}
+
+    message = "تم التحديث" + cascade_msg
+
+    # 🔄 (جدول ← نظام) تغيير الموقع/القاعة يتبعه تحديث المحاضرات اليومية المستقبلية
+    moved = {}
+    if "day" in update and update["day"] != existing.get("day"):
+        moved["new_day"] = update["day"]
+    if "slot_number" in update and update["slot_number"] != existing.get("slot_number"):
+        moved["new_slot_number"] = update["slot_number"]
+    if "room_id" in update and update["room_id"] != existing.get("room_id"):
+        moved["new_room_id"] = update["room_id"]
+    if moved:
+        sync = await _sync_future_lectures(db, existing, "move", **moved)
+        message += _sync_summary(sync)
+
+    return {"message": message}
 
 
 @router.delete("/weekly-schedule/{slot_id}")
@@ -1074,8 +1097,14 @@ async def delete_schedule_slot(
     if not can_manage_schedule(current_user):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     db = get_db()
+    slot = await db.weekly_schedule.find_one({"_id": ObjectId(slot_id)})
     await db.weekly_schedule.delete_one({"_id": ObjectId(slot_id)})
-    return {"message": "تم الحذف"}
+    message = "تم الحذف"
+    if slot:
+        # 🔄 (جدول ← نظام) حذف المحاضرات اليومية المستقبلية المولّدة من هذه الخلية
+        sync = await _sync_future_lectures(db, slot, "delete")
+        message += _sync_summary(sync)
+    return {"message": message}
 
 
 @router.delete("/weekly-schedule/clear/all")
@@ -2373,6 +2402,174 @@ _ARABIC_DAY_TO_WEEKDAY = {
     "الثلاثاء": 1, "الأربعاء": 2, "الخميس": 3, "الجمعة": 4,
 }
 
+# ===== 🔄 مزامنة (الجدول ← النظام): المحاضرات اليومية المستقبلية تتبع تعديلات الخلية =====
+
+_SAT_OFFSET = {"السبت": 0, "الأحد": 1, "الاثنين": 2, "الإثنين": 2, "الثلاثاء": 3, "الأربعاء": 4, "الخميس": 5, "الجمعة": 6}
+
+
+async def _faculty_slot_times(db, faculty_id: str) -> dict:
+    settings = await db.schedule_settings.find_one({"_id": f"faculty_{faculty_id}"}) or await db.schedule_settings.find_one({"_id": "global"})
+    return {s["slot_number"]: (s.get("start_time", ""), s.get("end_time", "")) for s in (settings or {}).get("time_slots", [])}
+
+
+async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_slot_number=None, new_room_id=None) -> dict:
+    """المستقبل يتبع الجدول والماضي محفوظ: نقل/حذف المحاضرات اليومية المستقبلية المولّدة من موقع الخلية القديم.
+    تُستثنى: الماضية، غير المجدولة، التي عليها حضور، والمعاد جدولتها يدوياً."""
+    from datetime import timedelta
+    res = {"updated": 0, "deleted": 0, "skipped_attendance": 0, "skipped_rescheduled": 0, "skipped_conflict": 0}
+    old_wd = _ARABIC_DAY_TO_WEEKDAY.get(slot.get("day", ""))
+    if old_wd is None:
+        return res
+    times = await _faculty_slot_times(db, slot.get("faculty_id", ""))
+    old_start, _ = times.get(slot.get("slot_number"), ("", ""))
+    if not old_start:
+        return res
+
+    today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d")
+    cands = []
+    async for lec in db.lectures.find({
+        "course_id": slot.get("course_id", ""),
+        "date": {"$gte": today},
+        "status": "scheduled",
+        "start_time": old_start,
+    }):
+        try:
+            d = datetime.strptime(lec.get("date", ""), "%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+        if d.weekday() != old_wd:
+            continue
+        if lec.get("original_date") or lec.get("last_rescheduled_from"):
+            res["skipped_rescheduled"] += 1
+            continue
+        cands.append(lec)
+    if not cands:
+        return res
+
+    att_ids = set()
+    async for a in db.attendance.find({"lecture_id": {"$in": [str(l["_id"]) for l in cands]}}, {"lecture_id": 1}):
+        att_ids.add(a.get("lecture_id"))
+
+    if action == "delete":
+        del_ids = [l["_id"] for l in cands if str(l["_id"]) not in att_ids]
+        res["skipped_attendance"] = len(cands) - len(del_ids)
+        if del_ids:
+            r = await db.lectures.delete_many({"_id": {"$in": del_ids}})
+            res["deleted"] = r.deleted_count
+        return res
+
+    # action == "move" (يوم/فترة/قاعة)
+    tgt_day = new_day or slot.get("day", "")
+    tgt_slot = new_slot_number if new_slot_number is not None else slot.get("slot_number")
+    new_start, new_end = times.get(tgt_slot, ("", ""))
+    day_offset = _SAT_OFFSET.get(tgt_day)
+    if not new_start or day_offset is None:
+        return res
+    new_room_name = None
+    if new_room_id is not None:
+        if new_room_id:
+            room = await db.rooms.find_one({"_id": ObjectId(new_room_id)})
+            new_room_name = room.get("name", "") if room else ""
+        else:
+            new_room_name = ""
+
+    for lec in cands:
+        if str(lec["_id"]) in att_ids:
+            res["skipped_attendance"] += 1
+            continue
+        d = datetime.strptime(lec["date"], "%Y-%m-%d")
+        week_start = d - timedelta(days=(d.weekday() + 2) % 7)  # سبت نفس الأسبوع
+        new_date = (week_start + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+        upd = {"date": new_date, "start_time": new_start, "end_time": new_end}
+        if new_room_name is not None:
+            upd["room"] = new_room_name
+        try:
+            clash = await db.lectures.find_one({
+                "_id": {"$ne": lec["_id"]},
+                "course_id": lec["course_id"], "date": new_date, "start_time": new_start,
+                "status": {"$ne": "cancelled"},
+            })
+            if clash:
+                res["skipped_conflict"] += 1
+                continue
+            await db.lectures.update_one({"_id": lec["_id"]}, {"$set": upd})
+            res["updated"] += 1
+        except DuplicateKeyError:
+            res["skipped_conflict"] += 1
+    return res
+
+
+def _sync_summary(res: dict) -> str:
+    parts = []
+    if res.get("updated"):
+        parts.append(f"تم تحديث {res['updated']} محاضرة يومية مستقبلية تبعاً للتعديل")
+    if res.get("deleted"):
+        parts.append(f"حُذفت {res['deleted']} محاضرة يومية مستقبلية كانت مولّدة من هذه الخلية")
+    excl = []
+    if res.get("skipped_attendance"):
+        excl.append(f"{res['skipped_attendance']} عليها حضور مسجل")
+    if res.get("skipped_rescheduled"):
+        excl.append(f"{res['skipped_rescheduled']} معاد جدولتها يدوياً")
+    if res.get("skipped_conflict"):
+        excl.append(f"{res['skipped_conflict']} تعارضت مع محاضرة قائمة")
+    if excl:
+        parts.append("استُثنيت: " + "، ".join(excl))
+    return (" • " + " — ".join(parts)) if parts else ""
+
+
+async def _cascade_slot_teacher_to_course(db, slot: dict, slot_id: str, new_tid: str, current_user: dict) -> str:
+    """🧑‍🏫 الجدول مصدر الحقيقة: تغيير أستاذ خلية = تغيير إسناد المقرر كاملاً (كل الخلايا + العبء التدريسي)."""
+    cid = slot.get("course_id", "")
+    if not cid:
+        return ""
+    course = await db.courses.find_one({"_id": ObjectId(cid)})
+    if not course or (course.get("teacher_id") or "") == (new_tid or ""):
+        return ""
+
+    # فحص مسبق: الأستاذ الجديد يجب أن يكون متاحاً في مواعيد كل خلايا المقرر الأخرى
+    other_cells = await db.weekly_schedule.find({"course_id": cid, "_id": {"$ne": ObjectId(slot_id)}}).to_list(200)
+    own_ids = [c["_id"] for c in other_cells] + [ObjectId(slot_id)]
+    conflicts = []
+    for c in other_cells:
+        busy = await db.weekly_schedule.find_one({
+            "_id": {"$nin": own_ids},
+            "teacher_id": new_tid, "day": c["day"], "slot_number": c["slot_number"],
+        })
+        if busy:
+            conflicts.append(f"{c['day']} فترة {c['slot_number']}")
+    if conflicts:
+        raise HTTPException(status_code=409, detail=(
+            f"لا يمكن تغيير الإسناد: الأستاذ الجديد مشغول في مواعيد خلايا أخرى لنفس المقرر ({'، '.join(conflicts)}) — "
+            f"عالج تلك التعارضات أولاً"
+        ))
+
+    old_tid = course.get("teacher_id")
+    await db.courses.update_one({"_id": course["_id"]}, {"$set": {"teacher_id": new_tid or None}})
+    try:
+        if new_tid:
+            await db.weekly_schedule.update_many({"course_id": cid, "_id": {"$ne": ObjectId(slot_id)}}, {"$set": {"teacher_id": new_tid}})
+        else:
+            await db.weekly_schedule.update_many({"course_id": cid, "_id": {"$ne": ObjectId(slot_id)}}, {"$unset": {"teacher_id": ""}})
+    except DuplicateKeyError:
+        pass
+    if old_tid:
+        await db.teaching_loads.delete_many({"course_id": cid, "teacher_id": old_tid})
+    if new_tid and not await db.teaching_loads.find_one({"course_id": cid, "teacher_id": new_tid}):
+        load = {
+            "teacher_id": new_tid, "course_id": cid,
+            "weekly_hours": course.get("credit_hours", 3),
+            "created_by": current_user.get("id", ""),
+            "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+        }
+        active_sem = await db.semesters.find_one({"status": "active"})
+        sem_id = str(active_sem["_id"]) if active_sem else course.get("semester_id")
+        if sem_id:
+            load["semester_id"] = sem_id
+        await db.teaching_loads.insert_one(load)
+    await log_activity(current_user, "cascade_slot_teacher", "course", cid, course.get("name", ""),
+                       {"old_teacher_id": old_tid, "new_teacher_id": new_tid, "cells_updated": len(other_cells) + 1})
+    return f" • 🧑‍🏫 حُدّث إسناد المقرر '{course.get('name', '')}' بالكامل ({len(other_cells) + 1} خلية) والعبء التدريسي"
+
 
 class GenerateLecturesFromScheduleRequest(BaseModel):
     faculty_id: str
@@ -2761,7 +2958,10 @@ async def move_schedule_slot(
 
     await log_activity(current_user, "move_schedule_slot", "weekly_schedule", data.slot_id, None,
                        {"from": f"{slot.get('day')}-{slot.get('slot_number')}", "to": f"{data.target_day}-{data.target_slot_number}"})
-    return {"message": "تم نقل المحاضرة بنجاح"}
+
+    # 🔄 (جدول ← نظام) المحاضرات اليومية المستقبلية تتبع الموقع الجديد
+    sync = await _sync_future_lectures(db, slot, "move", new_day=data.target_day, new_slot_number=data.target_slot_number)
+    return {"message": "تم نقل المحاضرة بنجاح" + _sync_summary(sync)}
 
 
 @router.post("/weekly-schedule/swap-slots")
@@ -2802,7 +3002,12 @@ async def swap_schedule_slots(
 
     await log_activity(current_user, "swap_schedule_slots", "weekly_schedule", data.slot_a_id, None,
                        {"a": f"{pos_a['day']}-{pos_a['slot_number']}", "b": f"{pos_b['day']}-{pos_b['slot_number']}"})
-    return {"message": "تم تبديل المحاضرتين بنجاح"}
+
+    # 🔄 (جدول ← نظام) محاضرات الطرفين المستقبلية تتبع الموقعين الجديدين
+    sync_a = await _sync_future_lectures(db, slot_a, "move", new_day=pos_b["day"], new_slot_number=pos_b["slot_number"])
+    sync_b = await _sync_future_lectures(db, slot_b, "move", new_day=pos_a["day"], new_slot_number=pos_a["slot_number"])
+    combined = {k: sync_a.get(k, 0) + sync_b.get(k, 0) for k in sync_a}
+    return {"message": "تم تبديل المحاضرتين بنجاح" + _sync_summary(combined)}
 
 
 # ===== تصدير العرض الشامل الملوّن (بأسلوب aSc Timetables) =====
