@@ -58,6 +58,44 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [resolverDepts, setResolverDepts] = useState<any[]>([]);
   const [resolverPlan, setResolverPlan] = useState<any>(null);
   const [resolving, setResolving] = useState(false);
+  const [integrityModal, setIntegrityModal] = useState(false);
+  const [integrityReport, setIntegrityReport] = useState<any>(null);
+  const [integrityFixResult, setIntegrityFixResult] = useState<any>(null);
+  const [checking, setChecking] = useState(false);
+
+  const runIntegrityCheck = async () => {
+    setChecking(true);
+    setIntegrityFixResult(null);
+    try {
+      const params: any = { faculty_id: facultyId };
+      if (departmentId) params.department_id = departmentId;
+      const res = await api.get('/weekly-schedule/integrity-check', { params });
+      setIntegrityReport(res.data);
+    } catch (e: any) {
+      window.alert(typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : 'فشل فحص التكامل');
+    } finally { setChecking(false); }
+  };
+
+  const openIntegrityModal = () => {
+    setIntegrityReport(null); setIntegrityFixResult(null);
+    setIntegrityModal(true);
+    runIntegrityCheck();
+  };
+
+  const runIntegrityFix = async () => {
+    setChecking(true);
+    try {
+      const params: any = { faculty_id: facultyId };
+      if (departmentId) params.department_id = departmentId;
+      const res = await api.post('/weekly-schedule/integrity-fix', null, { params });
+      setIntegrityFixResult(res.data);
+      const check = await api.get('/weekly-schedule/integrity-check', { params });
+      setIntegrityReport(check.data);
+      await load();
+    } catch (e: any) {
+      window.alert(typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : 'فشل الإصلاح التلقائي');
+    } finally { setChecking(false); }
+  };
 
   const openResolverModal = async () => {
     setResolverPlan(null);
@@ -476,6 +514,17 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>استيراد Excel</Text>
           </TouchableOpacity>
         )}
+        {can_manage && (
+          <TouchableOpacity
+            onPress={openIntegrityModal}
+            disabled={busy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#00796b' }}
+            testID="master-integrity-check-btn"
+          >
+            <Ionicons name="shield-checkmark" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>فحص التكامل</Text>
+          </TouchableOpacity>
+        )}
         <View style={{ marginLeft: 'auto', backgroundColor: '#e3f2fd', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}>
           <Text style={{ fontSize: 12, color: '#1565c0', fontWeight: '600' }}>{groups.length} شعبة • {entries.length} محاضرة</Text>
         </View>
@@ -668,6 +717,91 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
               }}>إلغاء</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة فحص التكامل */}
+      {integrityModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 100,
+          backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', direction: 'rtl',
+        }} onClick={() => !checking && setIntegrityModal(false)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 620, maxWidth: '94%', maxHeight: '85vh', overflowY: 'auto',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+          }} data-testid="master-integrity-modal">
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>🛡️ فحص تكامل الجدول الأسبوعي</div>
+            <div style={{ fontSize: 11.5, color: '#5b6678', marginBottom: 12, textAlign: 'right', lineHeight: 1.7 }}>
+              يقارن خلايا الجدول مع بيانات النظام الحية (المقررات، الإسنادات، القاعات) ويكشف أي انحراف: مقررات محذوفة، أساتذة مختلفون عن الإسناد، قاعات محذوفة/معطّلة، أو مستويات غير مطابقة — مع إصلاح تلقائي بضغطة واحدة.
+            </div>
+
+            {checking && <div style={{ fontSize: 12.5, color: '#00796b', fontWeight: 700, textAlign: 'center', padding: 12 }}>⏳ جاري الفحص...</div>}
+
+            {integrityFixResult && (
+              <div style={{ backgroundColor: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 8, padding: 10, marginBottom: 10 }} data-testid="integrity-fix-result">
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: '#2e7d32', textAlign: 'right' }}>{integrityFixResult.message}</div>
+                {(integrityFixResult.failed || []).map((f: string, i: number) => (
+                  <div key={i} style={{ fontSize: 11, color: '#c62828', textAlign: 'right', marginTop: 4 }}>{f}</div>
+                ))}
+              </div>
+            )}
+
+            {integrityReport && !checking && (
+              <>
+                {integrityReport.issues.length === 0 ? (
+                  <div style={{ backgroundColor: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 8, padding: 14, textAlign: 'center' }} data-testid="integrity-clean">
+                    <div style={{ fontSize: 14, fontWeight: 800, color: '#2e7d32' }}>✅ الجدول متكامل تماماً</div>
+                    <div style={{ fontSize: 11.5, color: '#557a5a', marginTop: 4 }}>تم فحص {integrityReport.total_slots} محاضرة — لا يوجد أي انحراف عن بيانات النظام</div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, backgroundColor: '#e3f2fd', color: '#1565c0', borderRadius: 6, padding: '4px 8px' }}>
+                        فُحصت {integrityReport.total_slots} محاضرة
+                      </span>
+                      {integrityReport.summary.map((s: any) => (
+                        <span key={s.type} style={{ fontSize: 11, fontWeight: 700, backgroundColor: '#fff3e0', color: '#e65100', borderRadius: 6, padding: '4px 8px' }}>
+                          {s.label}: {s.count}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ maxHeight: '38vh', overflowY: 'auto', border: '1px solid #eef1f6', borderRadius: 8, padding: 8, marginBottom: 10 }}>
+                      {integrityReport.issues.map((it: any, i: number) => (
+                        <div key={i} style={{
+                          fontSize: 11.5, textAlign: 'right', padding: '6px 8px', borderRadius: 6, marginBottom: 4, lineHeight: 1.6,
+                          backgroundColor: it.fixable ? '#fffde7' : '#fdecea',
+                          color: it.fixable ? '#7a6400' : '#c62828',
+                        }}>
+                          {it.fixable ? '🔧' : '✋'} {it.desc}
+                        </div>
+                      ))}
+                    </div>
+                    {integrityReport.manual_count > 0 && (
+                      <div style={{ fontSize: 11, color: '#c62828', textAlign: 'right', marginBottom: 8, fontWeight: 700 }}>
+                        ✋ {integrityReport.manual_count} حالة تحتاج تدخلاً يدوياً (لن يشملها الإصلاح التلقائي)
+                      </div>
+                    )}
+                  </>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  {integrityReport.fixable_count > 0 && (
+                    <button onClick={runIntegrityFix} disabled={checking} style={{
+                      flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                      backgroundColor: '#00796b', color: '#fff', fontSize: 13.5, fontWeight: 700,
+                    }} data-testid="integrity-fix-btn">🔧 إصلاح تلقائي ({integrityReport.fixable_count})</button>
+                  )}
+                  <button onClick={runIntegrityCheck} disabled={checking} style={{
+                    flex: 0.7, padding: '10px 0', borderRadius: 8, border: '1px solid #00796b', cursor: 'pointer',
+                    backgroundColor: '#fff', color: '#00796b', fontSize: 13, fontWeight: 700,
+                  }} data-testid="integrity-recheck-btn">🔄 إعادة الفحص</button>
+                  <button onClick={() => setIntegrityModal(false)} style={{
+                    flex: 0.5, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
+                    backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
+                  }}>إغلاق</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

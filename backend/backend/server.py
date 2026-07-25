@@ -182,6 +182,7 @@ from routes.weekly_schedule import router as weekly_schedule_router
 from routes.schedule_import import router as schedule_import_router
 from routes.schedule_resolver import router as schedule_resolver_router
 from routes.lectures_purge import router as lectures_purge_router
+from routes.schedule_integrity import router as schedule_integrity_router
 from routes.course_migration import router as course_migration_router
 from routes.study_plans import router as study_plans_router
 from routes.admin_tools import router as admin_tools_router
@@ -4936,6 +4937,10 @@ async def safe_delete_teacher(teacher_id: str, current_user: dict = Depends(get_
     
     # إزالة ربط المعلم بالمقررات (المقررات تبقى بدون معلم)
     await db.courses.update_many({"teacher_id": teacher_id}, {"$set": {"teacher_id": None}})
+
+    # 🔄 تكامل: تنظيف خلايا الجدول الأسبوعي والعبء التدريسي من المعلم المحذوف
+    await db.weekly_schedule.update_many({"teacher_id": teacher_id}, {"$unset": {"teacher_id": ""}})
+    await db.teaching_loads.delete_many({"teacher_id": teacher_id})
     
     # حذف حساب المستخدم
     if teacher.get("user_id"):
@@ -4989,7 +4994,17 @@ async def delete_teacher(teacher_id: str, current_user: dict = Depends(get_curre
     teacher = await db.teachers.find_one({"_id": ObjectId(teacher_id)})
     if not teacher:
         raise HTTPException(status_code=404, detail="المعلم غير موجود")
-    
+
+    # 🔒 تكامل: منع الحذف إذا كان المعلم مسنداً لمقررات أو له محاضرات في الجدول الأسبوعي
+    courses_cnt = await db.courses.count_documents({"teacher_id": teacher_id})
+    ws_cnt = await db.weekly_schedule.count_documents({"teacher_id": teacher_id})
+    if courses_cnt or ws_cnt:
+        raise HTTPException(status_code=400, detail=(
+            f"لا يمكن حذف المعلم '{teacher.get('full_name', '')}' — "
+            f"مسند إلى {courses_cnt} مقرر وله {ws_cnt} محاضرة في الجدول الأسبوعي. "
+            f"غيّر إسناد مقرراته أولاً (سيتحدث الجدول تلقائياً) أو استخدم الحذف الآمن"
+        ))
+
     # حذف حساب المستخدم المرتبط إن وجد
     if teacher.get("user_id"):
         await db.users.delete_one({"_id": ObjectId(teacher["user_id"])})
@@ -5802,6 +5817,10 @@ async def safe_delete_course(course_id: str, current_user: dict = Depends(get_cu
     
     # 5. حذف المقرر
     await db.courses.delete_one({"_id": ObjectId(course_id)})
+
+    # 🔄 تكامل: حذف خلايا الجدول الأسبوعي والعبء التدريسي المرتبطة بالمقرر
+    await db.weekly_schedule.delete_many({"course_id": course_id})
+    await db.teaching_loads.delete_many({"course_id": course_id})
     
     # حفظ في سلة المحذوفات
     await save_to_trash("course", course.get("name", ""), backup, current_user.get("username", "admin"))
@@ -5923,8 +5942,15 @@ async def delete_course(course_id: str, current_user: dict = Depends(get_current
     result = await db.courses.delete_one({"_id": ObjectId(course_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="المقرر غير موجود")
-    
-    return {"message": "تم حذف المقرر بنجاح"}
+
+    # 🔄 تكامل: حذف خلايا الجدول الأسبوعي والعبء التدريسي المرتبطة بالمقرر
+    ws_del = await db.weekly_schedule.delete_many({"course_id": course_id})
+    await db.teaching_loads.delete_many({"course_id": course_id})
+
+    msg = "تم حذف المقرر بنجاح"
+    if ws_del.deleted_count:
+        msg += f" وحُذفت {ws_del.deleted_count} محاضرة مرتبطة به من الجدول الأسبوعي"
+    return {"message": msg}
 
 # ==================== Enrollment Routes (تسجيل الطلاب في المقررات) ====================
 
@@ -6522,7 +6548,19 @@ async def update_course(course_id: str, data: CourseUpdate, current_user: dict =
             {"_id": ObjectId(course_id)},
             {"$set": update_data}
         )
-    
+
+    # 🔄 تكامل: تغيير مستوى/شعبة المقرر ينعكس على خلايا الجدول الأسبوعي
+    group_sync = {}
+    if "level" in update_data and update_data["level"] != course.get("level"):
+        group_sync["level"] = update_data["level"]
+    if "section" in update_data and (update_data["section"] or "") != (course.get("section") or ""):
+        group_sync["section"] = update_data["section"] or ""
+    if group_sync:
+        try:
+            await db.weekly_schedule.update_many({"course_id": course_id}, {"$set": group_sync})
+        except DuplicateKeyError:
+            pass
+
     # مزامنة مع العبء التدريسي عند تغيير المعلم
     old_teacher_id = course.get("teacher_id")
     teacher_id_in_update = "teacher_id" in update_data
@@ -16019,6 +16057,7 @@ app.include_router(weekly_schedule_router, prefix="/api")
 app.include_router(schedule_import_router, prefix="/api")
 app.include_router(schedule_resolver_router, prefix="/api")
 app.include_router(lectures_purge_router, prefix="/api")
+app.include_router(schedule_integrity_router, prefix="/api")
 app.include_router(course_migration_router, prefix="/api")
 app.include_router(study_plans_router, prefix="/api")
 app.include_router(admin_tools_router, prefix="/api")

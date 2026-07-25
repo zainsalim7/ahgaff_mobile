@@ -411,6 +411,10 @@ async def delete_room(room_id: str, current_user: dict = Depends(get_current_use
     if not can_manage_schedule(current_user):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     db = get_db()
+    # 🔒 تكامل: منع حذف قاعة مستخدمة في الجدول الأسبوعي
+    used = await db.weekly_schedule.count_documents({"room_id": room_id})
+    if used:
+        raise HTTPException(status_code=400, detail=f"لا يمكن حذف القاعة — مستخدمة في {used} محاضرة بالجدول الأسبوعي. انقل تلك المحاضرات لقاعة أخرى أولاً")
     await db.rooms.delete_one({"_id": ObjectId(room_id)})
     return {"message": "تم حذف القاعة"}
 
