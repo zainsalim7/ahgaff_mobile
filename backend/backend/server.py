@@ -5369,6 +5369,8 @@ async def create_course(course: CourseCreate, current_user: dict = Depends(get_c
             "department_id": course_dict.get("department_id"),
             "level": course_dict.get("level"),
             "is_active": True,
+            "is_alumni": {"$ne": True},
+            "status": {"$ne": "graduated"},
         }
         if course_dict.get("section"):
             student_query["section"] = course_dict["section"]
@@ -6097,6 +6099,8 @@ async def auto_enroll_matching_students(course_id: str, current_user: dict = Dep
         "department_id": course.get("department_id"),
         "level": course.get("level"),
         "is_active": True,
+        "is_alumni": {"$ne": True},
+        "status": {"$ne": "graduated"},
     }
     if course.get("section"):
         student_query["section"] = course["section"]
@@ -6153,14 +6157,14 @@ async def diagnose_enrollment(
         c_section = (c.get("section") or "").strip()
         c_level = c.get("level")
         
-        # طلاب مطابقين بالضبط
-        sq = {"department_id": department_id, "level": c_level, "is_active": True}
+        # طلاب مطابقين بالضبط (باستثناء الخريجين)
+        sq = {"department_id": department_id, "level": c_level, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}}
         if c_section:
             sq["section"] = c_section
         exact_count = await db.students.count_documents(sq)
         
         # طلاب بنفس المستوى (كل الشعب)
-        all_level = await db.students.count_documents({"department_id": department_id, "level": c_level, "is_active": True})
+        all_level = await db.students.count_documents({"department_id": department_id, "level": c_level, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}})
         
         # تسجيلات حالية
         enroll_count = await db.enrollments.count_documents({"course_id": cid})
@@ -6220,6 +6224,8 @@ async def auto_enroll_all_courses(
             "department_id": course.get("department_id"),
             "level": course.get("level"),
             "is_active": True,
+            "is_alumni": {"$ne": True},
+            "status": {"$ne": "graduated"},
         }
         if c_section:
             # مطابقة مرنة: trim المسافات
