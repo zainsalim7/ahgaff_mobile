@@ -984,6 +984,12 @@ Comprehensive student/teacher management system for Ahgaff University with:
   3. **رسالة الملف المطابق**: إعادة رفع ملف بلا أي تغييرات تعرض الآن "الملف مطابق تماماً للجدول الحالي — لا توجد تغييرات للاستيراد" بدل "سيتم إدراج 0 محاضرة".
   اختبار: 3/3 (تعديل قاعة → تأكيد يظهر وينفذ، رسالة المطابقة، الخلية الجديدة لمعلم مشبع ما زالت تُرفض).
 
+- ✅ **Bulk Lectures Purge (2026-07-25)**: بطلب المستخدم — مسح جماعي للمحاضرات المولدة (بتواريخ) دون مساس بالمقررات/الإسنادات/الجدول الأسبوعي. ملف جديد `routes/lectures_purge.py` (مسجل في server.py):
+  - `POST /api/lectures/purge/preview` و `POST /api/lectures/purge` — النطاق: كلية / قسم / مقرر واحد + خيار زمني (الكل / المستقبلية فقط حسب توقيت اليمن).
+  - يحذف المحاضرات **وسجلات حضورها معاً** (قرار المستخدم). الصلاحية: admin أو `manage_lectures` (المعلم يحصل 403 — مختبر).
+  - الواجهة (`schedule.tsx`): زر أحمر "مسح المحاضرات" في هيدر الجدول اليومي (`purge-lectures-btn`, ويب فقط) → نافذة (`purge-modal`): نطاق (`purge-scope-*`)، اختيارات متسلسلة كلية/قسم/مقرر، نطاق زمني (`purge-time-*`)، معاينة إلزامية (`purge-preview-btn`) تعرض "سيُحذف X — منها Y عليها Z سجل حضور"، ثم تأكيد مزدوج (زر أحمر + window.confirm) (`purge-confirm-btn`). زر مسح الجدول الأسبوعي القديم بقي منفصلاً.
+  - تسجيل في سجل النشاط `purge_lectures`. اختبار E2E: 5/5 (معاينة بالمقرر، مستقبلية فقط، تنفيذ جزئي، تنفيذ كامل مع بقاء المقرر، نطاقا القسم والكلية) + 403 للمعلم + لقطة شاشة كاملة للتدفق.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

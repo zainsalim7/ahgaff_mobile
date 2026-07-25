@@ -181,6 +181,7 @@ from routes.attendance_approval import router as attendance_approval_router, cre
 from routes.weekly_schedule import router as weekly_schedule_router
 from routes.schedule_import import router as schedule_import_router
 from routes.schedule_resolver import router as schedule_resolver_router
+from routes.lectures_purge import router as lectures_purge_router
 from routes.course_migration import router as course_migration_router
 from routes.study_plans import router as study_plans_router
 from routes.admin_tools import router as admin_tools_router
@@ -16009,6 +16010,7 @@ app.include_router(attendance_approval_router, prefix="/api")
 app.include_router(weekly_schedule_router, prefix="/api")
 app.include_router(schedule_import_router, prefix="/api")
 app.include_router(schedule_resolver_router, prefix="/api")
+app.include_router(lectures_purge_router, prefix="/api")
 app.include_router(course_migration_router, prefix="/api")
 app.include_router(study_plans_router, prefix="/api")
 app.include_router(admin_tools_router, prefix="/api")
