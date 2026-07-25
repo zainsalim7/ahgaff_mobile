@@ -2580,13 +2580,17 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
     }).to_list(2000)
 
     course_ids = list({s["course_id"] for s in slots if s.get("course_id")} | {str(c["_id"]) for c in courses})
-    teacher_ids = list({s["teacher_id"] for s in slots if s.get("teacher_id")} | {c.get("teacher_id", "") for c in courses if c.get("teacher_id")})
     room_ids = list({s["room_id"] for s in slots if s.get("room_id")})
 
     courses_map = {}
     if course_ids:
         docs = await db.courses.find({"_id": {"$in": [ObjectId(x) for x in course_ids if x]}}).to_list(2000)
         courses_map = {str(d["_id"]): d for d in docs}
+    teacher_ids = list(
+        {s["teacher_id"] for s in slots if s.get("teacher_id")}
+        | {c.get("teacher_id", "") for c in courses if c.get("teacher_id")}
+        | {d.get("teacher_id", "") for d in courses_map.values() if d.get("teacher_id")}
+    )
     teachers_map = {}
     if teacher_ids:
         docs = await db.teachers.find({"_id": {"$in": [ObjectId(x) for x in teacher_ids if x]}}).to_list(1000)
@@ -2613,7 +2617,9 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
     scheduled_counts: dict = {}
     for s in slots:
         course = courses_map.get(s.get("course_id", ""), {})
-        teacher = teachers_map.get(s.get("teacher_id", ""), {})
+        # مصدر الحقيقة للإسناد هو المقرر — معرف الخلية القديم قد يكون شبحياً (بيانات سابقة)
+        eff_tid = course.get("teacher_id") or s.get("teacher_id", "")
+        teacher = teachers_map.get(eff_tid, {})
         room = rooms_map.get(s.get("room_id", ""), {})
         entries.append({
             "id": str(s["_id"]),
@@ -2624,7 +2630,7 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
             "slot_number": s.get("slot_number"),
             "course_id": s.get("course_id", ""),
             "course_name": course.get("name", ""),
-            "teacher_id": s.get("teacher_id", ""),
+            "teacher_id": eff_tid,
             "teacher_name": teacher.get("full_name", ""),
             "room_id": s.get("room_id", ""),
             "room_name": room.get("name", ""),

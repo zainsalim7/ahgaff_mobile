@@ -6528,6 +6528,14 @@ async def update_course(course_id: str, data: CourseUpdate, current_user: dict =
     teacher_id_in_update = "teacher_id" in update_data
     new_teacher_id = update_data.get("teacher_id") if teacher_id_in_update else old_teacher_id
     if teacher_id_in_update and new_teacher_id != old_teacher_id:
+        # 🔄 مزامنة خلايا الجدول الأسبوعي مع الإسناد الجديد (بقاؤها قديمة يسبب تعارضات وهمية في الاستيراد)
+        try:
+            if new_teacher_id:
+                await db.weekly_schedule.update_many({"course_id": course_id}, {"$set": {"teacher_id": new_teacher_id}})
+            else:
+                await db.weekly_schedule.update_many({"course_id": course_id}, {"$unset": {"teacher_id": ""}})
+        except DuplicateKeyError:
+            pass
         # حذف عبء المعلم القديم لهذا المقرر
         if old_teacher_id:
             await db.teaching_loads.delete_many({

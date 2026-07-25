@@ -406,6 +406,7 @@ async def import_master_schedule(
             replace_id = None
             replace_desc = ""
             replace_teacher = ""
+            replace_course = ""
             ex = existing_cells.get((level, section_val, day, slot_number))
             if ex:
                 same = ex.get("course_id") == str(course["_id"]) and (ex.get("room_id") or "") == str(room["_id"])
@@ -414,6 +415,7 @@ async def import_master_schedule(
                     continue
                 replace_id = str(ex["_id"])
                 replace_teacher = ex.get("teacher_id", "") or ""
+                replace_course = ex.get("course_id", "") or ""
                 old_name = courses_by_id.get(ex.get("course_id", ""), "مقرر آخر")
                 old_room = rooms_by_id.get(ex.get("room_id", ""), "")
                 replace_desc = f"{loc} سيُستبدل '{old_name}'{f' ({old_room})' if old_room else ''} ← بـ'{course.get('name', '')}' ({room.get('name', '')})"
@@ -435,6 +437,7 @@ async def import_master_schedule(
                 "_replace_id": replace_id,
                 "_replace_desc": replace_desc,
                 "_replaced_teacher": replace_teacher,
+                "_replaced_course": replace_course,
             })
         r += 3
 
@@ -461,28 +464,44 @@ async def import_master_schedule(
     pref_tids = list({x["teacher_id"] for x in to_create} | set(reassign_new.values()))
     prefs_map = {p["teacher_id"]: p for p in await db.teacher_preferences.find({"teacher_id": {"$in": pref_tids}}).to_list(500)} if pref_tids else {}
 
+    # 🔧 اعتماد الإسناد الحالي للمقرر (لا معرف المعلم القديم المخزن في الخلية) لمنع تعارضات وهمية من بيانات قديمة
+    all_courses_docs = await db.courses.find({}, {"teacher_id": 1, "name": 1, "level": 1, "section": 1, "department_id": 1}).to_list(50000)
+    course_info = {str(c["_id"]): c for c in all_courses_docs}
+    dept_names = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}, {"name": 1}).to_list(2000)}
+
     def _eff_tid(s):
-        return reassign_new.get(s.get("course_id", ""), s.get("teacher_id"))
+        cid = s.get("course_id", "")
+        if cid in reassign_new:
+            return reassign_new[cid]
+        ct = (course_info.get(cid) or {}).get("teacher_id") or ""
+        return ct or s.get("teacher_id")
+
+    def _slot_desc(s):
+        c = course_info.get(s.get("course_id", ""), {})
+        grp = f"م{c.get('level') or s.get('level') or '?'}" + (f"/{c.get('section')}" if c.get("section") else "")
+        dep = dept_names.get(s.get("department_id", ""), "")
+        return f"'{c.get('name', 'مقرر آخر')}' ({grp}{' — قسم ' + dep if dep else ''})"
 
     busy_teacher_owner = {}
-    busy_room = {(s.get("room_id"), s.get("day"), s.get("slot_number")) for s in all_slots if s.get("room_id")}
+    busy_room_owner = {}
     teacher_daily = {}
     for s in all_slots:
+        if s.get("room_id"):
+            busy_room_owner.setdefault((s.get("room_id"), s.get("day"), s.get("slot_number")), s)
         tid = _eff_tid(s)
         if not tid:
             continue
         k = (tid, s.get("day"), s.get("slot_number"))
         if k in busy_teacher_owner:
-            other_cid = busy_teacher_owner[k]
+            other = busy_teacher_owner[k]
             # تصادم قائم بسبب إسناد جديد (أياً كان ترتيب المرور)
-            if s.get("course_id", "") in reassign_new or other_cid in reassign_new:
+            if s.get("course_id", "") in reassign_new or other.get("course_id", "") in reassign_new:
                 tname = teachers_map.get(tid, {}).get("full_name", "")
-                conflicts.append(f"الإسناد الجديد للأستاذ '{tname}' يجعل محاضرتين قائمتين تتصادمان يوم {s.get('day')} الفترة {s.get('slot_number')}")
+                conflicts.append(f"الإسناد الجديد للأستاذ '{tname}' يجعل محاضرتين قائمتين تتصادمان يوم {s.get('day')} الفترة {s.get('slot_number')}: {_slot_desc(s)} و{_slot_desc(other)}")
         else:
-            busy_teacher_owner[k] = s.get("course_id", "")
+            busy_teacher_owner[k] = s
         dk = (tid, s.get("day"))
         teacher_daily[dk] = teacher_daily.get(dk, 0) + 1
-    busy_teacher = set(busy_teacher_owner)
 
     # تحقق أن المحاضرات القائمة للمقررات المعاد إسنادها تحترم تفضيلات الأستاذ الجديد وحدّه اليومي
     for s in all_slots:
@@ -512,17 +531,23 @@ async def import_master_schedule(
         ck = (item["level"], item["section"], item["day"], item["slot_number"])
         if ck in seen_cell:
             conflicts.append(f"{loc} خلية مكررة داخل الملف لنفس الشعبة")
-        if tk in busy_teacher:
-            conflicts.append(f"{loc} تعارض معلم: '{item['_teacher_name']}' لديه محاضرة أخرى في الجدول القائم بنفس (اليوم/الفترة)")
+        bt = busy_teacher_owner.get(tk)
+        if bt:
+            conflicts.append(f"{loc} تعارض معلم: '{item['_teacher_name']}' مشغول بمحاضرة قائمة {_slot_desc(bt)} بنفس (اليوم/الفترة)")
         elif tk in seen_teacher:
             conflicts.append(f"{loc} تعارض معلم داخل الملف: '{item['_teacher_name']}' مذكور في خليتين بنفس (اليوم/الفترة)")
-        if rk in busy_room:
-            conflicts.append(f"{loc} تعارض قاعة: '{item['_room_name']}' محجوزة في الجدول القائم بنفس (اليوم/الفترة)")
+        br = busy_room_owner.get(rk)
+        if br:
+            conflicts.append(f"{loc} تعارض قاعة: '{item['_room_name']}' محجوزة لمحاضرة قائمة {_slot_desc(br)} بنفس (اليوم/الفترة)")
         elif rk in seen_room:
             conflicts.append(f"{loc} تعارض قاعة داخل الملف: '{item['_room_name']}' مذكورة في خليتين بنفس (اليوم/الفترة)")
         pref = prefs_map.get(item["teacher_id"])
-        # استبدال محايد زمنياً: نفس المعلم في نفس (اليوم/الفترة) كان يشغل الخلية أصلاً — لا يُعامل كمحاضرة إضافية
-        neutral_time = bool(item["_replace_id"]) and item.get("_replaced_teacher") == item["teacher_id"]
+        # استبدال محايد زمنياً: نفس المعلم الفعلي كان يشغل الخلية أصلاً — لا يُعامل كمحاضرة إضافية
+        rep_eff = ""
+        if item["_replace_id"]:
+            rc = item.get("_replaced_course", "")
+            rep_eff = reassign_new.get(rc) or (course_info.get(rc, {}) or {}).get("teacher_id") or item.get("_replaced_teacher", "")
+        neutral_time = bool(item["_replace_id"]) and rep_eff == item["teacher_id"]
         if pref and not neutral_time and _is_period_unavailable(pref, item["day"], item["slot_number"]):
             conflicts.append(f"{loc} تعارض تفضيلات: '{item['_teacher_name']}' غير متاح يوم {item['day']} الفترة {item['slot_number']}")
         dk = (item["teacher_id"], item["day"])
