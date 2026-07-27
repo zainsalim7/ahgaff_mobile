@@ -8231,6 +8231,96 @@ class GenerateSemesterRequest(BaseModel):
     start_date: str
     end_date: str
 
+_EN_TO_AR_DAY = {
+    "saturday": "السبت", "sunday": "الأحد", "monday": "الاثنين",
+    "tuesday": "الثلاثاء", "wednesday": "الأربعاء", "thursday": "الخميس", "friday": "الجمعة",
+}
+
+
+async def _reflect_recurring_to_weekly(course: dict, data: "GenerateSemesterRequest", current_user: dict):
+    """🔄 (نظام ← جدول) انعكاس المواعيد المتكررة على الجدول الأسبوعي:
+    كل (يوم، وقت) يطابق فترة معرفة في إعدادات الكلية → خلية في الجدول، مع فحص التعارضات."""
+    created, existing, notes = 0, 0, []
+    cid = str(course["_id"])
+    dept_id = course.get("department_id") or ""
+    fac_id = course.get("faculty_id") or ""
+    if not fac_id and dept_id:
+        dept = await db.departments.find_one({"_id": ObjectId(dept_id)})
+        fac_id = (dept or {}).get("faculty_id", "")
+    if not dept_id or not fac_id:
+        return created, existing, ["المقرر بلا قسم/كلية — لم يُدرج في الجدول الأسبوعي"]
+
+    settings = await db.schedule_settings.find_one({"_id": f"faculty_{fac_id}"}) or await db.schedule_settings.find_one({"_id": "global"})
+    time_slots = (settings or {}).get("time_slots", [])
+    working_days = set((settings or {}).get("working_days", []))
+    slot_by_start = {ts.get("start_time"): ts for ts in time_slots}
+
+    level = course.get("level") or 1
+    section = course.get("section") or ""
+    teacher_id = course.get("teacher_id") or ""
+
+    room_id = ""
+    if (data.room or "").strip():
+        room = await db.rooms.find_one({"name": data.room.strip(), "faculty_id": fac_id})
+        if room:
+            room_id = str(room["_id"])
+        else:
+            notes.append(f"القاعة '{data.room}' غير مسجلة في الكلية — أُدرجت الخلايا بدون قاعة")
+
+    for day_config in data.schedule:
+        ar_day = _EN_TO_AR_DAY.get(day_config.day.lower(), "")
+        for slot in day_config.slots:
+            loc = f"[{ar_day or day_config.day} {slot.start_time}]"
+            if not ar_day:
+                notes.append(f"{loc} يوم غير معروف — لم يُدرج في الجدول الأسبوعي")
+                continue
+            ts = slot_by_start.get(slot.start_time)
+            if not ts:
+                notes.append(f"{loc} الوقت لا يطابق أي فترة معرفة في إعدادات الكلية — لم يُدرج في الجدول الأسبوعي")
+                continue
+            if working_days and ar_day not in working_days:
+                notes.append(f"{loc} اليوم ليس من أيام عمل الكلية — لم يُدرج في الجدول الأسبوعي")
+                continue
+            sn = ts.get("slot_number")
+
+            cell = await db.weekly_schedule.find_one({
+                "department_id": dept_id, "level": level, "section": section, "day": ar_day, "slot_number": sn,
+            })
+            if cell:
+                if cell.get("course_id") == cid:
+                    existing += 1
+                else:
+                    other = await db.courses.find_one({"_id": ObjectId(cell["course_id"])}) if cell.get("course_id") else None
+                    notes.append(f"{loc} الخلية مشغولة بمقرر '{(other or {}).get('name', 'آخر')}' في الجدول الأسبوعي — لم تُدرج")
+                continue
+            if teacher_id:
+                busy = await db.weekly_schedule.find_one({"teacher_id": teacher_id, "day": ar_day, "slot_number": sn})
+                if busy:
+                    notes.append(f"{loc} الأستاذ لديه محاضرة أخرى في الجدول الأسبوعي بنفس الوقت — لم تُدرج")
+                    continue
+            use_room = room_id
+            if room_id:
+                r_busy = await db.weekly_schedule.find_one({"room_id": room_id, "day": ar_day, "slot_number": sn})
+                if r_busy:
+                    notes.append(f"{loc} القاعة مشغولة في الجدول الأسبوعي بنفس الوقت — أُدرجت الخلية بدون قاعة")
+                    use_room = ""
+            try:
+                doc = {
+                    "faculty_id": fac_id, "department_id": dept_id, "level": level, "section": section,
+                    "day": ar_day, "slot_number": sn, "course_id": cid,
+                    "room_id": use_room,
+                    "created_at": datetime.now(timezone.utc), "created_by": current_user.get("id", ""),
+                    "created_from_lectures": True,
+                }
+                if teacher_id:
+                    doc["teacher_id"] = teacher_id
+                await db.weekly_schedule.insert_one(doc)
+                created += 1
+            except DuplicateKeyError:
+                notes.append(f"{loc} تعارض فريد في الجدول الأسبوعي — لم تُدرج")
+    return created, existing, notes
+
+
 @api_router.post("/lectures/generate-semester")
 async def generate_semester_lectures_advanced(
     data: GenerateSemesterRequest,
@@ -8336,10 +8426,29 @@ async def generate_semester_lectures_advanced(
     if lectures_created > 0:
         await notify_lecture_created(course, data.start_date if hasattr(data, 'start_date') else "", "", "")
 
+    # 🔄 (نظام ← جدول) انعكاس المواعيد المتكررة على الجدول الأسبوعي
+    # (يعمل حتى لو كانت كل المحاضرات موجودة مسبقاً — الانعكاس idempotent وبفحوصاته الخاصة)
+    ws_created, ws_existing, ws_notes = 0, 0, []
+    try:
+        ws_created, ws_existing, ws_notes = await _reflect_recurring_to_weekly(course, data, current_user)
+    except Exception as e:
+        logging.warning(f"[reflect_recurring_to_weekly] failed: {e}")
+
+    message = f"تم إنشاء {lectures_created} محاضرة للفصل الدراسي" + (f" (تم تخطي {conflicts_skipped} بسبب تعارض)" if conflicts_skipped > 0 else "")
+    if ws_created:
+        message += f" • 🗓️ أُدرج {ws_created} موعد جديد في الجدول الأسبوعي"
+    if ws_existing:
+        message += f" • {ws_existing} موعد مدرج مسبقاً في الجدول"
+    if ws_notes:
+        message += " • ملاحظات الجدول الأسبوعي: " + " | ".join(ws_notes)
+
     return {
-        "message": f"تم إنشاء {lectures_created} محاضرة للفصل الدراسي" + (f" (تم تخطي {conflicts_skipped} بسبب تعارض)" if conflicts_skipped > 0 else ""),
+        "message": message,
         "lectures_created": lectures_created,
-        "conflicts_skipped": conflicts_skipped
+        "conflicts_skipped": conflicts_skipped,
+        "weekly_cells_created": ws_created,
+        "weekly_cells_existing": ws_existing,
+        "weekly_notes": ws_notes,
     }
 
 @api_router.put("/lectures/{lecture_id}")
