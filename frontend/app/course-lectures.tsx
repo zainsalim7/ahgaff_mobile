@@ -126,11 +126,11 @@ export default function CourseLecturesScreen() {
   const PER_PAGE = 50;
   
   // إشعارات مرئية
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
   
-  const showNotification = (type: 'success' | 'error', message: string) => {
+  const showNotification = (type: 'success' | 'error' | 'warning', message: string) => {
     setNotification({ type, message });
-    setTimeout(() => setNotification(null), 5000);
+    setTimeout(() => setNotification(null), type === 'warning' ? 15000 : 5000);
   };
   
   // تحديد المحاضرات للحذف
@@ -642,9 +642,15 @@ export default function CourseLecturesScreen() {
 
       const count = response.data.lectures_created || 0;
       const skipped = response.data.conflicts_skipped || 0;
+      const wsCreated = response.data.weekly_cells_created || 0;
+      const wsExisting = response.data.weekly_cells_existing || 0;
+      const wsNotes: string[] = response.data.weekly_notes || [];
       let msg = `تم توليد ${count} محاضرة بنجاح`;
-      if (skipped > 0) {
-        msg += `\n(تم تخطي ${skipped} محاضرة بسبب تعارض مع أستاذ آخر)`;
+      if (skipped > 0) msg += `\n(تم تخطي ${skipped} محاضرة بسبب تعارض مع أستاذ آخر)`;
+      if (wsCreated > 0) msg += `\n🗓️ أُدرج ${wsCreated} موعد في الجدول الأسبوعي (العرض الشامل)`;
+      if (wsExisting > 0) msg += `\n🗓️ ${wsExisting} موعد مدرج مسبقاً في الجدول الأسبوعي`;
+      if (wsNotes.length > 0) msg += `\n⚠️ الجدول الأسبوعي:\n• ${wsNotes.join('\n• ')}`;
+      if (skipped > 0 || wsNotes.length > 0) {
         showNotification('warning', msg);
       } else {
         showNotification('success', msg);
@@ -892,7 +898,7 @@ export default function CourseLecturesScreen() {
           <TouchableOpacity
             onPress={() => setNotification(null)}
             style={{
-              backgroundColor: notification.type === 'success' ? '#4caf50' : '#f44336',
+              backgroundColor: notification.type === 'success' ? '#4caf50' : notification.type === 'warning' ? '#ef6c00' : '#f44336',
               padding: 14,
               marginHorizontal: 20,
               marginTop: 12,
