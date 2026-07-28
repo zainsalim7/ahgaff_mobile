@@ -8321,6 +8321,39 @@ async def _reflect_recurring_to_weekly(course: dict, data: "GenerateSemesterRequ
     return created, existing, notes
 
 
+async def _weekly_occupancy_conflicts(course: dict, data: "GenerateSemesterRequest") -> list:
+    """🛑 فحص مسبق: هل أي (يوم، وقت) من مواعيد التوليد مشغول في الجدول الأسبوعي بمقرر آخر لنفس الشعبة؟"""
+    conflicts = []
+    dept_id = course.get("department_id") or ""
+    fac_id = course.get("faculty_id") or ""
+    if not fac_id and dept_id:
+        dept = await db.departments.find_one({"_id": ObjectId(dept_id)})
+        fac_id = (dept or {}).get("faculty_id", "")
+    if not dept_id or not fac_id:
+        return conflicts
+    settings = await db.schedule_settings.find_one({"_id": f"faculty_{fac_id}"}) or await db.schedule_settings.find_one({"_id": "global"})
+    slot_by_start = {ts.get("start_time"): ts for ts in (settings or {}).get("time_slots", [])}
+    cid = str(course["_id"])
+    level = course.get("level") or 1
+    section = course.get("section") or ""
+    for day_config in data.schedule:
+        ar_day = _EN_TO_AR_DAY.get(day_config.day.lower(), "")
+        if not ar_day:
+            continue
+        for slot in day_config.slots:
+            ts = slot_by_start.get(slot.start_time)
+            if not ts:
+                continue
+            cell = await db.weekly_schedule.find_one({
+                "department_id": dept_id, "level": level, "section": section,
+                "day": ar_day, "slot_number": ts.get("slot_number"),
+            })
+            if cell and cell.get("course_id") != cid:
+                other = await db.courses.find_one({"_id": ObjectId(cell["course_id"])}) if cell.get("course_id") else None
+                conflicts.append(f"{ar_day} {slot.start_time}: مشغول بمقرر '{(other or {}).get('name', 'آخر')}'")
+    return conflicts
+
+
 @api_router.post("/lectures/generate-semester")
 async def generate_semester_lectures_advanced(
     data: GenerateSemesterRequest,
@@ -8333,6 +8366,15 @@ async def generate_semester_lectures_advanced(
     course = await db.courses.find_one({"_id": ObjectId(data.course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="المقرر غير موجود")
+
+    # 🛑 حظر التوليد في وقت مشغول بالجدول الأسبوعي (العرض الشامل) لنفس الشعبة
+    occupied = await _weekly_occupancy_conflicts(course, data)
+    if occupied:
+        raise HTTPException(status_code=409, detail=(
+            "🛑 لا يمكن التوليد — المواعيد التالية مشغولة في الجدول الأسبوعي (العرض الشامل): "
+            + " • ".join(occupied)
+            + " — اختر وقتاً آخر أو عدّل الجدول الأسبوعي أولاً (لم تُنشأ أي محاضرة)"
+        ))
     
     from datetime import timedelta
     
