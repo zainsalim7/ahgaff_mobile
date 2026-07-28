@@ -818,7 +818,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           }} data-testid="master-import-modal">
             <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>📥 استيراد الجدول الأسبوعي من Excel</div>
             <div style={{ fontSize: 11.5, color: '#5b6678', marginBottom: 12, textAlign: 'right', lineHeight: 1.7 }}>
-              السياسة: <b style={{ color: '#6a1b9a' }}>الإكسل هو الأساس</b> — الخلايا المعبأة في الملف <b>تستبدل</b> ما يقابلها في النظام، و<b>الإسناد يتبع اسم الأستاذ في الملف</b> (مقرر بلا إسناد يُسند، وإسناد مختلف يُستبدل) • الخلايا الفارغة لا تمس الموجود • أخطاء الأسماء تُتخطى مع تقرير • <b style={{ color: '#c62828' }}>أي تعارض جدولة يوقف الاستيراد كاملاً</b>
+              السياسة: <b style={{ color: '#6a1b9a' }}>الإكسل هو الأساس حرفياً</b> — الخلايا المعبأة في الملف <b>تستبدل</b> ما يقابلها، و<b>المقرر المذكور في الملف تصبح مواضعه مطابقة للملف بالضبط</b> (أي خلية له غير مذكورة في الملف تُزال — إعادة تموضع)، و<b>الإسناد يتبع اسم الأستاذ في الملف</b> • الخلايا الفارغة لا تمس مقررات غير مذكورة • أخطاء الأسماء تُتخطى مع تقرير • <b style={{ color: '#c62828' }}>أي تعارض جدولة يوقف الاستيراد كاملاً</b>
             </div>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6, textAlign: 'right' }}>1) اختر القسم:</div>
@@ -858,7 +858,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 <button onClick={() => runImport(false)} disabled={importing} style={{
                   flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
                   backgroundColor: '#2e7d32', color: '#fff', fontSize: 13, fontWeight: 700,
-                }} data-testid="import-confirm-btn">{importing ? 'جاري الاستيراد...' : `✅ تأكيد (${importReport.to_create} إدراج${importReport.to_replace ? ` + ${importReport.to_replace} استبدال` : ''})`}</button>
+                }} data-testid="import-confirm-btn">{importing ? 'جاري الاستيراد...' : `✅ تأكيد (${importReport.to_create} إدراج${importReport.to_replace ? ` + ${importReport.to_replace} استبدال` : ''}${importReport.to_reposition ? ` + ${importReport.to_reposition} إعادة تموضع` : ''})`}</button>
               )}
             </div>
 
@@ -885,6 +885,16 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                     <div style={{ maxHeight: 130, overflowY: 'auto', border: '1px solid #90caf9', borderRadius: 8, padding: 8, backgroundColor: '#f4f9ff' }}>
                       {importReport.reassigned.map((c: string, i: number) => (
                         <div key={i} style={{ fontSize: 11, color: '#0d47a1', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #bbdefb' }}>{c}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {importReport.repositioned?.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#e65100', textAlign: 'right', marginBottom: 4 }}>↪️ إعادة تموضع — خلايا ستُزال لأنها غير مذكورة في الملف ({importReport.repositioned.length}):</div>
+                    <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid #ffcc80', borderRadius: 8, padding: 8, backgroundColor: '#fff8f0' }} data-testid="import-repositioned-list">
+                      {importReport.repositioned.map((c: string, i: number) => (
+                        <div key={i} style={{ fontSize: 11, color: '#bf360c', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #ffe0b2' }}>{c}</div>
                       ))}
                     </div>
                   </div>

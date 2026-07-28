@@ -11,7 +11,7 @@ from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
 from .deps import get_db, get_current_user, log_activity
-from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data
+from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures
 
 router = APIRouter(tags=["استيراد الجدول الأسبوعي"])
 
@@ -307,6 +307,7 @@ async def import_master_schedule(
     to_create = []
     reassign_map = {}  # course_id -> {"new_id", "new_name", "old_id", "old_name", "course_name"}
     file_teachers = {}  # course_id -> {normalized_name: raw_name} لكشف التناقضات
+    file_positions = {}  # course_id -> {(day, slot_number)} مواضع المقرر كما في الملف (الملف هو الأساس حرفياً)
     r = periods_row + 1
     while r <= ws.max_row:
         label = ws.cell(row=r, column=1).value
@@ -361,6 +362,7 @@ async def import_master_schedule(
                 continue
             section_val = course.get("section") or ""
             cid_str = str(course["_id"])
+            file_positions.setdefault(cid_str, set()).add((day, slot_number))
             assigned = teachers_map.get(course.get("teacher_id", "") or "", {})
             assigned_norm = _norm(assigned.get("full_name", ""))
 
@@ -444,6 +446,25 @@ async def import_master_schedule(
     replaced_msgs = [it["_replace_desc"] for it in to_create if it["_replace_id"]]
     replaced_ids = {it["_replace_id"] for it in to_create if it["_replace_id"]}
 
+    # 🧭 الملف هو الأساس حرفياً: خلايا المقررات المذكورة في الملف بمواضع غير مذكورة فيه → تُزال (إعادة تموضع)
+    removal_ids = set()
+    removal_slots = {}
+    reposition_msgs = []
+    for s in existing_slots:
+        cid0 = s.get("course_id", "")
+        if cid0 not in file_positions:
+            continue
+        sid0 = str(s["_id"])
+        if sid0 in replaced_ids:
+            continue
+        if (s.get("day"), s.get("slot_number")) not in file_positions[cid0]:
+            removal_ids.add(sid0)
+            removal_slots[sid0] = s
+            grp = f"م{s.get('level')}{' شعبة ' + s.get('section') if s.get('section') else ''}"
+            reposition_msgs.append(
+                f"↪️ إعادة تموضع '{courses_by_id.get(cid0, '')}' ({grp}): ستُزال خليته في {s.get('day')} فترة {s.get('slot_number')} — غير مذكورة في الملف (الملف هو الأساس)"
+            )
+
     # تناقض الإسناد: نفس المقرر بأكثر من اسم أستاذ داخل الملف
     for cid, names in file_teachers.items():
         if len(names) > 1:
@@ -458,7 +479,7 @@ async def import_master_schedule(
     # ===== 4) فحص التعارضات (داخل الملف + مع الجدول القائم عبر كل الأقسام) =====
     # الخلايا المستبدلة تُستثنى، والإسنادات الجديدة تسري على المحاضرات القائمة لنفس المقرر (تحديث متسلسل)
     all_slots = await db.weekly_schedule.find({}, {"teacher_id": 1, "room_id": 1, "day": 1, "slot_number": 1, "department_id": 1, "level": 1, "section": 1, "course_id": 1}).to_list(20000)
-    all_slots = [s for s in all_slots if str(s["_id"]) not in replaced_ids]
+    all_slots = [s for s in all_slots if str(s["_id"]) not in replaced_ids and str(s["_id"]) not in removal_ids]
     reassign_new = {cid: info["new_id"] for cid, info in reassign_map.items()}
 
     pref_tids = list({x["teacher_id"] for x in to_create} | set(reassign_new.values()))
@@ -564,7 +585,7 @@ async def import_master_schedule(
          else f"المقرر '{info['course_name']}': الإسناد سيتغير من '{info['old_name']}' ← إلى '{info['new_name']}' (يسري على كل محاضراته)")
         for info in reassign_map.values()
     ]
-    can_commit = len(conflicts) == 0 and (len(to_create) > 0 or len(reassign_map) > 0)
+    can_commit = len(conflicts) == 0 and (len(to_create) > 0 or len(reassign_map) > 0 or len(removal_ids) > 0)
     report = {
         "dry_run": is_dry,
         "to_create": new_count,
@@ -572,6 +593,8 @@ async def import_master_schedule(
         "replaced": replaced_msgs,
         "to_reassign": len(reassign_msgs),
         "reassigned": reassign_msgs,
+        "to_reposition": len(removal_ids),
+        "repositioned": reposition_msgs,
         "created": 0,
         "skipped_existing": skipped_existing,
         "errors": errors,
@@ -583,7 +606,7 @@ async def import_master_schedule(
         report["message"] = f"🛑 تم إيقاف الاستيراد: يوجد {len(conflicts)} تعارض جدولة — عالج التعارضات ثم أعد المحاولة (لم يُحفظ أي شيء)"
         return report
     if is_dry:
-        if not to_create and not reassign_map:
+        if not to_create and not reassign_map and not removal_ids:
             report["message"] = (
                 "الملف مطابق تماماً للجدول الحالي — لا توجد تغييرات للاستيراد"
                 + (f" ({len(skipped_existing)} خلية مطابقة)" if skipped_existing else "")
@@ -593,15 +616,28 @@ async def import_master_schedule(
         report["message"] = (
             f"معاينة: سيتم إدراج {new_count} محاضرة جديدة"
             + (f" • استبدال {len(replaced_msgs)} خلية بمحتوى الملف" if replaced_msgs else "")
+            + (f" • إعادة تموضع: إزالة {len(removal_ids)} خلية غير مذكورة في الملف" if removal_ids else "")
             + (f" • تغيير إسناد {len(reassign_msgs)} مقرر" if reassign_msgs else "")
             + (f" • {len(skipped_existing)} مطابقة بلا تغيير" if skipped_existing else "")
             + (f" • {len(errors)} خطأ أسماء" if errors else "")
         )
         return report
 
-    # ===== 5) تنفيذ: حذف المستبدلة ← تطبيق الإسنادات ← إدراج محاضرات الملف =====
-    if replaced_ids:
-        await db.weekly_schedule.delete_many({"_id": {"$in": [ObjectId(x) for x in replaced_ids]}})
+    # ===== 5) تنفيذ: حذف المستبدلة والمعاد تموضعها ← تطبيق الإسنادات ← إدراج محاضرات الملف =====
+    # 🔄 مزامنة المحاضرات اليومية المستقبلية للخلايا التي ستُزال (استبدال أو إعادة تموضع)
+    lec_sync = {"deleted": 0, "skipped_attendance": 0, "skipped_rescheduled": 0}
+    replaced_slots = {str(s["_id"]): s for s in existing_slots if str(s["_id"]) in replaced_ids}
+    for sdoc in list(removal_slots.values()) + list(replaced_slots.values()):
+        try:
+            res = await _sync_future_lectures(db, sdoc, "delete")
+            for k in lec_sync:
+                lec_sync[k] += res.get(k, 0)
+        except Exception:
+            pass
+
+    all_remove_ids = replaced_ids | removal_ids
+    if all_remove_ids:
+        await db.weekly_schedule.delete_many({"_id": {"$in": [ObjectId(x) for x in all_remove_ids]}})
 
     for cid, info in reassign_map.items():
         try:
@@ -630,15 +666,18 @@ async def import_master_schedule(
 
     await log_activity(
         current_user, "import_master_schedule_excel", "weekly_schedule", department_id, None,
-        {"faculty_id": faculty_id, "created": created, "replaced": replaced_count, "reassigned": len(reassign_map), "errors": len(errors), "skipped_identical": len(skipped_existing)},
+        {"faculty_id": faculty_id, "created": created, "replaced": replaced_count, "repositioned": len(removal_ids), "reassigned": len(reassign_map), "errors": len(errors), "skipped_identical": len(skipped_existing)},
     )
     report["created"] = created
     report["replaced_count"] = replaced_count
     report["message"] = (
         f"✅ تم إدراج {created} محاضرة جديدة"
         + (f" • استُبدلت {replaced_count} خلية بمحتوى الملف" if replaced_count else "")
+        + (f" • أُزيلت {len(removal_ids)} خلية غير مذكورة في الملف (إعادة تموضع)" if removal_ids else "")
         + (f" • تغيّر إسناد {len(reassign_map)} مقرر" if reassign_map else "")
         + (f" • {len(skipped_existing)} مطابقة بلا تغيير" if skipped_existing else "")
         + (f" • {len(errors)} خلية بأخطاء أسماء (انظر التقرير)" if errors else "")
+        + (f" • 📅 حُذفت {lec_sync['deleted']} محاضرة يومية مستقبلية للخلايا المزالة" if lec_sync["deleted"] else "")
+        + (f" (استُثنيت {lec_sync['skipped_attendance'] + lec_sync['skipped_rescheduled']}: حضور/معاد جدولتها)" if (lec_sync["skipped_attendance"] + lec_sync["skipped_rescheduled"]) else "")
     )
     return report
