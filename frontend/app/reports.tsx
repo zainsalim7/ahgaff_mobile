@@ -631,6 +631,21 @@ export default function ReportsScreen() {
               <Text style={styles.reportTypeDesc}>المخطط مقابل المنجز</Text>
             </TouchableOpacity>
             )}
+
+            {/* سجل الإفادات الصادرة */}
+            {!['teacher', 'student'].includes(userRole) && (
+            <TouchableOpacity
+              style={styles.reportTypeCard}
+              onPress={() => router.push('/statements-log')}
+              data-testid="statements-log-btn"
+            >
+              <View style={[styles.reportTypeIcon, { backgroundColor: '#e0f2f1' }]}>
+                <Ionicons name="document-text" size={28} color="#00796b" />
+              </View>
+              <Text style={styles.reportTypeTitle}>سجل الإفادات</Text>
+              <Text style={styles.reportTypeDesc}>الإفادات الصادرة، تنزيل PDF وإلغاء</Text>
+            </TouchableOpacity>
+            )}
           </View>
         </View>
 
