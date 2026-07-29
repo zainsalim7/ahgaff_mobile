@@ -1000,6 +1000,12 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - الواجهة (`schedule.tsx`): زر أحمر "مسح المحاضرات" في هيدر الجدول اليومي (`purge-lectures-btn`, ويب فقط) → نافذة (`purge-modal`): نطاق (`purge-scope-*`)، اختيارات متسلسلة كلية/قسم/مقرر، نطاق زمني (`purge-time-*`)، معاينة إلزامية (`purge-preview-btn`) تعرض "سيُحذف X — منها Y عليها Z سجل حضور"، ثم تأكيد مزدوج (زر أحمر + window.confirm) (`purge-confirm-btn`). زر مسح الجدول الأسبوعي القديم بقي منفصلاً.
   - تسجيل في سجل النشاط `purge_lectures`. اختبار E2E: 5/5 (معاينة بالمقرر، مستقبلية فقط، تنفيذ جزئي، تنفيذ كامل مع بقاء المقرر، نطاقا القسم والكلية) + 403 للمعلم + لقطة شاشة كاملة للتدفق.
 
+- ✅ **Statement Letterhead Settings UI (2026-07-29)**: بطلب المستخدم — "كليشة تتناسب مع كل كلية + طريقة لإضافة اسم المسجل":
+  - صفحة جديدة `/app/frontend/app/statement-settings.tsx` (مسجلة في `_layout.tsx` بعنوان "إعدادات كليشة الإفادة"): اختيار الكلية (يخضع لنطاق RBAC عبر `/faculties`)، رفع شعار مخصص (base64، حد 2MB مع معاينة وإزالة)، اسم المسجل، اسم الكلية بالإنجليزية، وبيانات التذييل (عنوان/هواتف/فاكس/ص.ب/موقع). حفظ عبر `PUT /statements/settings/{faculty_id}` (موجود مسبقاً).
+  - رابط "إعدادات الكليشة" (`statement-settings-link`) داخل نافذة إصدار الإفادة في `student-details.tsx` يمرر `facultyId` للطالب.
+  - تحسين PDF (`statements.py::_build_pdf`): شعار الجامعة الافتراضي `/app/backend/backend/assets/university_logo.jpeg` كـfallback عند عدم رفع شعار للكلية + خط مزدوج أسفل الترويسة (شكل رسمي) مع إزاحة قسم المرجع/التواريخ للأسفل.
+  - اختبار: إصدار إفادة E2E عبر API (PDF 90KB سليم، معاينة بصرية للكليشة)، حفظ/جلب الإعدادات عبر API، لقطة شاشة للصفحة الجديدة تعرض الإعدادات المحفوظة.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

@@ -209,16 +209,22 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     W, H = A4
     c = pdfcanvas.Canvas(buf, pagesize=A4)
 
-    # ===== الترويسة =====
+    # ===== الترويسة (الكليشة) =====
     logo_b64 = settings.get("logo_base64") or ""
+    img = None
     if logo_b64:
         try:
             raw = base64.b64decode(logo_b64.split(",")[-1])
             img = ImageReader(io.BytesIO(raw))
-            c.drawImage(img, W / 2 - 14 * mm, H - 36 * mm, 28 * mm, 28 * mm, mask="auto", preserveAspectRatio=True)
         except Exception:
-            pass
-    c.setFont("Amiri", 15)
+            img = None
+    if img is None:
+        default_logo = Path(__file__).parent.parent / "assets" / "university_logo.jpeg"
+        if default_logo.exists():
+            img = ImageReader(str(default_logo))
+    if img:
+        c.drawImage(img, W / 2 - 14 * mm, H - 38 * mm, 28 * mm, 28 * mm, mask="auto", preserveAspectRatio=True)
+    c.setFont("Amiri", 16)
     c.drawRightString(W - 18 * mm, H - 18 * mm, ar("جامعة الأحقاف"))
     c.setFont("Amiri", 13)
     c.drawRightString(W - 18 * mm, H - 26 * mm, ar(s.get("faculty_name", "")))
@@ -226,6 +232,11 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     c.drawString(18 * mm, H - 18 * mm, "AL-AHGAFF UNIVERSITY")
     c.setFont("Helvetica", 10)
     c.drawString(18 * mm, H - 26 * mm, settings.get("faculty_name_en", ""))
+    # خط مزدوج أسفل الترويسة (شكل رسمي)
+    c.setLineWidth(1.3)
+    c.line(18 * mm, H - 41 * mm, W - 18 * mm, H - 41 * mm)
+    c.setLineWidth(0.4)
+    c.line(18 * mm, H - 42.4 * mm, W - 18 * mm, H - 42.4 * mm)
 
     # المرجع والتاريخان
     issued = (s.get("issued_at") or "")[:10]
@@ -236,10 +247,10 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     except Exception:
         hijri_str = ""
     c.setFont("Amiri", 11)
-    c.drawRightString(W - 18 * mm, H - 46 * mm, ar(f"المرجع: {s.get('number_display', '')}"))
-    c.drawRightString(W - 18 * mm, H - 53 * mm, ar(f"التاريخ: {hijri_str}"))
+    c.drawRightString(W - 18 * mm, H - 50 * mm, ar(f"المرجع: {s.get('number_display', '')}"))
+    c.drawRightString(W - 18 * mm, H - 57 * mm, ar(f"التاريخ: {hijri_str}"))
     greg_str = f"{issued.replace('-', '/')}م" if issued else ""
-    c.drawRightString(W - 18 * mm, H - 60 * mm, ar(f"الموافق: {greg_str}"))
+    c.drawRightString(W - 18 * mm, H - 64 * mm, ar(f"الموافق: {greg_str}"))
 
     # ===== العنوان =====
     c.setFont("Amiri", 18)

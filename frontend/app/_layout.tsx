@@ -128,6 +128,7 @@ export default function RootLayout() {
           <Stack.Screen name="course-stats" options={{ title: 'إحصائيات المقرر' }} />
           <Stack.Screen name="student-details" options={{ title: 'تفاصيل الطالب' }} />
           <Stack.Screen name="student-card" options={{ title: 'بطاقة الطالب' }} />
+          <Stack.Screen name="statement-settings" options={{ title: 'إعدادات كليشة الإفادة' }} />
           <Stack.Screen name="schedule" options={{ title: 'جدول المحاضرات' }} />
           <Stack.Screen name="students" options={{ title: 'الطلاب' }} />
           <Stack.Screen name="add-teacher" options={{ title: 'إضافة معلم' }} />
