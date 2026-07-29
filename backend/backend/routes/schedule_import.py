@@ -99,8 +99,18 @@ async def download_import_template(
     groups = [g for g in data["groups"] if g["department_id"] == department_id]
     if not working_days or not time_slots:
         raise HTTPException(status_code=400, detail="لا توجد أيام عمل أو فترات معرفة لهذه الكلية — عرّفها من الإعدادات أولاً")
+
+    # 🆕 القالب متاح لكل الأقسام: المجموعات تُبنى من كل مقررات القسم حتى غير المسندة لأستاذ
+    all_courses = await db.courses.find({"department_id": department_id, "is_active": True}).to_list(2000)
+    seen_groups = {(g["level"], g["section"]) for g in groups}
+    for cdoc in all_courses:
+        key = (cdoc.get("level") or 1, cdoc.get("section") or "")
+        if key not in seen_groups:
+            seen_groups.add(key)
+            groups.append({"level": key[0], "section": key[1], "department_id": department_id})
+    groups.sort(key=lambda g: (g["level"], g["section"]))
     if not groups:
-        raise HTTPException(status_code=400, detail="لا توجد مجموعات (مستويات/شعب) لهذا القسم — أضف مقررات بمعلمين أولاً")
+        raise HTTPException(status_code=400, detail="لا توجد مقررات في هذا القسم — أضف المقررات أولاً ثم حمّل القالب")
 
     dept = await db.departments.find_one({"_id": ObjectId(department_id)})
     faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
@@ -189,14 +199,15 @@ async def download_import_template(
     for c in range(3, ncols + 1):
         ws.column_dimensions[get_column_letter(c)].width = 16
 
-    # ورقة الأدلة: المقررات والقاعات بالأسماء الدقيقة
+    # ورقة الأدلة: كل مقررات القسم (حتى غير المسندة) + القاعات + كل أساتذة القسم
     ws2 = wb.create_sheet("الأدلة")
     ws2.sheet_view.rightToLeft = True
-    courses = await db.courses.find({"department_id": department_id, "is_active": True}).to_list(2000)
+    courses = all_courses
     t_ids = [c.get("teacher_id") for c in courses if c.get("teacher_id")]
     teachers = {str(t["_id"]): t.get("full_name", "") for t in await db.teachers.find({"_id": {"$in": [ObjectId(x) for x in t_ids]}}).to_list(1000)} if t_ids else {}
     rooms = await db.rooms.find({"faculty_id": faculty_id, "is_active": True}).to_list(300)
-    heads = ["اسم المقرر (انسخه حرفياً)", "المستوى", "الشعبة", "الأستاذ المسند", "", "القاعات المتاحة"]
+    dept_teachers = await db.teachers.find({"department_id": department_id, "is_active": True}).to_list(1000)
+    heads = ["اسم المقرر (انسخه حرفياً)", "المستوى", "الشعبة", "الأستاذ المسند", "", "القاعات المتاحة", "", "أساتذة القسم (استخدم أي اسم للإسناد)"]
     for ci, h in enumerate(heads, 1):
         c = ws2.cell(row=1, column=ci, value=h)
         c.font = Font(bold=True, color="FFFFFF", size=10)
@@ -206,10 +217,12 @@ async def download_import_template(
         ws2.cell(row=ri, column=1, value=cdoc.get("name", ""))
         ws2.cell(row=ri, column=2, value=cdoc.get("level") or 1)
         ws2.cell(row=ri, column=3, value=cdoc.get("section") or "-")
-        ws2.cell(row=ri, column=4, value=teachers.get(cdoc.get("teacher_id", ""), "⚠️ بلا أستاذ"))
+        ws2.cell(row=ri, column=4, value=teachers.get(cdoc.get("teacher_id", ""), "⚠️ بلا أستاذ — اكتب اسم الأستاذ في الجدول وسيُسند تلقائياً"))
     for ri, rdoc in enumerate(sorted(rooms, key=lambda x: x.get("name", "")), 2):
         ws2.cell(row=ri, column=6, value=rdoc.get("name", ""))
-    for ci, w in enumerate([35, 10, 10, 28, 4, 22], 1):
+    for ri, tdoc in enumerate(sorted(dept_teachers, key=lambda x: x.get("full_name", "")), 2):
+        ws2.cell(row=ri, column=8, value=tdoc.get("full_name", ""))
+    for ci, w in enumerate([35, 10, 10, 40, 4, 22, 4, 30], 1):
         from openpyxl.utils import get_column_letter as gcl
         ws2.column_dimensions[gcl(ci)].width = w
 
@@ -645,6 +658,22 @@ async def import_master_schedule(
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail=f"تعذر تغيير إسناد '{info['course_name']}': تصادم في جدول الأستاذ '{info['new_name']}' — أعد المعاينة")
         await db.courses.update_one({"_id": ObjectId(cid)}, {"$set": {"teacher_id": info["new_id"]}})
+        # ⚖️ العبء التدريسي يتبع الإسناد الجديد
+        if info.get("old_id"):
+            await db.teaching_loads.delete_many({"course_id": cid, "teacher_id": info["old_id"]})
+        if info["new_id"] and not await db.teaching_loads.find_one({"course_id": cid, "teacher_id": info["new_id"]}):
+            course_doc = await db.courses.find_one({"_id": ObjectId(cid)})
+            load = {
+                "teacher_id": info["new_id"], "course_id": cid,
+                "weekly_hours": (course_doc or {}).get("credit_hours", 3),
+                "created_by": current_user.get("id", ""),
+                "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+            }
+            active_sem = await db.semesters.find_one({"status": "active"})
+            sem_id = str(active_sem["_id"]) if active_sem else (course_doc or {}).get("semester_id")
+            if sem_id:
+                load["semester_id"] = sem_id
+            await db.teaching_loads.insert_one(load)
 
     created = 0
     replaced_count = 0
