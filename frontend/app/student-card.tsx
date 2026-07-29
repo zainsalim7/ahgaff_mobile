@@ -194,8 +194,9 @@ export default function StudentCardScreen() {
                   </View>
                 ))}
               </View>
-              <View style={{ justifyContent: 'flex-end' }}>
+              <View style={{ justifyContent: 'flex-end', alignItems: 'center', marginRight: 8 }}>
                 <QRCode value={card.verify_url} size={74} />
+                <Text style={{ fontSize: 9, color: '#5b6678', marginTop: 4 }}>امسح للتحقق</Text>
               </View>
             </View>
             <View style={{ backgroundColor: '#e8f5e9', paddingVertical: 5 }}>

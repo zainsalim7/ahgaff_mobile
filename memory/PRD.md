@@ -1021,6 +1021,14 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - اختبار E2E: إنشاء بجنسية → عرض → تعديل → استيراد Excel بعمود الجنسية (2 طلاب) → القالب → إصدار إفادة تلقائية بجنسية الطالب ✔️ + لقطة شاشة (العرض + prefill بالمودال) ✔️ ثم حُذف طلاب الاختبار.
   - **(2026-07-29) تعبئة جماعية بطلب المستخدم**: كل الطلاب الحاليين (غير الخريجين) → "إندونيسي"، طالبات كلية البنات → "إندونيسية" (72 طالبة + 19 طالب). قاعدة إضافية من المستخدم: طلاب كلية الإدارة وكلية علوم الحاسوب يمنيون — **الكليتان غير موجودتين بعد في النظام**، تُطبق عند إنشائهما/استيراد طلابهما (عمود الجنسية في Excel أو التعديل الجماعي).
 
+- ✅ **Digital Student Card — كامل (2026-07-29)**: بخيارات المستخدم (كل القوالب + اعتماد المسجل + QR مزدوج + PDF/PNG + صلاحية العام الجامعي):
+  - Backend `/app/backend/backend/routes/student_cards.py`: `GET/PUT /cards/settings/{faculty_id}` (قوالب green/dark/horizontal لكل كلية)، `GET /students/{id}/card` و`/students/me/card` (توكن بطاقة يتجدد تلقائياً مع العام الجامعي النشط)، صور: `POST /students/{id}/photo` (أدمن، فوري) و`POST /students/me/photo` (طالب، معلقة) + `GET /pending-photos` + approve/reject، تحقق عام `GET /verify/card/{token}` (خريج/مفصول="لم تعد سارية"، عام قديم="انتهت") + `GET /public/card-photo/{token}`، تنزيل `GET /students/{id}/card/download?fmt=png|pdf` (PIL+libraqm للعربية — ملاحظة: Pillow هنا مبني بـraqm فلا يستخدم arabic_reshaper/bidi وإلا انعكس النص، مقاس CR80 للـPDF). التخزين عبر services/storage_service (objstore).
+  - Scanner: `GET /students/qr/{code}` يحل card_token أيضاً + qr-scanner.tsx يستخرج token= من الرابط.
+  - Frontend admin: `student-card.tsx` (بطاقة رقمية بالقوالب الثلاثة + تنزيل PNG/PDF + رفع صورة + اعتماد/رفض المعلقة)، `card-settings.tsx`، `photo-approvals.tsx`، `verify-card.tsx` (عامة)، زر "البطاقة" في student-details (student-card-btn)، بطاقة "اعتماد صور الطلاب" في reports.
+  - Student app (`student-app-standalone`): إعادة كتابة student-card.tsx — بطاقة بالقالب المعتمد + رفع صورة عبر expo-image-picker (أُضيفت للحزم) → معلقة حتى الاعتماد.
+  - اختبار: testing_agent iteration_60 — Backend 21/21 ✔️ Frontend كل التدفقات ✔️ (pytest دائم في /app/backend/tests/test_student_cards.py). ملاحظات الوكيل عولجت: مسافة QR بالقالب الأفقي + نص "امسح للتحقق". ملاحظة dist القديم (404 لمسارات جديدة عند الفتح المباشر) لا تؤثر: الإنتاج يبني `expo export` داخل Dockerfile تلقائياً.
+  - حساب طالب للاختبار: 234/test1234 (خالد — خريج فبطاقته "لم تعد سارية" وهذا صحيح).
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

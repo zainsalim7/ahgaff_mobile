@@ -427,10 +427,10 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
             rtl(d, px - 40, y, f"{label}:", F(22), theme["muted"])
             rtl(d, px - 200, y, value, F(24), theme["text"])
             y += 48
-        # QR أسفل يسار
-        q = qr_img.resize((140, 140))
-        img.paste(q, (36, H - 200))
-        d.text((36, H - 230), ar("امسح للتحقق"), font=F(18), fill=theme["muted"], **_dir)
+        # QR أسفل يسار مع مساحة فاصلة
+        q = qr_img.resize((130, 130))
+        img.paste(q, (36, H - 196))
+        center(d, 101, H - 226, "امسح للتحقق", F(18), theme["muted"])
         d.rectangle([0, H - 52, W, H], fill=theme["strip"])
         center(d, W // 2, H - 44, f"صالحة للعام الجامعي {p.get('academic_year', '')}", F(22), theme["strip_text"])
 
