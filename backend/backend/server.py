@@ -1000,6 +1000,22 @@ async def get_user_scope_filter(current_user: dict, scope_type: str = "students"
             department_ids = _valid_depts
             department_id = department_ids[0] if department_ids else None
     teacher_record_id = user_data.get("teacher_record_id")
+
+    # 🏛️ تعدد الكليات (2026-07 — قرار صريح موثق في PERMISSIONS_ARCHITECTURE.md §3):
+    # مستخدم له faculty_ids بأكثر من كلية = نطاقه "الكليات كاملة فقط" (يتجاهل department_ids)
+    # للأدوار الإدارية (نائب رئيس يشرف على كليتين / مدير تسجيل مشترك). لا ينطبق على teacher.
+    multi_faculty_ids = [f for f in (user_data.get("faculty_ids") or []) if f]
+    if len(multi_faculty_ids) >= 2 and role != UserRole.TEACHER:
+        if scope_type == "departments":
+            query["faculty_id"] = {"$in": multi_faculty_ids}
+            return query
+        if scope_type in ["students", "courses", "teachers"]:
+            _all_dept_ids = []
+            for _fid in multi_faculty_ids:
+                _all_dept_ids.extend(await get_faculty_department_ids(_fid))
+            query["department_id"] = {"$in": _all_dept_ids}
+            return query
+        # أنواع نطاق أخرى: تسقط لفروع الدور أدناه (سلوك الكلية الأولى) أو الـ fail-safe
     
     # Dean (عميد) - يرى بيانات كليته
     if role == "dean" and faculty_id:
@@ -1250,10 +1266,22 @@ async def create_user(user: UserCreate, current_user: dict = Depends(get_current
             user_dict["role"] = system_key
             user_dict["permissions"] = role.get("permissions", [])
 
+    # 🏛️ تعدد الكليات: كليات كاملة فقط — يضبط faculty_id للتوافق ويمسح الأقسام عند التعدد
+    _multi_fids = [f for f in (user_dict.get("faculty_ids") or []) if f]
+    if _multi_fids:
+        user_dict["faculty_ids"] = _multi_fids
+        if not user_dict.get("faculty_id") or user_dict["faculty_id"] not in _multi_fids:
+            user_dict["faculty_id"] = _multi_fids[0]
+        if len(_multi_fids) >= 2:
+            user_dict["department_id"] = None
+            user_dict["department_ids"] = []
+
     # 🔒 تحقق إلزامي: الأدوار محدودة النطاق يجب أن يكون لها نطاق مُسنَد (يمنع سيناريو zain)
     _final_role = user_dict.get("role", "")
     _has_dept = bool(user_dict.get("department_id") or user_dict.get("department_ids"))
-    _has_faculty = bool(user_dict.get("faculty_id"))
+    _has_faculty = bool(user_dict.get("faculty_id") or user_dict.get("faculty_ids"))
+    if _final_role == "department_head" and len(_multi_fids) >= 2:
+        raise HTTPException(status_code=400, detail="رئيس القسم لا يمكن أن يتعدد كلياته — اختر كلية واحدة وقسماً")
     if _final_role == "department_head" and not _has_dept:
         raise HTTPException(
             status_code=400,
@@ -1278,8 +1306,8 @@ async def create_user(user: UserCreate, current_user: dict = Depends(get_current
             user_dict["role"] = "employee"  # افتراضي
             user_dict["permissions"] = []
     
-    # دعم الأقسام المتعددة - ضبط department_id للتوافق
-    if user_dict.get("department_ids") and len(user_dict["department_ids"]) > 0:
+    # دعم الأقسام المتعددة - ضبط department_id للتوافق (لا ينطبق مع تعدد الكليات)
+    if user_dict.get("department_ids") and len(user_dict["department_ids"]) > 0 and len(_multi_fids) < 2:
         user_dict["department_id"] = user_dict["department_ids"][0]
     
     result = await db.users.insert_one(user_dict)
@@ -1334,6 +1362,7 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
             "permissions": u.get("permissions") or DEFAULT_PERMISSIONS.get(u["role"], []),
             "university_id": u.get("university_id"),
             "faculty_id": u.get("faculty_id"),
+            "faculty_ids": u.get("faculty_ids", []),
             "department_id": u.get("department_id"),
             "department_ids": u.get("department_ids", []),
         }
@@ -1345,6 +1374,18 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
                 user_data["faculty_name"] = faculty["name"] if faculty else None
             except:
                 user_data["faculty_name"] = None
+
+        # 🏛️ أسماء الكليات المتعددة
+        _fids = u.get("faculty_ids") or []
+        if len(_fids) >= 2:
+            try:
+                _fnames = []
+                async for f in db.faculties.find({"_id": {"$in": [ObjectId(x) for x in _fids if x]}}):
+                    _fnames.append(f.get("name", ""))
+                user_data["faculty_names"] = _fnames
+                user_data["faculty_name"] = " | ".join(_fnames) if _fnames else user_data.get("faculty_name")
+            except Exception:
+                user_data["faculty_names"] = []
         
         # جلب أسماء الأقسام - دعم الأقسام المتعددة
         dept_ids_to_fetch = u.get("department_ids") or []
@@ -1450,6 +1491,7 @@ class UserUpdate(BaseModel):
     # حقول النطاق
     university_id: Optional[str] = None
     faculty_id: Optional[str] = None
+    faculty_ids: Optional[List[str]] = None  # 🏛️ تعدد الكليات (كليات كاملة فقط)
     department_id: Optional[str] = None  # للتوافق مع القديم
     department_ids: Optional[List[str]] = None  # قائمة الأقسام المتعددة
 
@@ -1495,6 +1537,19 @@ async def update_user(user_id: str, data: UserUpdate, current_user: dict = Depen
             update_data["department_id"] = data.department_ids[0]
         else:
             update_data["department_id"] = None
+
+    # 🏛️ تعدد الكليات: كليات كاملة فقط — التعدد يمسح الأقسام ويضبط faculty_id للتوافق
+    if data.faculty_ids is not None:
+        _fids = [f for f in data.faculty_ids if f]
+        update_data["faculty_ids"] = _fids
+        if _fids:
+            if user.get("role") == "department_head" and len(_fids) >= 2:
+                raise HTTPException(status_code=400, detail="رئيس القسم لا يمكن أن يتعدد كلياته — اختر كلية واحدة وقسماً")
+            if not update_data.get("faculty_id") or update_data.get("faculty_id") not in _fids:
+                update_data["faculty_id"] = _fids[0]
+            if len(_fids) >= 2:
+                update_data["department_id"] = None
+                update_data["department_ids"] = []
     
     # تحديث الدور إذا تم تحديده (فقط لغير المدير)
     if data.role_id and user.get("role") != UserRole.ADMIN:
@@ -1522,8 +1577,9 @@ async def update_user(user_id: str, data: UserUpdate, current_user: dict = Depen
     _final_dept_ids = update_data.get("department_ids", user.get("department_ids", []))
     _final_dept_id = update_data.get("department_id", user.get("department_id"))
     _final_faculty_id = update_data.get("faculty_id", user.get("faculty_id"))
+    _final_faculty_ids = update_data.get("faculty_ids", user.get("faculty_ids") or [])
     _has_dept = bool(_final_dept_ids) or bool(_final_dept_id)
-    _has_faculty = bool(_final_faculty_id)
+    _has_faculty = bool(_final_faculty_id) or bool(_final_faculty_ids)
     if _final_role == "department_head" and not _has_dept:
         raise HTTPException(
             status_code=400,
@@ -15455,6 +15511,10 @@ async def get_faculties(current_user: dict = Depends(get_current_user)):
             # 1) المستخدم لديه faculty_id صريح (عميد/مسجِّل/custom-faculty)
             if user_data.get("faculty_id"):
                 allowed_faculty_ids.add(user_data["faculty_id"])
+            # 1.5) 🏛️ تعدد الكليات
+            for _fid in (user_data.get("faculty_ids") or []):
+                if _fid:
+                    allowed_faculty_ids.add(_fid)
             # 2) المستخدم لديه أقسام → نشتقّ كلياتها
             dept_ids = user_data.get("department_ids") or []
             if not dept_ids and user_data.get("department_id"):

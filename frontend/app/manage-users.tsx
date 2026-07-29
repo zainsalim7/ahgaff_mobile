@@ -34,6 +34,7 @@ interface User {
   created_at: string;
   university_id?: string;
   faculty_id?: string;
+  faculty_ids?: string[];
   department_id?: string;
   department_ids?: string[];
   faculty_name?: string;
@@ -97,6 +98,7 @@ export default function ManageUsersScreen() {
     scope_type: '',  // نوع النطاق (department أو course)
     scope_id: '',    // معرف القسم أو المقرر
     faculty_id: '',  // معرف الكلية
+    faculty_ids: [] as string[], // 🏛️ تعدد الكليات (كليات كاملة فقط)
     department_id: '', // معرف القسم (للتوافق)
     department_ids: [] as string[], // قائمة الأقسام المتعددة
     permission_level: '', // مستوى الصلاحية (university, faculty, department)
@@ -208,7 +210,7 @@ export default function ManageUsersScreen() {
     const roleName = selectedRole?.name?.toLowerCase() || '';
     const isAdmin = systemKey === 'admin' || roleName.includes('مدير النظام');
     
-    if (!isAdmin && !formData.faculty_id) {
+    if (!isAdmin && !formData.faculty_id && formData.faculty_ids.length === 0) {
       if (Platform.OS === 'web') {
         window.alert('يرجى اختيار الكلية للمستخدم');
       } else {
@@ -246,8 +248,9 @@ export default function ManageUsersScreen() {
         email: formData.email || undefined,
         phone: formData.phone || undefined,
         faculty_id: formData.faculty_id || undefined,
-        department_id: formData.department_ids.length > 0 ? formData.department_ids[0] : undefined,
-        department_ids: formData.department_ids.length > 0 ? formData.department_ids : undefined,
+        faculty_ids: formData.faculty_ids.length > 0 ? formData.faculty_ids : undefined,
+        department_id: formData.faculty_ids.length > 1 ? undefined : (formData.department_ids.length > 0 ? formData.department_ids[0] : undefined),
+        department_ids: formData.faculty_ids.length > 1 ? undefined : (formData.department_ids.length > 0 ? formData.department_ids : undefined),
       });
       
       if (Platform.OS === 'web') {
@@ -266,6 +269,7 @@ export default function ManageUsersScreen() {
         scope_type: '',
         scope_id: '',
         faculty_id: '',
+        faculty_ids: [],
         department_id: '',
         department_ids: [],
         permission_level: '',
@@ -300,7 +304,7 @@ export default function ManageUsersScreen() {
     }
     const isFacultyScoped = ['dean', 'registrar', 'registration_manager'].includes(systemKey) ||
                             roleName.includes('عميد') || roleName.includes('مسجل');
-    if (isFacultyScoped && !formData.faculty_id) {
+    if (isFacultyScoped && !formData.faculty_id && formData.faculty_ids.length === 0) {
       const msg = '⚠️ هذا الدور يجب أن يكون له كلية مُسنَدة.';
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('خطأ', msg);
@@ -314,13 +318,15 @@ export default function ManageUsersScreen() {
       // ملاحظة: Backend يعامل "" و null على أنهما مسح — لكن يتجاهل الحقل كلياً إن كان undefined
       // لذا نمرر "" صراحةً للمسح.
       const level = formData.permission_level;
-      const cleanDeptIds = level === 'department' && formData.department_ids.length > 0
+      const isMultiFaculty = formData.faculty_ids.length > 1;
+      const cleanDeptIds = !isMultiFaculty && level === 'department' && formData.department_ids.length > 0
         ? formData.department_ids
         : [];
-      const cleanDeptId = level === 'department'
+      const cleanDeptId = !isMultiFaculty && level === 'department'
         ? (cleanDeptIds[0] || formData.department_id || '')
         : '';
       const cleanFacultyId = level === 'university' ? '' : (formData.faculty_id || '');
+      const cleanFacultyIds = level === 'university' ? [] : formData.faculty_ids;
 
       await usersAPI.update(selectedUser.id, {
         full_name: formData.full_name,
@@ -328,6 +334,7 @@ export default function ManageUsersScreen() {
         email: formData.email || undefined,
         phone: formData.phone || undefined,
         faculty_id: cleanFacultyId,
+        faculty_ids: cleanFacultyIds,
         department_id: cleanDeptId,
         department_ids: cleanDeptIds,
       });
@@ -474,6 +481,9 @@ export default function ManageUsersScreen() {
       scope_type: (user as any).scope_type || '',
       scope_id: (user as any).scope_id || '',
       faculty_id: user.faculty_id || '',
+      faculty_ids: ((user as any).faculty_ids && (user as any).faculty_ids.length > 0)
+        ? (user as any).faculty_ids
+        : (user.faculty_id ? [user.faculty_id] : []),
       department_id: user.department_id || '',
       department_ids: userDeptIds,
       permission_level: permissionLevel,
@@ -562,7 +572,7 @@ export default function ManageUsersScreen() {
           <Ionicons name="arrow-forward" size={24} color="#333" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>إدارة المستخدمين</Text>
-        <TouchableOpacity onPress={() => setShowAddModal(true)} style={styles.addBtn}>
+        <TouchableOpacity onPress={() => setShowAddModal(true)} style={styles.addBtn} testID="add-user-btn">
           <Ionicons name="add" size={24} color="#fff" />
         </TouchableOpacity>
       </View>
@@ -683,6 +693,7 @@ export default function ManageUsersScreen() {
                 style={[styles.actionBtn, styles.editBtn]}
                 onPress={() => openEditModal(user)}
                 accessibilityLabel="تعديل"
+                testID={`edit-user-${user.username}`}
               >
                 <Ionicons name="create" size={18} color="#1565c0" />
               </TouchableOpacity>
@@ -756,6 +767,7 @@ export default function ManageUsersScreen() {
                       ...prev, 
                       role_id: role.id,
                       faculty_id: '',
+                      faculty_ids: [],
                       department_id: ''
                     }))}
                   >
@@ -859,50 +871,64 @@ export default function ManageUsersScreen() {
                       </View>
                     )}
                     
-                    {/* اختيار الكلية */}
+                    {/* اختيار الكلية (يدعم تعدد الكليات — كليات كاملة فقط) */}
                     {needsFacultySelection && formData.permission_level && formData.permission_level !== 'university' && (
                       <>
                         <Text style={styles.inputLabel}>
-                          {formData.permission_level === 'faculty' ? 'الكلية المسؤول عنها *' : 'الكلية *'}
+                          {formData.permission_level === 'faculty' ? 'الكلية/الكليات المسؤول عنها *' : 'الكلية *'}
+                        </Text>
+                        <Text style={styles.hintText}>
+                          يمكن اختيار أكثر من كلية (نائب رئيس / مدير تسجيل مشترك) — عندها يكون النطاق الكليات كاملة بدون تقييد أقسام
                         </Text>
                         <View style={styles.scopeSelector}>
-                          {faculties.map(faculty => (
+                          {faculties.map(faculty => {
+                            const isSel = formData.faculty_ids.includes(faculty.id) || (formData.faculty_ids.length === 0 && formData.faculty_id === faculty.id);
+                            return (
                             <TouchableOpacity
                               key={faculty.id}
+                              testID={`faculty-toggle-${faculty.id}`}
                               style={[
                                 styles.scopeItem,
-                                formData.faculty_id === faculty.id && styles.scopeItemActive
+                                isSel && styles.scopeItemActive
                               ]}
                               onPress={() => setFormData(prev => {
-                                // إذا نفس الكلية: لا تفعل شيئاً (تجنّب مسح الاختيارات)
-                                if (prev.faculty_id === faculty.id) return prev;
-                                // عند تغيير الكلية: امسح كل الأقسام (المفرد والمصفوفة)
-                                // لأن الأقسام تنتمي لكلية معيّنة، وإبقاء IDs قديمة يسبب عدّاً خاطئاً وحفظاً خاطئاً
+                                const cur = prev.faculty_ids.length > 0 ? prev.faculty_ids : (prev.faculty_id ? [prev.faculty_id] : []);
+                                const list = cur.includes(faculty.id)
+                                  ? cur.filter(f => f !== faculty.id)
+                                  : [...cur, faculty.id];
+                                const primary = list[0] || '';
+                                const facultyChanged = primary !== prev.faculty_id;
                                 return {
                                   ...prev,
-                                  faculty_id: faculty.id,
-                                  department_id: '',
-                                  department_ids: [],
+                                  faculty_ids: list,
+                                  faculty_id: primary,
+                                  // تعدد الكليات أو تغيير الكلية الأساسية → مسح الأقسام
+                                  ...((list.length > 1 || facultyChanged) ? { department_id: '', department_ids: [] } : {}),
                                 };
                               })}
                             >
                               <Text style={[
                                 styles.scopeItemText,
-                                formData.faculty_id === faculty.id && styles.scopeItemTextActive
+                                isSel && styles.scopeItemTextActive
                               ]}>
                                 {faculty.name}
                               </Text>
                             </TouchableOpacity>
-                          ))}
+                          );})}
                         </View>
-                        {!formData.faculty_id && (
+                        {!formData.faculty_id && formData.faculty_ids.length === 0 && (
                           <Text style={styles.requiredHint}>⚠️ يجب اختيار الكلية</Text>
+                        )}
+                        {formData.faculty_ids.length > 1 && (
+                          <Text style={[styles.hintText, { color: '#00796b', fontWeight: '700' }]} testID="multi-faculty-note">
+                            🏛️ تعدد كليات ({formData.faculty_ids.length}) — سيرى هذا المستخدم الكليات المحددة كاملة بكل أقسامها
+                          </Text>
                         )}
                       </>
                     )}
                     
                     {/* اختيار الأقسام المتعددة */}
-                    {formData.permission_level === 'department' && formData.faculty_id && (
+                    {formData.permission_level === 'department' && formData.faculty_id && formData.faculty_ids.length <= 1 && (
                       <>
                         <Text style={styles.inputLabel}>الأقسام المسؤول عنها * (يمكن اختيار أكثر من قسم)</Text>
                         <Text style={styles.hintText}>
@@ -989,6 +1015,7 @@ export default function ManageUsersScreen() {
                 style={[styles.submitBtn, saving && styles.savingBtn]} 
                 onPress={handleAddUser}
                 disabled={saving}
+                testID="submit-add-user"
               >
                 {saving ? (
                   <ActivityIndicator color="#fff" size="small" />
@@ -1113,47 +1140,60 @@ export default function ManageUsersScreen() {
                       </View>
                     </View>
                     
-                    {/* اختيار الكلية */}
+                    {/* اختيار الكلية (يدعم تعدد الكليات — كليات كاملة فقط) */}
                     {formData.permission_level && formData.permission_level !== 'university' && (
                       <>
                         <Text style={styles.inputLabel}>
-                          {formData.permission_level === 'faculty' ? 'الكلية المسؤول عنها' : 'الكلية'}
+                          {formData.permission_level === 'faculty' ? 'الكلية/الكليات المسؤول عنها' : 'الكلية'}
+                        </Text>
+                        <Text style={styles.hintText}>
+                          يمكن اختيار أكثر من كلية — عندها يكون النطاق الكليات كاملة بدون تقييد أقسام
                         </Text>
                         <View style={styles.scopeSelector}>
-                          {faculties.map(faculty => (
+                          {faculties.map(faculty => {
+                            const isSel = formData.faculty_ids.includes(faculty.id) || (formData.faculty_ids.length === 0 && formData.faculty_id === faculty.id);
+                            return (
                             <TouchableOpacity
                               key={faculty.id}
+                              testID={`edit-faculty-toggle-${faculty.id}`}
                               style={[
                                 styles.scopeItem,
-                                formData.faculty_id === faculty.id && styles.scopeItemActive
+                                isSel && styles.scopeItemActive
                               ]}
                               onPress={() => setFormData(prev => {
-                                // إذا نفس الكلية: لا تفعل شيئاً (تجنّب مسح الاختيارات)
-                                if (prev.faculty_id === faculty.id) return prev;
-                                // عند تغيير الكلية: امسح كل الأقسام (المفرد والمصفوفة)
-                                // لأن الأقسام تنتمي لكلية معيّنة، وإبقاء IDs قديمة يسبب عدّاً خاطئاً وحفظاً خاطئاً
+                                const cur = prev.faculty_ids.length > 0 ? prev.faculty_ids : (prev.faculty_id ? [prev.faculty_id] : []);
+                                const list = cur.includes(faculty.id)
+                                  ? cur.filter(f => f !== faculty.id)
+                                  : [...cur, faculty.id];
+                                const primary = list[0] || '';
+                                const facultyChanged = primary !== prev.faculty_id;
                                 return {
                                   ...prev,
-                                  faculty_id: faculty.id,
-                                  department_id: '',
-                                  department_ids: [],
+                                  faculty_ids: list,
+                                  faculty_id: primary,
+                                  ...((list.length > 1 || facultyChanged) ? { department_id: '', department_ids: [] } : {}),
                                 };
                               })}
                             >
                               <Text style={[
                                 styles.scopeItemText,
-                                formData.faculty_id === faculty.id && styles.scopeItemTextActive
+                                isSel && styles.scopeItemTextActive
                               ]}>
                                 {faculty.name}
                               </Text>
                             </TouchableOpacity>
-                          ))}
+                          );})}
                         </View>
+                        {formData.faculty_ids.length > 1 && (
+                          <Text style={[styles.hintText, { color: '#00796b', fontWeight: '700' }]} testID="edit-multi-faculty-note">
+                            🏛️ تعدد كليات ({formData.faculty_ids.length}) — سيرى هذا المستخدم الكليات المحددة كاملة بكل أقسامها
+                          </Text>
+                        )}
                       </>
                     )}
                     
                     {/* اختيار الأقسام المتعددة */}
-                    {formData.permission_level === 'department' && formData.faculty_id && (
+                    {formData.permission_level === 'department' && formData.faculty_id && formData.faculty_ids.length <= 1 && (
                       <>
                         <Text style={styles.inputLabel}>الأقسام المسؤول عنها (يمكن اختيار أكثر من قسم)</Text>
                         <Text style={styles.hintText}>
@@ -1237,6 +1277,7 @@ export default function ManageUsersScreen() {
                 style={[styles.submitBtn, saving && styles.savingBtn]} 
                 onPress={handleEditUser}
                 disabled={saving}
+                testID="submit-edit-user"
               >
                 {saving ? (
                   <ActivityIndicator color="#fff" size="small" />

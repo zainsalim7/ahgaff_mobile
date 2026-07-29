@@ -49,6 +49,7 @@ class UserResponse(UserBase):
     is_active: bool = True
     permissions: List[str] = []
     faculty_name: Optional[str] = None
+    faculty_names: Optional[List[str]] = None
     department_name: Optional[str] = None
     department_names: Optional[List[str]] = None
 

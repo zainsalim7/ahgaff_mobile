@@ -1,0 +1,39 @@
+{
+  "summary": "Frontend-only E2E testing of the multi-faculty (تعدد الكليات) feature on /manage-users (Expo React Native Web). Flow tested with Playwright as admin: open add-user modal via + icon, select faculty-level role (مدير التسجيل), pick permission level 'كلية محددة', multi-select both faculties (الشريعة والقانون + البنات), verify green multi-faculty note + departments section hidden, create user vp_test_ui, verify card shows both faculty names separated by '|', open edit modal (both faculties pre-selected + edit note), deselect one, save, then login as vp_test_ui, and dean regression with Salim. Finally deleted vp_test_ui via UI delete. ALL 12 steps PASS after fixing a blocking testability defect: React Native Web strips literal `data-testid` props, so none of the promised testIDs existed in the DOM (0 elements with data-testid on the whole app). Converted the 8 occurrences in manage-users.tsx to RNW's `testID` prop (renders as data-testid).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/users", "issue": "403 logged twice in browser console right after logging in as non-admin (vp_test_ui / Salim) — a screen fetches /api/users without a permission guard. Functionally harmless but noisy."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Whole app (React Native Web)", "issue": "Literal `data-testid={...}` props on RN components (View/Text/TouchableOpacity) are stripped by react-native-web and never reach the DOM. Verified: 0 elements matched [data-testid] before the fix. There are ~262 remaining `data-testid=` usages across ~30 other screens that are all dead for automation — they must be renamed to `testID=`.", "selector": "[data-testid=*]", "priority": "HIGH"},
+      {"component": "Edit User modal - role selector", "issue": "Edit modal lists ALL roles including 'طالب' and 'مدرس', while the Add modal filters them out. Assigning a staff account the student/teacher role from the edit modal is possible and inconsistent.", "selector": "Edit modal roleSelector", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Add/Edit user modal", "issues": ["Modal body opens already scrolled past the username/password/full-name inputs when a role is selected, so required fields are off-screen (usability nit only; fields work)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Global rename: replace `data-testid=` with `testID=` in all remaining frontend screens (~262 occurrences) — RNW only emits data-testid from the testID prop.",
+    "Filter out 'طالب'/'مدرس' roles in the Edit User modal role selector to match the Add modal.",
+    "Guard the /api/users fetch (or the mounting screen) so non-admin logins do not trigger 403s.",
+    "Clean up duplicate StyleSheet keys in manage-users.tsx (scopeText, scopeSelector, scopeItem, scopeItemActive, scopeItemText, scopeItemTextActive) — later definitions silently override earlier ones."
+  ],
+  "critical_code_review_comments": [
+    "manage-users.tsx is 2039 lines with two near-identical 200-line modals (add/edit) duplicating the faculty multi-toggle logic — extract a shared <FacultyMultiSelect> and a shared user form to avoid divergence (the role-filter divergence above is already a symptom).",
+    "ESLint reports 6 duplicate keys in the StyleSheet block (lines 1865-1941) — real no-dupe-keys errors.",
+    "Multi-faculty payload logic is duplicated in handleAddUser and handleEditUser with slightly different cleanup rules (add sends undefined, edit sends '' / []) — centralize to prevent future scope bugs."
+  ],
+  "updated_files": ["/app/frontend/app/manage-users.tsx"],
+  "success_rate": {"backend": "not tested (per request)", "frontend": "100% (12/12 flow steps pass after testID fix)"},
+  "seed_data_creation": "Created user vp_test_ui / test1234 (role مدير التسجيل, faculties: الشريعة والقانون + البنات), later edited to single faculty, then DELETED via UI. No residual test data.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123, Salim/test1234 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "CRITICAL for this codebase: react-native-web does NOT render literal `data-testid` props — you must use the `testID` prop, which RNW converts to data-testid. Only manage-users.tsx was converted (8 testIDs: add-user-btn, edit-user-{username}, submit-add-user, submit-edit-user, faculty-toggle-{id}, edit-faculty-toggle-{id}, multi-faculty-note, edit-multi-faculty-note). Elsewhere use placeholders/text selectors. window.alert/confirm is used for success/error/delete confirmation, so always register a page.on('dialog') handler and assert on its message. Faculty ids: الشريعة والقانون=698e4f9297fef774e66e93a4, البنات=698e4fb497fef774e66e93a6.",
+  "rca_of_the_issue": "Initial run failed at 'open add modal' because [data-testid=\"add-user-btn\"] never appeared. Root cause: react-native-web's createDOMProps whitelists props and drops unknown `data-*` props on RN primitives; only `testID` is mapped to the data-testid DOM attribute. Confirmed by querying document.querySelectorAll('[data-testid]').length === 0 on the login screen. Renaming data-testid -> testID in manage-users.tsx made all 10 testIDs appear and the full multi-faculty flow passed end to end."
+}
