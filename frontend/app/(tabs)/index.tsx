@@ -194,9 +194,11 @@ export default function HomeDashboardScreen() {
       key: 'faculties', label: 'الكليات', count: counts.faculties,
       icon: 'school', color: '#0ea5e9', bg: '#e0f2fe',
       perms: [PERMISSIONS.MANAGE_FACULTIES, 'view_faculties'],
-      route: '/general-settings', note: 'جميع الكليات',
+      // 🔒 الإعدادات العامة للأدمن فقط — غير الأدمن: البطاقة معلوماتية بلا تنقل
+      route: user?.role === 'admin' ? '/general-settings' : '',
+      note: 'جميع الكليات',
     },
-  ], [counts]);
+  ], [counts, user]);
 
   const visibleStats = useMemo(() => {
     if (user?.role === 'admin') return stats;
@@ -289,7 +291,7 @@ export default function HomeDashboardScreen() {
               <TouchableOpacity
                 key={stat.key}
                 style={styles.statCard}
-                onPress={() => router.push(stat.route as any)}
+                onPress={() => { if (stat.route) router.push(stat.route as any); }}
                 activeOpacity={0.7}
                 data-testid={`stat-${stat.key}`}
               >

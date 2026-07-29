@@ -564,6 +564,30 @@ export default function GeneralSettingsScreen() {
     return <LoadingScreen />;
   }
 
+  // 🔒 الإعدادات العامة للمدير العام فقط (قرار صريح 2026-07 — لا يغيّر الصلاحيات أو الأدوار الأخرى)
+  if (!isAdmin) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }} testID="general-settings-access-denied">
+          <Ionicons name="lock-closed" size={56} color="#c62828" />
+          <Text style={{ fontSize: 18, fontWeight: '800', color: '#1a2540', marginTop: 16, textAlign: 'center' }}>
+            الإعدادات العامة متاحة لمدير النظام فقط
+          </Text>
+          <Text style={{ fontSize: 13, color: '#5b6678', marginTop: 8, textAlign: 'center' }}>
+            ليس لديك صلاحية الوصول لهذه الصفحة
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={{ marginTop: 20, backgroundColor: '#1565c0', paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8 }}
+            testID="general-settings-go-back"
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>رجوع</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // Note: Backend APIs already check permissions, so we just show the page
 
   // ==================== Render University Tab ====================
