@@ -183,6 +183,7 @@ from routes.schedule_import import router as schedule_import_router
 from routes.schedule_resolver import router as schedule_resolver_router
 from routes.lectures_purge import router as lectures_purge_router
 from routes.schedule_integrity import router as schedule_integrity_router
+from routes.statements import router as statements_router
 from routes.course_migration import router as course_migration_router
 from routes.study_plans import router as study_plans_router
 from routes.admin_tools import router as admin_tools_router
@@ -16275,6 +16276,7 @@ app.include_router(schedule_import_router, prefix="/api")
 app.include_router(schedule_resolver_router, prefix="/api")
 app.include_router(lectures_purge_router, prefix="/api")
 app.include_router(schedule_integrity_router, prefix="/api")
+app.include_router(statements_router, prefix="/api")
 app.include_router(course_migration_router, prefix="/api")
 app.include_router(study_plans_router, prefix="/api")
 app.include_router(admin_tools_router, prefix="/api")

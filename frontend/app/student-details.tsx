@@ -15,14 +15,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import {
+import api, {
   studentsAPI,
   departmentsAPI,
   attendanceAPI,
   reportsAPI,
   notificationsAPI,
 } from '../src/services/api';
-import api from '../src/services/api';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { useAuth, PERMISSIONS } from '../src/contexts/AuthContext';
 import { formatGregorianDate } from '../src/utils/dateUtils';
@@ -181,6 +180,11 @@ export default function StudentDetailsScreen() {
   // Export Excel + PDF
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [statementModal, setStatementModal] = useState(false);
+  const [statementNationality, setStatementNationality] = useState('');
+  const [statementPurpose, setStatementPurpose] = useState('');
+  const [issuingStatement, setIssuingStatement] = useState(false);
+  const [lastStatement, setLastStatement] = useState<any>(null);
 
   // 🆕 Notifications (إشعارات/إنذارات الطالب)
   const [studentNotifications, setStudentNotifications] = useState<any[]>([]);
@@ -624,6 +628,27 @@ export default function StudentDetailsScreen() {
     }
   };
 
+  const handleIssueStatement = async () => {
+    if (!student) return;
+    setIssuingStatement(true);
+    try {
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const res = await api.post('/statements/issue', {
+        student_id: student.id,
+        nationality: statementNationality || undefined,
+        purpose: statementPurpose || undefined,
+        base_url: baseUrl,
+      });
+      setLastStatement(res.data);
+      const pdfRes = await api.get(`/statements/${res.data.id}/pdf`, { responseType: 'blob' });
+      downloadBlob(pdfRes.data, `statement_${res.data.number.replace('/', '-')}.pdf`, 'application/pdf');
+    } catch (e: any) {
+      showMessage('خطأ', e?.response?.data?.detail || 'فشل إصدار الإفادة');
+    } finally {
+      setIssuingStatement(false);
+    }
+  };
+
   // ============== Computed ==============
   const totalCreditHours = useMemo(
     () => courses.reduce((sum, c) => sum + (c.credit_hours || 0), 0),
@@ -738,6 +763,21 @@ export default function StudentDetailsScreen() {
               <Ionicons name="arrow-forward" size={16} color="#1a2540" />
               <Text style={styles.btnGhostText}>رجوع</Text>
             </TouchableOpacity>
+            {canManage && (
+              <TouchableOpacity
+                style={[styles.headerBtn, { backgroundColor: '#00796b' }]}
+                onPress={() => {
+                  setStatementNationality((student as any)?.nationality || '');
+                  setStatementPurpose('');
+                  setLastStatement(null);
+                  setStatementModal(true);
+                }}
+                testID="issue-statement-btn"
+              >
+                <Ionicons name="ribbon" size={16} color="#fff" />
+                <Text style={styles.btnPrimaryText}>إفادة</Text>
+              </TouchableOpacity>
+            )}
             {canManage && (
               <TouchableOpacity
                 style={[styles.headerBtn, styles.btnExport, exportingPdf && { opacity: 0.5 }]}
@@ -2021,6 +2061,62 @@ export default function StudentDetailsScreen() {
                 <Text style={styles.notifSendBtnText}>
                   {sendingNotif ? 'جاري الإرسال...' : 'إرسال الإشعار'}
                 </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* نافذة إصدار إفادة الطالب */}
+      <Modal visible={statementModal} transparent animationType="fade" onRequestClose={() => setStatementModal(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: '100%', maxWidth: 480 }} testID="statement-modal">
+            <Text style={{ fontSize: 16, fontWeight: '800', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>📄 إصدار إفادة طالب</Text>
+            <Text style={{ fontSize: 12, color: '#5b6678', textAlign: 'right', marginBottom: 12, lineHeight: 20 }}>
+              ستصدر إفادة رسمية برقم تسلسلي ورمز QR للتحقق باسم: {student?.full_name} — المستوى {student?.level} ({departmentName || ''})
+            </Text>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الجنسية</Text>
+            <TextInput
+              value={statementNationality}
+              onChangeText={setStatementNationality}
+              placeholder="يمني"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 10, fontSize: 13 }}
+              testID="statement-nationality-input"
+            />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الغرض (اختياري)</Text>
+            <TextInput
+              value={statementPurpose}
+              onChangeText={setStatementPurpose}
+              placeholder="مثال: تقديمها للسفارة"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 12, fontSize: 13 }}
+              testID="statement-purpose-input"
+            />
+            {lastStatement && (
+              <View style={{ backgroundColor: '#e8f5e9', borderRadius: 8, padding: 10, marginBottom: 10 }} testID="statement-issued-info">
+                <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#2e7d32', textAlign: 'right' }}>
+                  ✅ صدرت الإفادة رقم {lastStatement.number} وتم تنزيل ملف PDF
+                </Text>
+                <Text style={{ fontSize: 11, color: '#557a5a', textAlign: 'right', marginTop: 4 }} selectable>
+                  رابط التحقق: {lastStatement.verify_url}
+                </Text>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                onPress={handleIssueStatement}
+                disabled={issuingStatement}
+                style={{ flex: 1, backgroundColor: '#00796b', borderRadius: 8, padding: 12, alignItems: 'center', opacity: issuingStatement ? 0.6 : 1 }}
+                testID="statement-issue-confirm-btn"
+              >
+                {issuingStatement ? <ActivityIndicator size="small" color="#fff" /> : (
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13.5 }}>إصدار وتنزيل PDF</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setStatementModal(false)}
+                style={{ flex: 0.5, borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 12, alignItems: 'center' }}
+              >
+                <Text style={{ color: '#555', fontWeight: '600', fontSize: 13 }}>إغلاق</Text>
               </TouchableOpacity>
             </View>
           </View>
