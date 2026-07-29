@@ -1050,7 +1050,7 @@ export default function ManageUsersScreen() {
               
               <Text style={styles.inputLabel}>الدور</Text>
               <View style={styles.roleSelector}>
-                {roles.map(role => (
+                {roles.filter(r => !['student', 'teacher'].includes((r as any).system_key || '')).map(role => (
                   <TouchableOpacity
                     key={role.id}
                     style={[
