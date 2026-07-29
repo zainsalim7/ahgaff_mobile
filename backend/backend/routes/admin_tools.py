@@ -15,6 +15,40 @@ from models.permissions import UserRole
 router = APIRouter(tags=["أدوات الأدمن"])
 
 
+# ==================== Bulk Nationality Fill ====================
+@router.post("/admin/students/bulk-nationality")
+async def bulk_set_nationality(payload: dict, current_user: dict = Depends(get_current_user)):
+    """تعبئة جماعية لجنسية الطلاب الحاليين (غير الخريجين) حسب قواعد لكل كلية.
+
+    body: {"default": "إندونيسي", "rules": [{"faculty_id": "..", "nationality": ".."}], "only_missing": false}
+    """
+    if current_user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح لك — هذه الأداة للأدمن فقط")
+    db = get_db()
+    default_nat = (payload.get("default") or "").strip()
+    rules = {r["faculty_id"]: r["nationality"].strip() for r in (payload.get("rules") or []) if r.get("faculty_id") and r.get("nationality")}
+    only_missing = bool(payload.get("only_missing"))
+    if not default_nat and not rules:
+        raise HTTPException(status_code=400, detail="يجب تحديد جنسية افتراضية أو قواعد كليات")
+
+    dept_fac = {}
+    async for d in db.departments.find({}, {"faculty_id": 1}):
+        dept_fac[str(d["_id"])] = d.get("faculty_id", "")
+
+    counts: dict = {}
+    async for s in db.students.find({"is_alumni": {"$ne": True}}, {"faculty_id": 1, "department_id": 1, "nationality": 1}):
+        if only_missing and (s.get("nationality") or "").strip():
+            continue
+        fid = s.get("faculty_id") or dept_fac.get(s.get("department_id", ""), "")
+        nat = rules.get(fid) or default_nat
+        if not nat:
+            continue
+        await db.students.update_one({"_id": s["_id"]}, {"$set": {"nationality": nat}})
+        counts[nat] = counts.get(nat, 0) + 1
+
+    return {"message": "تمت التعبئة الجماعية للجنسيات", "updated": sum(counts.values()), "by_nationality": counts}
+
+
 # ==================== Lecture Semester Backfill ====================
 def _normalize_semester_date(d):
     """نسخة محلية من normalize_semester_date لتجنب الاستيراد الدائري."""
