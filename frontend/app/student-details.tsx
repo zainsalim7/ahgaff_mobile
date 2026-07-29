@@ -869,10 +869,17 @@ export default function StudentDetailsScreen() {
                 </>
               ) : null}
             </View>
-            {(student.phone || student.email) && (
+            {(student.phone || student.email || (student as any).nationality) && (
               <View style={styles.studentSubRow}>
+                {(student as any).nationality ? (
+                  <View style={styles.metaItem}>
+                    <Ionicons name="flag-outline" size={13} color="#5b6678" />
+                    <Text style={styles.metaText}>{(student as any).nationality}</Text>
+                  </View>
+                ) : null}
                 {student.phone ? (
                   <View style={styles.metaItem}>
+                    {(student as any).nationality ? <View style={styles.dot} /> : null}
                     <Ionicons name="call-outline" size={13} color="#5b6678" />
                     <Text style={styles.metaText}>{student.phone}</Text>
                   </View>
@@ -2075,19 +2082,29 @@ export default function StudentDetailsScreen() {
           <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: '100%', maxWidth: 480 }} testID="statement-modal">
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
               <Text style={{ fontSize: 16, fontWeight: '800', color: '#1a2540', textAlign: 'right' }}>📄 إصدار إفادة طالب</Text>
-              <TouchableOpacity
-                onPress={() => { setStatementModal(false); router.push(`/statement-settings?facultyId=${student?.faculty_id || ''}`); }}
-                style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, backgroundColor: '#e0f2f1' }}
-                testID="statement-settings-link"
-              >
-                <Ionicons name="settings-outline" size={14} color="#00796b" />
-                <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#00796b' }}>إعدادات الكليشة</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
+                <TouchableOpacity
+                  onPress={() => { setStatementModal(false); router.push(`/statement-settings?facultyId=${student?.faculty_id || ''}`); }}
+                  style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, backgroundColor: '#e0f2f1' }}
+                  testID="statement-settings-link"
+                >
+                  <Ionicons name="settings-outline" size={14} color="#00796b" />
+                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#00796b' }}>إعدادات الكليشة</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => { setStatementModal(false); router.push('/statements-log'); }}
+                  style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, backgroundColor: '#e3f2fd' }}
+                  testID="statements-log-link"
+                >
+                  <Ionicons name="list-outline" size={14} color="#1565c0" />
+                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: '#1565c0' }}>سجل الإفادات</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <Text style={{ fontSize: 12, color: '#5b6678', textAlign: 'right', marginBottom: 12, lineHeight: 20 }}>
               ستصدر إفادة رسمية برقم تسلسلي ورمز QR للتحقق باسم: {student?.full_name} — المستوى {student?.level} ({departmentName || ''})
             </Text>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الجنسية</Text>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الجنسية (تُجلب تلقائياً من بيانات الطالب — يمكن تعديلها)</Text>
             <TextInput
               value={statementNationality}
               onChangeText={setStatementNationality}

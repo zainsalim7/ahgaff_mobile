@@ -3656,6 +3656,7 @@ async def get_students(
         "section": s["section"],
         "phone": s.get("phone"),
         "email": s.get("email"),
+        "nationality": s.get("nationality"),
         "user_id": s.get("user_id"),
         "qr_code": s["qr_code"],
         "created_at": s["created_at"],
@@ -3697,6 +3698,7 @@ async def get_my_student_record(current_user: dict = Depends(get_current_user)):
         "section": student["section"],
         "phone": student.get("phone"),
         "email": student.get("email"),
+        "nationality": student.get("nationality"),
         "user_id": student.get("user_id"),
         "qr_code": student["qr_code"],
         "created_at": student["created_at"],
@@ -3898,6 +3900,7 @@ async def get_student(student_id: str, current_user: dict = Depends(get_current_
         "section": student["section"],
         "phone": student.get("phone"),
         "email": student.get("email"),
+        "nationality": student.get("nationality"),
         "user_id": student.get("user_id"),
         "qr_code": student["qr_code"],
         "created_at": student["created_at"],
@@ -3919,6 +3922,7 @@ async def get_student_by_qr(qr_code: str, current_user: dict = Depends(get_curre
         "section": student["section"],
         "phone": student.get("phone"),
         "email": student.get("email"),
+        "nationality": student.get("nationality"),
         "user_id": student.get("user_id"),
         "qr_code": student["qr_code"],
         "created_at": student["created_at"],
@@ -4139,6 +4143,7 @@ class StudentUpdate(BaseModel):
     section: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    nationality: Optional[str] = None
 
 @api_router.put("/students/{student_id}", response_model=StudentResponse)
 async def update_student(student_id: str, data: StudentUpdate, current_user: dict = Depends(get_current_user)):
@@ -4209,6 +4214,7 @@ async def update_student(student_id: str, data: StudentUpdate, current_user: dic
         "section": updated["section"],
         "phone": updated.get("phone"),
         "email": updated.get("email"),
+        "nationality": updated.get("nationality"),
         "user_id": updated.get("user_id"),
         "qr_code": updated["qr_code"],
         "created_at": updated["created_at"],
@@ -12644,6 +12650,8 @@ async def import_students_from_excel(
             'البريد': 'email',
             'البريد الإلكتروني': 'email',
             'الإيميل': 'email',
+            'الجنسية': 'nationality',
+            'جنسية الطالب': 'nationality',
             # إضافة "رقم الطالب" كبديل لـ "رقم القيد"
             'رقم الطالب': 'student_id',
             # حقول الرقم المرجعي
@@ -12701,6 +12709,7 @@ async def import_students_from_excel(
                     "section": student_section,
                     "phone": str(row.get('phone', '')) if pd.notna(row.get('phone')) else None,
                     "email": str(row.get('email', '')) if pd.notna(row.get('email')) else None,
+                    "nationality": str(row.get('nationality', '')).strip() if pd.notna(row.get('nationality')) else None,
                     "qr_code": generate_qr_code(str(row['student_id'])),
                     "created_at": get_yemen_time(),
                     "is_active": True,
@@ -13624,6 +13633,7 @@ async def get_students_template(current_user: dict = Depends(get_current_user)):
         "اسم الطالب": ["محمد أحمد علي", "أحمد محمد سعيد", "خالد سالم"],
         "البرنامج": ["B", "B", "M"],
         "سنة الالتحاق": ["25", "25", "24"],
+        "الجنسية": ["يمني", "سعودي", "يمني"],
     }
     
     df = pd.DataFrame(data)

@@ -33,6 +33,7 @@ export interface Student {
   section: string;
   phone?: string;
   email?: string;
+  nationality?: string;
   user_id?: string;
   qr_code: string;
   created_at: string;

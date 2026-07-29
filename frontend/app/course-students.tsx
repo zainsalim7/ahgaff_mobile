@@ -120,6 +120,7 @@ export default function CourseStudentsScreen() {
     section: '',
     phone: '',
     email: '',
+    nationality: '',
     password: '',
     program_code: '',
     enrollment_year: '',
@@ -332,6 +333,7 @@ export default function CourseStudentsScreen() {
         section: course?.section || '',
         phone: newStudentForm.phone.trim() || null,
         email: newStudentForm.email.trim() || null,
+        nationality: newStudentForm.nationality.trim() || null,
       };
       if (newStudentForm.program_code.trim()) {
         studentData.program_code = newStudentForm.program_code.trim().toUpperCase();
@@ -354,7 +356,7 @@ export default function CourseStudentsScreen() {
         Alert.alert('نجاح', 'تم إنشاء الطالب');
       }
       
-      setNewStudentForm({ student_id: '', full_name: '', department_id: '', level: '1', section: '', phone: '', email: '', password: '', program_code: '', enrollment_year: '' });
+      setNewStudentForm({ student_id: '', full_name: '', department_id: '', level: '1', section: '', phone: '', email: '', nationality: '', password: '', program_code: '', enrollment_year: '' });
       setShowAddModal(false);
       fetchData();
     } catch (error: any) {

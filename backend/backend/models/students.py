@@ -14,6 +14,7 @@ class StudentBase(BaseModel):
     section: str
     phone: Optional[str] = None
     email: Optional[str] = None
+    nationality: Optional[str] = None
     program_code: Optional[str] = None  # B/M/D/E/P
     enrollment_year: Optional[str] = None  # 25, 26, 27...
 

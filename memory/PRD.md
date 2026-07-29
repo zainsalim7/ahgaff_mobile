@@ -1013,6 +1013,13 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - اختبار E2E عبر API: إصدار بـ90 يوم → تحقق (صالحة حتى) → إلغاء → تحقق (ملغاة) → استعادة → تحقق (سارية) → انتهاء صلاحية (تاريخ ماضٍ) → تحقق (منتهية) ✔️ + معاينة PDF بسطر الصلاحية ✔️ + لقطة شاشة لصفحة السجل ✔️
   - **(2026-07-29) وصول مباشر**: بطاقة "سجل الإفادات" (`statements-log-btn`) في صفحة التقارير (`reports.tsx`) — تظهر لغير المعلم/الطالب (مطابق لصلاحية `_can_issue` بالخادم). مختبر بلقطة شاشة + نقرة تنقل للسجل.
 
+- ✅ **Student Nationality field (2026-07-29)**: بطلب المستخدم — الجنسية ضمن بيانات الطالب الأساسية:
+  - Backend: `nationality` في `StudentBase`/`StudentUpdate` + كل نقاط التسلسل اليدوية (قائمة/تفاصيل/QR/me/تحديث في server.py). استيراد Excel يدعم عمود "الجنسية" (mapping + student_data)، وقالب `/template/students` يتضمنه.
+  - Frontend: حقل الجنسية في نموذج الإضافة (`AddStudentForm` — يُستخدم في students وcourse-students)، نافذة التعديل (`edit-student-nationality-input`)، عرضها في تفاصيل الطالب (أيقونة علم)، ونوع `Student` في types.
+  - الإفادة: تُجلب الجنسية تلقائياً من بيانات الطالب (fallback موجود مسبقاً بالخادم + prefill بالواجهة) — لا حاجة لكتابتها عند كل إصدار.
+  - ملاحظة: أُعيد رابط `statements-log-link` في نافذة الإفادة بعد فقدانه (rollback محتمل).
+  - اختبار E2E: إنشاء بجنسية → عرض → تعديل → استيراد Excel بعمود الجنسية (2 طلاب) → القالب → إصدار إفادة تلقائية بجنسية الطالب ✔️ + لقطة شاشة (العرض + prefill بالمودال) ✔️ ثم حُذف طلاب الاختبار.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

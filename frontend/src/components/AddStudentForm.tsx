@@ -11,6 +11,7 @@ export interface StudentFormValues {
   section: string;
   phone: string;
   email: string;
+  nationality: string;
   password: string;
   program_code: string;
   enrollment_year: string;
@@ -24,6 +25,7 @@ export const emptyStudentForm: StudentFormValues = {
   section: '',
   phone: '',
   email: '',
+  nationality: '',
   password: '',
   program_code: '',
   enrollment_year: '',
@@ -163,6 +165,15 @@ export const AddStudentForm: React.FC<Props> = ({
           اتركهما فارغين لاستخدام القيم الافتراضية من القسم/المستوى.
         </Text>
       </View>
+
+      <Text style={[styles.label, styles.mt10]}>الجنسية (اختياري — الافتراضي: يمني)</Text>
+      <TextInput
+        value={values.nationality}
+        onChangeText={(v) => set({ nationality: v })}
+        placeholder="يمني"
+        style={styles.input}
+        testID="add-student-nationality-input"
+      />
 
       <Text style={[styles.label, styles.mt10]}>الجوال (اختياري)</Text>
       <TextInput

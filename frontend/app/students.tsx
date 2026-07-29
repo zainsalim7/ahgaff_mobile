@@ -131,6 +131,7 @@ export default function StudentsScreen() {
     full_name: '',
     phone: '',
     email: '',
+    nationality: '',
     level: '1',
     section: '',
     program_code: '',
@@ -231,6 +232,7 @@ export default function StudentsScreen() {
     section: '',
     phone: '',
     email: '',
+    nationality: '',
     password: '',
     program_code: '',
     enrollment_year: '',
@@ -263,7 +265,7 @@ export default function StudentsScreen() {
       const refMsg = r.data?.reference_number ? `\nالرقم المرجعي: ${r.data.reference_number}` : '';
       showMessage('تم', `أُضيف الطالب: ${r.data.full_name}${refMsg}`);
       setShowAddModal(false);
-      setNewStudent({ student_id: '', full_name: '', department_id: '', level: '1', section: '', phone: '', email: '', password: '', program_code: '', enrollment_year: '' });
+      setNewStudent({ student_id: '', full_name: '', department_id: '', level: '1', section: '', phone: '', email: '', nationality: '', password: '', program_code: '', enrollment_year: '' });
       fetchData();
     } catch (e: any) {
       showMessage('خطأ', e?.response?.data?.detail || 'فشل في إضافة الطالب');
@@ -1008,6 +1010,7 @@ export default function StudentsScreen() {
       full_name: student.full_name,
       phone: student.phone || '',
       email: student.email || '',
+      nationality: (student as any).nationality || '',
       level: student.level || '1',
       section: student.section || '',
       program_code: (student as any).program_code || '',
@@ -2108,6 +2111,18 @@ export default function StudentsScreen() {
                   placeholderTextColor="#999"
                   keyboardType="number-pad"
                   maxLength={2}
+                />
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>الجنسية</Text>
+                <TextInput
+                  style={styles.input}
+                  value={editFormData.nationality}
+                  onChangeText={(text) => setEditFormData(prev => ({ ...prev, nationality: text }))}
+                  placeholder="يمني (اختياري)"
+                  placeholderTextColor="#999"
+                  testID="edit-student-nationality-input"
                 />
               </View>
               
