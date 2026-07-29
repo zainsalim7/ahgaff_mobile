@@ -184,6 +184,7 @@ from routes.schedule_resolver import router as schedule_resolver_router
 from routes.lectures_purge import router as lectures_purge_router
 from routes.schedule_integrity import router as schedule_integrity_router
 from routes.statements import router as statements_router
+from routes.student_cards import router as student_cards_router
 from routes.course_migration import router as course_migration_router
 from routes.study_plans import router as study_plans_router
 from routes.admin_tools import router as admin_tools_router
@@ -3909,7 +3910,8 @@ async def get_student(student_id: str, current_user: dict = Depends(get_current_
 
 @api_router.get("/students/qr/{qr_code}", response_model=StudentResponse)
 async def get_student_by_qr(qr_code: str, current_user: dict = Depends(get_current_user)):
-    student = await db.students.find_one({"qr_code": qr_code})
+    # يدعم QR القديم (qr_code) وتوكن البطاقة الرقمية (card_token)
+    student = await db.students.find_one({"$or": [{"qr_code": qr_code}, {"card_token": qr_code}]})
     if not student:
         raise HTTPException(status_code=404, detail="الطالب غير موجود")
     
@@ -16287,6 +16289,7 @@ app.include_router(schedule_resolver_router, prefix="/api")
 app.include_router(lectures_purge_router, prefix="/api")
 app.include_router(schedule_integrity_router, prefix="/api")
 app.include_router(statements_router, prefix="/api")
+app.include_router(student_cards_router, prefix="/api")
 app.include_router(course_migration_router, prefix="/api")
 app.include_router(study_plans_router, prefix="/api")
 app.include_router(admin_tools_router, prefix="/api")

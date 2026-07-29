@@ -44,3 +44,8 @@
 - 1001 → AUB2501001
 - 1002 → AUB2501002
 - 1003 → AUB2501003
+
+## Student Account (Added 2026-07-29)
+- Username: 234
+- Password: test1234
+- Student: خالد (خريج/alumni — بطاقته تظهر "لم تعد سارية" وهذا سلوك صحيح)

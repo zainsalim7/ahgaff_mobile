@@ -31,9 +31,15 @@ export default function QRScannerScreen() {
     setScanned(true);
     setLastScanned(data);
 
+    // دعم البطاقة الرقمية: استخراج التوكن من رابط التحقق
+    let qrValue = data;
+    if (data.includes('token=')) {
+      qrValue = data.split('token=')[1].split('&')[0];
+    }
+
     try {
       // Get student by QR code
-      const studentRes = await studentsAPI.getByQR(data);
+      const studentRes = await studentsAPI.getByQR(qrValue);
       const student = studentRes.data;
 
       if (scannedStudents.includes(student.id)) {

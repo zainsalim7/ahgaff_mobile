@@ -782,6 +782,16 @@ export default function StudentDetailsScreen() {
             )}
             {canManage && (
               <TouchableOpacity
+                style={[styles.headerBtn, { backgroundColor: '#00695c' }]}
+                onPress={() => router.push(`/student-card?studentId=${student?.id}`)}
+                testID="student-card-btn"
+              >
+                <Ionicons name="card" size={16} color="#fff" />
+                <Text style={styles.btnPrimaryText}>البطاقة</Text>
+              </TouchableOpacity>
+            )}
+            {canManage && (
+              <TouchableOpacity
                 style={[styles.headerBtn, styles.btnExport, exportingPdf && { opacity: 0.5 }]}
                 onPress={handleExportPdf}
                 disabled={exportingPdf}

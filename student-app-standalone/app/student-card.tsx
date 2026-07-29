@@ -1,66 +1,77 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
-  Platform,
-  Share,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
-import { studentsAPI, departmentsAPI, settingsAPI } from '../src/services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
+import api from '../src/services/api';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 
+const THEME: any = {
+  green: { band: '#1b5e20', bg: '#fff', text: '#1a2540', bandText: '#fff', accent: '#1b5e20', muted: '#5b6678', strip: '#e8f5e9', stripText: '#1b5e20' },
+  dark: { band: '#071417', bg: '#0f2027', text: '#fff', bandText: '#fff', accent: '#4db6ac', muted: '#b0bec5', strip: '#071417', stripText: '#4db6ac' },
+  horizontal: { band: '#1b5e20', bg: '#fff', text: '#1a2540', bandText: '#fff', accent: '#1b5e20', muted: '#5b6678', strip: '#e8f5e9', stripText: '#1b5e20' },
+};
+
 export default function StudentCardScreen() {
-  const [student, setStudent] = useState<any>(null);
-  const [departmentName, setDepartmentName] = useState('');
-  const [collegeName, setCollegeName] = useState('');
+  const [card, setCard] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const studentRes = await studentsAPI.getMe();
-      setStudent(studentRes.data);
-
-      if (studentRes.data?.department_id) {
-        try {
-          const deptsRes = await departmentsAPI.getAll();
-          const dept = deptsRes.data.find((d: any) => d.id === studentRes.data.department_id);
-          if (dept) setDepartmentName(dept.name);
-        } catch (e) {}
-      }
-
-      try {
-        const settingsRes = await settingsAPI.get();
-        if (settingsRes.data?.college_name) setCollegeName(settingsRes.data.college_name);
-      } catch (e) {}
+      const t = await AsyncStorage.getItem('token');
+      setToken(t || '');
+      const res = await api.get('/students/me/card');
+      setCard(res.data);
     } catch (error) {
-      console.error('Error fetching student:', error);
+      console.error('Error fetching card:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleShare = async () => {
-    if (!student) return;
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const fileUrl = (path: string) => `${api.defaults.baseURL}/files/${path}?auth=${token}`;
+
+  const uploadPhoto = async () => {
     try {
-      await Share.share({
-        message: `بطاقة الطالب\nالاسم: ${student.full_name}\nالرقم الأكاديمي: ${student.student_id}\nالقسم: ${departmentName}\nالمستوى: ${student.level}`,
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [3, 4],
+        quality: 0.8,
       });
-    } catch (error) {}
+      if (result.canceled || !result.assets?.[0]) return;
+      setBusy(true);
+      setMsg('');
+      const asset = result.assets[0];
+      const fd = new FormData();
+      if (Platform.OS === 'web') {
+        const blob = await (await fetch(asset.uri)).blob();
+        fd.append('file', new File([blob], 'photo.jpg', { type: blob.type || 'image/jpeg' }));
+      } else {
+        fd.append('file', { uri: asset.uri, name: 'photo.jpg', type: 'image/jpeg' } as any);
+      }
+      await api.post('/students/me/photo', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setMsg('✅ تم رفع صورتك — ستظهر على البطاقة بعد اعتماد المسجل');
+      fetchData();
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || 'فشل رفع الصورة');
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (loading) return <LoadingScreen />;
 
-  if (!student) {
+  if (!card) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.errorContainer}>
@@ -71,74 +82,75 @@ export default function StudentCardScreen() {
     );
   }
 
+  const t = THEME[card.template] || THEME.green;
+  const levelAr = ['', 'الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن'][card.level] || String(card.level);
+  const rows = [
+    ['رقم القيد', card.enrollment_no],
+    ...(card.reference_number ? [['الرقم المرجعي', card.reference_number]] : []),
+    ['التخصص', card.department_name],
+    ['المستوى', `المستوى ${levelAr}`],
+    ['الجنسية', card.nationality],
+  ];
+
   return (
     <SafeAreaView style={styles.container} edges={['bottom']} data-testid="student-card-screen">
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.card}>
-          {/* Card Header */}
-          <View style={styles.cardHeader}>
-            {collegeName ? (
-              <Text style={styles.collegeName}>{collegeName}</Text>
+        {/* ===== البطاقة الرقمية ===== */}
+        <View style={[styles.card, { backgroundColor: t.bg }]} data-testid="digital-card">
+          <View style={{ backgroundColor: t.band, alignItems: 'center', paddingVertical: 14 }}>
+            <Text style={{ color: t.bandText, fontSize: 18, fontWeight: '800' }}>جامعة الأحقاف</Text>
+            <Text style={{ color: t.bandText, fontSize: 12.5, fontWeight: '600', marginTop: 2 }}>{card.faculty_name}</Text>
+            <Text style={{ color: t.bandText, fontSize: 13, fontWeight: '800', marginTop: 4 }}>بطاقة طالب</Text>
+          </View>
+          <View style={{ alignItems: 'center', paddingTop: 16 }}>
+            {card.photo_path ? (
+              <Image source={{ uri: fileUrl(card.photo_path) }} style={{ width: 130, height: 160, borderWidth: 3, borderColor: t.accent, backgroundColor: '#fff' }} resizeMode="cover" data-testid="card-photo" />
             ) : (
-              <Text style={styles.collegeName}>جامعة الأحقاف</Text>
-            )}
-            <Text style={styles.cardType}>بطاقة طالب</Text>
-          </View>
-
-          {/* Student Photo / Avatar */}
-          <View style={styles.avatarSection}>
-            <View style={styles.avatarCircle}>
-              <Ionicons name="school" size={48} color="#0d47a1" />
-            </View>
-          </View>
-
-          {/* Student Info */}
-          <View style={styles.infoSection}>
-            <Text style={styles.studentName} data-testid="card-student-name">{student.full_name}</Text>
-            <Text style={styles.studentIdText} data-testid="card-student-id">#{student.student_id}</Text>
-          </View>
-
-          {/* Details */}
-          <View style={styles.detailsGrid}>
-            <View style={styles.detailRow}>
-              <Ionicons name="business-outline" size={18} color="#0d47a1" />
-              <Text style={styles.detailLabel}>القسم</Text>
-              <Text style={styles.detailValue}>{departmentName || 'غير محدد'}</Text>
-            </View>
-
-            <View style={styles.detailRow}>
-              <Ionicons name="layers-outline" size={18} color="#0d47a1" />
-              <Text style={styles.detailLabel}>المستوى</Text>
-              <Text style={styles.detailValue}>{student.level || 'غير محدد'}</Text>
-            </View>
-
-            {student.section && (
-              <View style={styles.detailRow}>
-                <Ionicons name="people-outline" size={18} color="#0d47a1" />
-                <Text style={styles.detailLabel}>الشعبة</Text>
-                <Text style={styles.detailValue}>{student.section}</Text>
+              <View style={{ width: 130, height: 160, backgroundColor: '#e6eaf2', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="person" size={44} color="#9aa4b2" />
+                <Text style={{ fontSize: 10, color: '#7b8794' }}>لا توجد صورة</Text>
               </View>
             )}
-          </View>
-
-          {/* QR Code */}
-          {student.qr_code && (
-            <View style={styles.qrSection}>
-              <View style={styles.qrBorder}>
-                <QRCode value={student.qr_code} size={160} backgroundColor="white" color="#0d47a1" />
-              </View>
-              <Text style={styles.qrHint}>استخدم هذا الرمز لتسجيل الحضور</Text>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: t.text, marginTop: 10, textAlign: 'center', paddingHorizontal: 12 }} data-testid="card-student-name">
+              {card.student_name}
+            </Text>
+            <View style={{ width: '100%', paddingHorizontal: 20, marginTop: 10 }}>
+              {rows.map(([k, v]) => (
+                <View key={k} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', marginBottom: 7 }}>
+                  <Text style={{ fontSize: 12, color: t.muted, fontWeight: '700' }}>{k}:</Text>
+                  <Text style={{ fontSize: 13, color: t.text, fontWeight: '700' }}>{v}</Text>
+                </View>
+              ))}
             </View>
-          )}
-
-          {/* Card Footer */}
-          <View style={styles.cardFooter}>
-            <TouchableOpacity style={styles.shareBtn} onPress={handleShare} data-testid="share-card-btn">
-              <Ionicons name="share-outline" size={18} color="#0d47a1" />
-              <Text style={styles.shareBtnText}>مشاركة</Text>
-            </TouchableOpacity>
+            <View style={{ backgroundColor: '#fff', padding: 8, borderRadius: 8, marginTop: 6 }}>
+              <QRCode value={card.verify_url} size={130} />
+            </View>
+            <Text style={{ fontSize: 11, color: t.muted, marginTop: 6, marginBottom: 10 }}>
+              يُستخدم للتحقق ولتسجيل الحضور
+            </Text>
+          </View>
+          <View style={{ backgroundColor: t.strip, paddingVertical: 7 }}>
+            <Text style={{ textAlign: 'center', color: t.stripText, fontSize: 12.5, fontWeight: '800' }} data-testid="card-validity">
+              صالحة للعام الجامعي {card.academic_year}
+            </Text>
           </View>
         </View>
+
+        {/* صورة معلقة */}
+        {!!card.pending_photo_path && (
+          <View style={styles.pendingBox} data-testid="pending-photo-note">
+            <Ionicons name="time-outline" size={18} color="#8d6e00" />
+            <Text style={styles.pendingText}>صورتك المرفوعة بانتظار اعتماد المسجل</Text>
+          </View>
+        )}
+
+        {!!msg && <Text style={styles.msg} data-testid="upload-msg">{msg}</Text>}
+
+        <TouchableOpacity onPress={uploadPhoto} disabled={busy} style={[styles.uploadBtn, busy && { opacity: 0.6 }]} data-testid="upload-my-photo-btn">
+          {busy ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="camera" size={18} color="#fff" />}
+          <Text style={styles.uploadBtnText}>{card.photo_path ? 'تحديث صورتي' : 'رفع صورتي للبطاقة'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.uploadHint}>تُعتمد الصورة من مسجل الكلية قبل ظهورها على البطاقة</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -146,85 +158,23 @@ export default function StudentCardScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f0f2f5' },
-  scrollContent: { padding: 20, alignItems: 'center' },
+  scrollContent: { padding: 20, alignItems: 'center', paddingBottom: 40 },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   errorText: { fontSize: 16, color: '#c62828', marginTop: 12 },
-
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    width: '100%',
-    maxWidth: 380,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    overflow: 'hidden',
+    borderRadius: 18, width: '100%', maxWidth: 360, overflow: 'hidden',
+    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 12,
   },
-
-  cardHeader: {
-    backgroundColor: '#0d47a1',
-    paddingVertical: 20,
-    paddingHorizontal: 24,
-    alignItems: 'center',
+  pendingBox: {
+    flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: '#fff8e1',
+    borderRadius: 10, padding: 10, marginTop: 14, borderWidth: 1, borderColor: '#ffe082', maxWidth: 360, width: '100%',
   },
-  collegeName: { fontSize: 17, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
-  cardType: { fontSize: 13, color: 'rgba(255,255,255,0.7)' },
-
-  avatarSection: { alignItems: 'center', marginTop: -32 },
-  avatarCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#e8eaf6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 4,
-    borderColor: '#fff',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  pendingText: { fontSize: 12.5, fontWeight: '700', color: '#8d6e00', textAlign: 'right', flex: 1 },
+  msg: { marginTop: 12, fontSize: 12.5, fontWeight: '700', color: '#2e7d32', textAlign: 'center' },
+  uploadBtn: {
+    flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#00796b', borderRadius: 12, paddingVertical: 13, marginTop: 16, width: '100%', maxWidth: 360,
   },
-
-  infoSection: { alignItems: 'center', paddingTop: 12, paddingBottom: 8 },
-  studentName: { fontSize: 20, fontWeight: 'bold', color: '#1a1a2e' },
-  studentIdText: { fontSize: 15, color: '#0d47a1', fontWeight: '600', marginTop: 4 },
-
-  detailsGrid: { paddingHorizontal: 24, paddingVertical: 8 },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    gap: 10,
-  },
-  detailLabel: { fontSize: 13, color: '#999', flex: 1 },
-  detailValue: { fontSize: 14, fontWeight: '600', color: '#1a1a2e' },
-
-  qrSection: { alignItems: 'center', paddingVertical: 20 },
-  qrBorder: {
-    padding: 14,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#e8eaf6',
-    backgroundColor: '#fff',
-  },
-  qrHint: { fontSize: 12, color: '#999', marginTop: 10 },
-
-  cardFooter: { paddingHorizontal: 24, paddingBottom: 20, alignItems: 'center' },
-  shareBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#0d47a1',
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 20,
-    gap: 6,
-  },
-  shareBtnText: { color: '#0d47a1', fontWeight: '600', fontSize: 14 },
+  uploadBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  uploadHint: { fontSize: 11, color: '#8a95a8', marginTop: 8, textAlign: 'center' },
 });

@@ -1,0 +1,44 @@
+{
+  "summary": "Tested the new Student Digital Card feature end-to-end. Backend: created /app/backend/tests/test_student_cards.py (21 pytest cases) covering card payload, per-faculty template settings (green/dark/horizontal + 400 on invalid), admin photo upload (immediate), student self-upload (pending) + pending list + approve/reject, public verify (active=valid / alumni=لم تعد سارية / random token=invalid), public card photo, PNG/PDF download for all 3 templates (magic bytes verified), and QR resolution by card_token and legacy qr_code. ALL 21 PASSED. Frontend (Playwright, admin admin/admin123): login -> /student-details -> 'البطاقة' navigates to /student-card and renders digital card (dark template) with name, QR, validity strip; تنزيل صورة downloaded card_1001.png (79KB) and تنزيل PDF downloaded card_1001.pdf (83KB); تصميم البطاقة opens /card-settings with 3 template options, selection + حفظ التصميم shows success msg and persists after reload (card re-renders in horizontal layout); /reports shows both 'سجل الإفادات' and 'اعتماد صور الطلاب' cards and navigation works; /photo-approvals listed the pending photo for خالد and 'اعتماد' approved it (count 1 -> 0 with empty state); public /verify-card?token=... works without login for valid, alumni and random tokens.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Public QR verify link / new routes",
+        "issue": "Direct HTTP load of /verify-card, /card-settings and /photo-approvals returns HTTP status 404 (page still renders via SPA fallback). Root cause: /app/frontend/dist static export is stale — verify-card.html, card-settings.html, photo-approvals.html do not exist (student-card.html and reports.html do, and those return 200). In a production/static deploy the public QR verify URL would hard-404. Re-run the web export/build after adding the new routes.",
+        "affected_selectors": ["/verify-card", "/card-settings", "/photo-approvals"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "student-card (horizontal template)",
+        "issues": ["QR code sits very close to the data column (رقم القيد/التخصص rows) leaving almost no gutter; consider more spacing or moving QR below the data block", "Horizontal card has no 'امسح الرمز للتحقق' hint text next to the QR (present in vertical templates)"]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_student_cards.py",
+    "/app/test_reports/pytest/student_cards.xml"
+  ],
+  "action_items": [
+    "Regenerate the Expo web export (/app/frontend/dist) so verify-card, card-settings and photo-approvals routes exist as static entries — currently the public verify URL returns HTTP 404 status on direct load",
+    "Optional: improve QR spacing in the horizontal card template"
+  ],
+  "critical_code_review_comments": [
+    "student_cards.py: data-testid props declared on RN View/Text components are NOT emitted in the DOM by react-native-web (verified: zero [data-testid] elements on every page, including pre-existing /login). Frontend pages of this feature rely on data-testid only; use testID (RNW maps it on some primitives) or accessibilityLabel if automated selectors are desired. Tests had to fall back to Arabic text selectors.",
+    "verify_card(): returns the full student payload (name, enrollment no, faculty) for expired/alumni cards on a fully public endpoint — acceptable for verification, but consider trimming PII when valid=false",
+    "_card_payload/_ensure_card writes a new card_token on every academic-year change (correct), but /verify/card compares s['card_academic_year'] to the active year; students never opened in the card page keep old tokens (expected behaviour, documented)"
+  ],
+  "updated_files": ["/app/backend/tests/test_student_cards.py", "/app/test_reports/iteration_60.json"],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "95% (all flows pass; only static-export 404 status issue)"},
+  "seed_data_creation": "Uploaded a small generated JPEG as photo for student 'طالب اختبار 1' (698e57518cfb2f14627a285e) and for student 234 (خالد) via student self-upload then approved it through the UI. No records deleted; card_settings for faculty 698e4f9297fef774e66e93a4 restored to its original value 'dark'.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123 (works), student 234/test1234 (works; /app/memory/test_credentials.md still lists old password '234' — should be updated)",
+  "context_for_next_testing_agent": "Backend regression suite for cards: /app/backend/tests/test_student_cards.py (self-contained, restores template setting). NOTE: react-native-web strips data-testid app-wide, so Playwright must use Arabic text selectors (login: input[placeholder*='اسم المستخدم'] + text 'تسجيل الدخول' with force=True). Active test student id 698e57518cfb2f14627a285e (faculty 698e4f9297fef774e66e93a4).",
+  "rca_of_the_issue": "Stale Expo static export: /app/frontend/dist contains per-route HTML files; the three newest routes were added after the last export, so the server responds 404 for those paths (content still renders from the JS bundle fallback). Fix by re-exporting the web build."
+}

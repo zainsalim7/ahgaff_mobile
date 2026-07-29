@@ -646,6 +646,21 @@ export default function ReportsScreen() {
               <Text style={styles.reportTypeDesc}>الإفادات الصادرة، تنزيل PDF وإلغاء</Text>
             </TouchableOpacity>
             )}
+
+            {/* اعتماد صور الطلاب */}
+            {!['teacher', 'student'].includes(userRole) && (
+            <TouchableOpacity
+              style={styles.reportTypeCard}
+              onPress={() => router.push('/photo-approvals')}
+              data-testid="photo-approvals-btn"
+            >
+              <View style={[styles.reportTypeIcon, { backgroundColor: '#fff8e1' }]}>
+                <Ionicons name="images" size={28} color="#f9a825" />
+              </View>
+              <Text style={styles.reportTypeTitle}>اعتماد صور الطلاب</Text>
+              <Text style={styles.reportTypeDesc}>صور البطاقات المرفوعة من الطلاب</Text>
+            </TouchableOpacity>
+            )}
           </View>
         </View>
 
