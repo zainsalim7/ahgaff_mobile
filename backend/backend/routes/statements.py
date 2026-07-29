@@ -44,6 +44,11 @@ class IssueRequest(BaseModel):
     nationality: Optional[str] = None
     purpose: Optional[str] = None
     base_url: Optional[str] = None
+    valid_days: Optional[int] = None
+
+
+class RevokeRequest(BaseModel):
+    reason: Optional[str] = None
 
 
 @router.get("/statements/settings/{faculty_id}")
@@ -98,6 +103,11 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
     token = uuid.uuid4().hex
     verify_url = f"{(data.base_url or '').rstrip('/')}/verify-statement?token={token}" if data.base_url else token
 
+    expires_at = ""
+    if data.valid_days and data.valid_days > 0:
+        from datetime import timedelta
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=data.valid_days)).isoformat()
+
     doc = {
         "serial": seq,
         "number_display": number_display,
@@ -119,6 +129,8 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
         "issued_by": current_user.get("id", ""),
         "issued_by_name": current_user.get("full_name", ""),
         "issued_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": expires_at,
+        "is_revoked": False,
     }
     res = await db.student_statements.insert_one(doc)
     await log_activity(current_user, "issue_student_statement", "student", str(student["_id"]),
@@ -150,6 +162,39 @@ async def list_statements(
     return items
 
 
+@router.post("/statements/{statement_id}/revoke")
+async def revoke_statement(statement_id: str, data: RevokeRequest, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    s = await db.student_statements.find_one({"_id": ObjectId(statement_id)})
+    if not s:
+        raise HTTPException(status_code=404, detail="الإفادة غير موجودة")
+    if not _can_issue(current_user, s.get("faculty_id", "")):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    await db.student_statements.update_one({"_id": s["_id"]}, {"$set": {
+        "is_revoked": True,
+        "revoked_at": datetime.now(timezone.utc).isoformat(),
+        "revoked_by_name": current_user.get("full_name", ""),
+        "revoke_reason": (data.reason or "").strip(),
+    }})
+    await log_activity(current_user, "revoke_student_statement", "student", s.get("student_id", ""),
+                       s.get("student_name", ""), {"number": s.get("number_display", "")})
+    return {"message": "تم إلغاء الإفادة — ستظهر عند التحقق أنها ملغاة"}
+
+
+@router.post("/statements/{statement_id}/restore")
+async def restore_statement(statement_id: str, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    s = await db.student_statements.find_one({"_id": ObjectId(statement_id)})
+    if not s:
+        raise HTTPException(status_code=404, detail="الإفادة غير موجودة")
+    if not _can_issue(current_user, s.get("faculty_id", "")):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    await db.student_statements.update_one({"_id": s["_id"]}, {"$set": {"is_revoked": False}})
+    await log_activity(current_user, "restore_student_statement", "student", s.get("student_id", ""),
+                       s.get("student_name", ""), {"number": s.get("number_display", "")})
+    return {"message": "تمت استعادة صلاحية الإفادة"}
+
+
 @router.get("/verify/statement/{token}")
 async def verify_statement(token: str):
     """صفحة تحقق عامة — بدون تسجيل دخول، لا تعرض بيانات حساسة."""
@@ -157,6 +202,13 @@ async def verify_statement(token: str):
     s = await db.student_statements.find_one({"verify_token": token})
     if not s:
         return {"valid": False, "message": "لا توجد إفادة بهذا الرمز — قد تكون الوثيقة غير صحيحة"}
+    if s.get("is_revoked"):
+        return {"valid": False, "message": "هذه الإفادة ملغاة من الجهة المصدرة ولا يُعتد بها",
+                "number": s.get("number_display"), "issued_at": (s.get("issued_at") or "")[:10]}
+    expires_at = s.get("expires_at") or ""
+    if expires_at and expires_at < datetime.now(timezone.utc).isoformat():
+        return {"valid": False, "message": f"انتهت صلاحية هذه الإفادة بتاريخ {expires_at[:10]}",
+                "number": s.get("number_display"), "issued_at": (s.get("issued_at") or "")[:10]}
     return {
         "valid": True,
         "message": "إفادة صحيحة صادرة رسمياً من جامعة الأحقاف",
@@ -167,6 +219,7 @@ async def verify_statement(token: str):
         "level": s.get("level"),
         "academic_year": s.get("academic_year"),
         "issued_at": (s.get("issued_at") or "")[:10],
+        "expires_at": (s.get("expires_at") or "")[:10],
     }
 
 
@@ -278,6 +331,11 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     if s.get("purpose"):
         yy -= 9 * mm
         c.drawCentredString(W / 2, yy, ar(f"وذلك لغرض: {s['purpose']}"))
+    if s.get("expires_at"):
+        yy -= 9 * mm
+        c.setFont("Amiri", 12)
+        c.drawCentredString(W / 2, yy, ar(f"هذه الإفادة صالحة حتى تاريخ {str(s['expires_at'])[:10].replace('-', '/')}م"))
+        c.setFont("Amiri", 14)
 
     # ===== التوقيع =====
     c.setFont("Amiri", 14)

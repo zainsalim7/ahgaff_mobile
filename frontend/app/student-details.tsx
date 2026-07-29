@@ -183,6 +183,7 @@ export default function StudentDetailsScreen() {
   const [statementModal, setStatementModal] = useState(false);
   const [statementNationality, setStatementNationality] = useState('');
   const [statementPurpose, setStatementPurpose] = useState('');
+  const [statementValidDays, setStatementValidDays] = useState('');
   const [issuingStatement, setIssuingStatement] = useState(false);
   const [lastStatement, setLastStatement] = useState<any>(null);
 
@@ -638,6 +639,7 @@ export default function StudentDetailsScreen() {
         nationality: statementNationality || undefined,
         purpose: statementPurpose || undefined,
         base_url: baseUrl,
+        valid_days: statementValidDays && parseInt(statementValidDays, 10) > 0 ? parseInt(statementValidDays, 10) : undefined,
       });
       setLastStatement(res.data);
       const pdfRes = await api.get(`/statements/${res.data.id}/pdf`, { responseType: 'blob' });
@@ -2100,6 +2102,15 @@ export default function StudentDetailsScreen() {
               placeholder="مثال: تقديمها للسفارة"
               style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 12, fontSize: 13 }}
               testID="statement-purpose-input"
+            />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>مدة الصلاحية بالأيام (اختياري — اتركه فارغاً لتكون بدون انتهاء)</Text>
+            <TextInput
+              value={statementValidDays}
+              onChangeText={(t) => setStatementValidDays(t.replace(/[^0-9]/g, ''))}
+              placeholder="مثال: 90"
+              keyboardType="numeric"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 12, fontSize: 13 }}
+              testID="statement-valid-days-input"
             />
             {lastStatement && (
               <View style={{ backgroundColor: '#e8f5e9', borderRadius: 8, padding: 10, marginBottom: 10 }} testID="statement-issued-info">

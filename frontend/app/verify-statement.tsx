@@ -48,6 +48,7 @@ export default function VerifyStatementPage() {
                 ['المستوى', String(result.level || '')],
                 ['العام الجامعي', result.academic_year],
                 ['تاريخ الإصدار', result.issued_at],
+                ...(result.expires_at ? [['صالحة حتى', result.expires_at]] : []),
               ].map(([k, v]) => (
                 <View key={k as string} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>
                   <Text style={{ fontSize: 12.5, color: '#5b6678', fontWeight: '700' }}>{k}</Text>

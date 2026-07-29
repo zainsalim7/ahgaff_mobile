@@ -1006,6 +1006,12 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - تحسين PDF (`statements.py::_build_pdf`): شعار الجامعة الافتراضي `/app/backend/backend/assets/university_logo.jpeg` كـfallback عند عدم رفع شعار للكلية + خط مزدوج أسفل الترويسة (شكل رسمي) مع إزاحة قسم المرجع/التواريخ للأسفل.
   - اختبار: إصدار إفادة E2E عبر API (PDF 90KB سليم، معاينة بصرية للكليشة)، حفظ/جلب الإعدادات عبر API، لقطة شاشة للصفحة الجديدة تعرض الإعدادات المحفوظة.
 
+- ✅ **Statements Log + Revoke + Expiry (2026-07-29)**: بطلب المستخدم:
+  - **مدة صلاحية اختيارية**: حقل "مدة الصلاحية بالأيام" في نافذة الإصدار (`statement-valid-days-input`) → يُحسب `expires_at` ويُطبع على الـPDF ("هذه الإفادة صالحة حتى تاريخ ...") ويظهر في صفحة التحقق؛ بعد انقضائه يعرض التحقق "انتهت صلاحية هذه الإفادة بتاريخ X" (valid:false).
+  - **إلغاء/استعادة**: `POST /statements/{id}/revoke` (مع سبب اختياري) و`/restore` — التحقق يعرض "ملغاة من الجهة المصدرة ولا يُعتد بها". صلاحية `_can_issue` + تسجيل في سجل النشاط.
+  - **صفحة سجل الإفادات** `/app/frontend/app/statements-log.tsx` (مسجلة في `_layout.tsx`): بحث (اسم/رقم إفادة/قيد)، فلتر كلية، شارات حالة (سارية/ملغاة/منتهية)، إجراءات: تنزيل PDF، نسخ رابط التحقق، إلغاء (نافذة سبب `revoke-modal`)، استعادة. رابط "سجل الإفادات" (`statements-log-link`) بجانب "إعدادات الكليشة" في نافذة الإصدار.
+  - اختبار E2E عبر API: إصدار بـ90 يوم → تحقق (صالحة حتى) → إلغاء → تحقق (ملغاة) → استعادة → تحقق (سارية) → انتهاء صلاحية (تاريخ ماضٍ) → تحقق (منتهية) ✔️ + معاينة PDF بسطر الصلاحية ✔️ + لقطة شاشة لصفحة السجل ✔️
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)
