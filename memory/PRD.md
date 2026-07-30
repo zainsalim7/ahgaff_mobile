@@ -1050,6 +1050,8 @@ Comprehensive student/teacher management system for Ahgaff University with:
 
   - **(2026-07-30) بوابة التحقق المطورة**: زر "امسح رمز QR بالكاميرا" (jsqr + getUserMedia، يستخرج token= ويميز إفادة/بطاقة، رسالة عربية عند رفض إذن الكاميرا) + الشعار/اسم الجامعة والرابط السفلي يفتحان https://ahgaff.edu بنافذة جديدة. مختبر: كاميرا تعمل + الإدخال اليدوي يوجه للتحقق + الروابط ظاهرة. أُضيفت jsqr@1.4.0 لحزم frontend.
 
+- ✅ **Fix: "‎.0" suffix on enrollment numbers (2026-07-30)**: استيراد Excel كان يحول أرقام القيد/الهاتف/سنة الالتحاق float→str فينتج "128001.0" (**217 طالباً بالإنتاج متأثرون**). الإصلاح: helper `_xl_str()` في server.py (يقص .0) طُبق على كل مواضع الاستيراد (استيراد الطلاب + التسجيل بالجدول + enrollment_year/phone) + أداة `POST /api/admin/students/fix-dotted-ids` (أدمن) تنظف البيانات الموجودة وتصلح qr_code وusername المرتبط. مختبر محلياً E2E (استيراد float نظيف + تنظيف بيانات قديمة مزروعة). **متبقٍ: بعد النشر تشغيل الأداة على الإنتاج (217 طالباً)**.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

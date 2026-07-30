@@ -15,6 +15,43 @@ from models.permissions import UserRole
 router = APIRouter(tags=["أدوات الأدمن"])
 
 
+# ==================== إصلاح أرقام القيد المنتهية بـ.0 ====================
+@router.post("/admin/students/fix-dotted-ids")
+async def fix_dotted_ids(current_user: dict = Depends(get_current_user)):
+    """يزيل اللاحقة .0 من أرقام القيد/الهواتف/سنوات الالتحاق الناتجة عن استيراد Excel قديم."""
+    if current_user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح لك — هذه الأداة للأدمن فقط")
+    db = get_db()
+    fixed = {"student_id": 0, "phone": 0, "enrollment_year": 0, "username": 0}
+    async for s in db.students.find({"$or": [
+        {"student_id": {"$regex": r"\.0$"}},
+        {"phone": {"$regex": r"\.0$"}},
+        {"enrollment_year": {"$regex": r"\.0$"}},
+    ]}):
+        updates = {}
+        old_sid = s.get("student_id") or ""
+        for f in ("student_id", "phone", "enrollment_year"):
+            v = s.get(f)
+            if isinstance(v, str) and v.endswith(".0"):
+                updates[f] = v[:-2]
+                fixed[f] += 1
+        if "student_id" in updates:
+            qr = s.get("qr_code") or ""
+            if old_sid and old_sid in qr:
+                updates["qr_code"] = qr.replace(old_sid, updates["student_id"])
+        if updates:
+            await db.students.update_one({"_id": s["_id"]}, {"$set": updates})
+        if "student_id" in updates and s.get("user_id"):
+            try:
+                u = await db.users.find_one({"_id": ObjectId(s["user_id"])})
+                if u and u.get("username") == old_sid:
+                    await db.users.update_one({"_id": u["_id"]}, {"$set": {"username": updates["student_id"]}})
+                    fixed["username"] += 1
+            except Exception:
+                pass
+    return {"message": "تم إصلاح الأرقام", "fixed": fixed}
+
+
 # ==================== Bulk Nationality Fill ====================
 @router.post("/admin/students/bulk-nationality")
 async def bulk_set_nationality(payload: dict, current_user: dict = Depends(get_current_user)):

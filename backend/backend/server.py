@@ -940,6 +940,13 @@ def generate_qr_code(student_id: str) -> str:
     """Generate unique QR code for student"""
     return f"SHARIA-{student_id}-{uuid.uuid4().hex[:8].upper()}"
 
+def _xl_str(v) -> str:
+    """قيمة خلية Excel كنص نظيف — يزيل .0 الناتجة عن قراءة الأرقام كـfloat"""
+    s = str(v).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
+
 async def get_active_lecture_ids(course_id: str = None) -> set:
     """
     جلب IDs المحاضرات الفعّالة فقط (غير الملغاة)
@@ -6485,7 +6492,7 @@ async def import_enrollments_excel(
         errors = []
         
         for idx, row in df.iterrows():
-            student_id_value = str(row[student_id_col]).strip()
+            student_id_value = _xl_str(row[student_id_col])
             
             if not student_id_value or student_id_value == 'nan':
                 continue
@@ -12555,7 +12562,7 @@ async def import_students_to_course(
         
         for index, row in df.iterrows():
             try:
-                student_id_str = str(row['student_id'])
+                student_id_str = _xl_str(row['student_id'])
                 
                 # Check if student exists
                 existing = await db.students.find_one({"student_id": student_id_str})
@@ -12703,16 +12710,16 @@ async def import_students_from_excel(
                     student_section = str(row.get('section', ''))
                 
                 student_data = {
-                    "student_id": str(row['student_id']),
-                    "full_name": str(row['full_name']),
+                    "student_id": _xl_str(row['student_id']),
+                    "full_name": str(row['full_name']).strip(),
                     "department_id": department_id,
                     "faculty_id": await _resolve_faculty_id(department_id),
                     "level": student_level,
                     "section": student_section,
-                    "phone": str(row.get('phone', '')) if pd.notna(row.get('phone')) else None,
-                    "email": str(row.get('email', '')) if pd.notna(row.get('email')) else None,
+                    "phone": _xl_str(row.get('phone', '')) if pd.notna(row.get('phone')) else None,
+                    "email": str(row.get('email', '')).strip() if pd.notna(row.get('email')) else None,
                     "nationality": str(row.get('nationality', '')).strip() if pd.notna(row.get('nationality')) else None,
-                    "qr_code": generate_qr_code(str(row['student_id'])),
+                    "qr_code": generate_qr_code(_xl_str(row['student_id'])),
                     "created_at": get_yemen_time(),
                     "is_active": True,
                     "user_id": None
@@ -12733,7 +12740,7 @@ async def import_students_from_excel(
 
                 # سنة الالتحاق: من Excel، أو محسوبة من المستوى
                 if 'enrollment_year' in df.columns and pd.notna(row.get('enrollment_year')):
-                    ey_raw = str(row.get('enrollment_year')).strip()
+                    ey_raw = _xl_str(row.get('enrollment_year'))
                     # 2025 → 25
                     if len(ey_raw) == 4 and ey_raw.isdigit():
                         student_data["enrollment_year"] = ey_raw[-2:]
