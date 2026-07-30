@@ -323,19 +323,14 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     c.drawCentredString(W / 2, yy, ar(s.get("student_name", "")))
     yy -= 11 * mm
     c.setFont("Amiri", 14)
-    c.drawCentredString(W / 2, yy, ar(f"يدرس بالمستوى {level_ar} تخصص ({s.get('department_name', '')}) للعام الجامعي {s.get('academic_year', '')}،"))
+    c.drawCentredString(W / 2, yy, ar(f"{s.get('nationality', '')} الجنسية، يدرس بالمستوى {level_ar} تخصص ({s.get('department_name', '')})"))
     yy -= 9 * mm
-    c.drawCentredString(W / 2, yy, ar(f"يحمل رقم قيد ({s.get('enrollment_no', '')}) {status_phrase}، {s.get('nationality', '')} الجنسية."))
+    c.drawCentredString(W / 2, yy, ar(f"للعام الجامعي {s.get('academic_year', '')}، يحمل رقم قيد ({s.get('enrollment_no', '')}) {status_phrase}."))
     yy -= 12 * mm
     c.drawCentredString(W / 2, yy, ar("أعطيت له هذه الإفادة بناءً على طلبه."))
     if s.get("purpose"):
         yy -= 9 * mm
         c.drawCentredString(W / 2, yy, ar(f"وذلك لغرض: {s['purpose']}"))
-    if s.get("expires_at"):
-        yy -= 9 * mm
-        c.setFont("Amiri", 12)
-        c.drawCentredString(W / 2, yy, ar(f"هذه الإفادة صالحة حتى تاريخ {str(s['expires_at'])[:10].replace('-', '/')}م"))
-        c.setFont("Amiri", 14)
 
     # ===== التوقيع =====
     c.setFont("Amiri", 14)
@@ -352,6 +347,9 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     c.drawImage(ImageReader(qb), W - 48 * mm, 30 * mm, 26 * mm, 26 * mm)
     c.setFont("Amiri", 8)
     c.drawCentredString(W - 35 * mm, 26 * mm, ar("للتحقق من صحة الإفادة امسح الرمز"))
+    if s.get("expires_at"):
+        c.setFont("Amiri", 7)
+        c.drawCentredString(W - 35 * mm, 23 * mm, ar(f"صالحة حتى {str(s['expires_at'])[:10].replace('-', '/')}م"))
 
     # ===== التذييل =====
     c.line(18 * mm, 22 * mm, W - 18 * mm, 22 * mm)
