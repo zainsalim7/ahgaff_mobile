@@ -1039,6 +1039,8 @@ Comprehensive student/teacher management system for Ahgaff University with:
 
 - ✅ **Fix: Browser Auto-Translate mangling Arabic (2026-07-30)**: مستخدمو الإنتاج رأوا نصوصاً مشوهة ("جامعة الأحقاف"→"القوات المسلحة") — السبب: expo export يولّد `<html lang="en">` فتترجم متصفحاتهم الصفحة العربية تلقائياً. الحل: `app/+html.tsx` (expo-router v6 HTML template) في **كل التطبيقات** (frontend, student-app-standalone, student-app, teacher-app-standalone, teacher-app) مع `lang="ar" dir="rtl" translate="no"` + `<meta name="google" content="notranslate">` + body.notranslate. تحقق بالمعاينة: lang=ar وtranslate=no ✔️. يلزم النشر ليصل للإنتاج.
 
+- ⚠️ **درس مهم (2026-07-30)**: إضافة `dir="rtl"` على `<html>` في +html.tsx **قلبت تخطيط التطبيق كاملاً** (القائمة انتقلت لليسار) لأن التطبيق RN Web يدير RTL يدوياً بـrow-reverse على افتراض LTR أساسي. الحل النهائي: `<html lang="ar" translate="no">` **بدون dir** + meta notranslate — يمنع الترجمة التلقائية دون كسر التخطيط. لا تضف dir="rtl" لوسم html في هذا المشروع أبداً.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

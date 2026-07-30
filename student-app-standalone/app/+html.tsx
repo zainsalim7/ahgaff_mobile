@@ -4,7 +4,7 @@ import type { PropsWithChildren } from 'react';
 // قالب HTML للويب: يعلن اللغة العربية ويمنع الترجمة التلقائية للمتصفح التي تشوه النصوص
 export default function Root({ children }: PropsWithChildren) {
   return (
-    <html lang="ar" dir="rtl" translate="no">
+    <html lang="ar" translate="no">
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
