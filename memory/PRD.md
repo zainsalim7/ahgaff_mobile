@@ -1046,7 +1046,7 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - Backend: إعداد `system_settings/_id=verify_base_url` + `GET/PUT /api/settings/verify-base-url` (PUT أدمن فقط، يرفض غير https) — يتجاوز base_url القادم من العميل في إصدار الإفادات (`statements.py`) وبطاقات الطلاب و batch (`student_cards.py::get_verify_base`).
   - Frontend: صفحة `verify-portal.tsx` (بوابة هبوط عامة: شعار + إرشاد QR + حقل رمز يدوي يقبل الرمز أو الرابط كاملاً) + **حارس نطاق في `_layout.tsx`**: أي مسار على ahgaff.net/www غير (verify-portal/verify-statement/verify-card) → replace للبوابة. + حقل "رابط التحقق الأساسي" للأدمن في statement-settings (`verify-base-url-input`).
   - اختبار: ضبط الرابط → إفادة وبطاقة جديدتان تولّدان `https://ahgaff.net/verify-...` ✔️ رفض رابط بلا https ✔️ لقطة للبوابة ✔️. أعيد الإعداد فارغاً محلياً (المعاينة).
-  - **ما بعد النشر**: ضبط الإعداد في الإنتاج إلى `https://ahgaff.net` عبر PUT (الوكيل يفعلها بعد إبلاغ المستخدم بالنشر).
+  - **ما بعد النشر (تم 2026-07-30)**: ضُبط `verify_base_url=https://ahgaff.net` في الإنتاج عبر PUT ✔️ + تحقق بمتصفح: ahgaff.net → يحوّل تلقائياً لبوابة التحقق (لا نظام) ✔️ وapp.ahgaff.net يعمل طبيعياً ✔️
 
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
