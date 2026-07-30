@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import api from '../src/services/api';
+import { useAuth } from '../src/contexts/AuthContext';
 
 interface Faculty { id: string; name: string; }
 
@@ -24,12 +25,34 @@ const EMPTY = {
 
 export default function StatementSettingsScreen() {
   const params = useLocalSearchParams<{ facultyId?: string }>();
+  const { user } = useAuth();
   const [faculties, setFaculties] = useState<Faculty[]>([]);
   const [facultyId, setFacultyId] = useState<string>((params.facultyId as string) || '');
   const [form, setForm] = useState({ ...EMPTY });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [verifyBase, setVerifyBase] = useState('');
+  const [savingBase, setSavingBase] = useState(false);
+  const [baseMsg, setBaseMsg] = useState('');
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    api.get('/settings/verify-base-url').then((r) => setVerifyBase(r.data?.value || '')).catch(() => {});
+  }, [user?.role]);
+
+  const saveVerifyBase = async () => {
+    setSavingBase(true);
+    setBaseMsg('');
+    try {
+      const res = await api.put('/settings/verify-base-url', { value: verifyBase.trim() });
+      setBaseMsg(res.data?.message || 'تم الحفظ');
+    } catch (e: any) {
+      setBaseMsg(e?.response?.data?.detail || 'فشل الحفظ');
+    } finally {
+      setSavingBase(false);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -238,6 +261,33 @@ export default function StatementSettingsScreen() {
             )}
           </TouchableOpacity>
         </View>
+
+        {/* رابط التحقق الأساسي — أدمن فقط */}
+        {user?.role === 'admin' && (
+          <View style={[styles.card, { marginTop: 14 }]}>
+            <Text style={styles.title}>🔗 رابط التحقق الأساسي (لكل النظام)</Text>
+            <Text style={styles.hint}>
+              رموز QR الجديدة (الإفادات والبطاقات) ستُولَّد على هذا الرابط بدل رابط النظام. مثال: https://ahgaff.net — اتركه فارغاً لاستخدام رابط النظام الحالي.
+            </Text>
+            <TextInput
+              value={verifyBase}
+              onChangeText={setVerifyBase}
+              placeholder="https://ahgaff.net"
+              placeholderTextColor="#9aa4b2"
+              style={[styles.input, { textAlign: 'left', direction: 'ltr' as any }]}
+              testID="verify-base-url-input"
+            />
+            {!!baseMsg && <Text style={[styles.msgText, { color: baseMsg.includes('فشل') ? '#c62828' : '#2e7d32', marginTop: 8 }]} testID="verify-base-msg">{baseMsg}</Text>}
+            <TouchableOpacity
+              onPress={saveVerifyBase}
+              disabled={savingBase}
+              style={[styles.saveBtn, savingBase && { opacity: 0.6 }]}
+              testID="verify-base-save-btn"
+            >
+              {savingBase ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.saveBtnText}>حفظ رابط التحقق</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Stack, usePathname } from 'expo-router';
+import { Stack, usePathname, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../src/store/authStore';
 import { useOfflineSyncStore } from '../src/store/offlineSyncStore';
@@ -102,6 +102,16 @@ export default function RootLayout() {
     };
   }, []);
 
+  // النطاق الرئيسي ahgaff.net مخصص للتحقق فقط — أي صفحة أخرى تُحوَّل لبوابة التحقق
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const host = window.location.hostname;
+    const VERIFY_PATHS = ['/verify-portal', '/verify-statement', '/verify-card'];
+    if ((host === 'ahgaff.net' || host === 'www.ahgaff.net') && !VERIFY_PATHS.includes(pathname)) {
+      router.replace('/verify-portal');
+    }
+  }, [pathname]);
+
   // لا تظهر القائمة في صفحات تسجيل الدخول والتحميل
   const isLoginPage = pathname === '/login' || pathname === '/change-password';
   const showMenu = isAuthenticated && !isLoginPage;
@@ -123,6 +133,7 @@ export default function RootLayout() {
           <Stack.Screen name="login" options={{ headerShown: false }} />
           <Stack.Screen name="verify-statement" options={{ headerShown: false }} />
           <Stack.Screen name="verify-card" options={{ headerShown: false }} />
+          <Stack.Screen name="verify-portal" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="take-attendance" options={{ title: 'تسجيل الحضور' }} />
           <Stack.Screen name="qr-scanner" options={{ title: 'مسح QR' }} />

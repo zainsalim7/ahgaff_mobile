@@ -72,6 +72,31 @@ async def update_statement_settings(faculty_id: str, data: StatementSettings, cu
     return {"message": "تم حفظ إعدادات الإفادة"}
 
 
+async def get_verify_base(db) -> str:
+    doc = await db.system_settings.find_one({"_id": "verify_base_url"}) or {}
+    return (doc.get("value") or "").strip().rstrip("/")
+
+
+@router.get("/settings/verify-base-url")
+async def read_verify_base(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") in ("teacher", "student"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    return {"value": await get_verify_base(db)}
+
+
+@router.put("/settings/verify-base-url")
+async def set_verify_base(payload: dict, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="هذا الإعداد للأدمن فقط")
+    value = (payload.get("value") or "").strip().rstrip("/")
+    if value and not value.startswith("http"):
+        raise HTTPException(status_code=400, detail="الرابط يجب أن يبدأ بـ https://")
+    db = get_db()
+    await db.system_settings.update_one({"_id": "verify_base_url"}, {"$set": {"value": value}}, upsert=True)
+    return {"message": "تم حفظ رابط التحقق — سيُستخدم في رموز QR الجديدة", "value": value}
+
+
 @router.post("/statements/issue")
 async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -101,7 +126,8 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
     number_display = f"{seq}/{year}"
 
     token = uuid.uuid4().hex
-    verify_url = f"{(data.base_url or '').rstrip('/')}/verify-statement?token={token}" if data.base_url else token
+    verify_base = (await get_verify_base(db)) or (data.base_url or "").rstrip("/")
+    verify_url = f"{verify_base}/verify-statement?token={token}" if verify_base else token
 
     expires_at = ""
     if data.valid_days and data.valid_days > 0:

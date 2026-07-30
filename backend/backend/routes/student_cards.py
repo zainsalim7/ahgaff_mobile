@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from bson import ObjectId
 
 from .deps import get_db, get_current_user, log_activity
-from .statements import _can_issue as _can_manage
+from .statements import _can_issue as _can_manage, get_verify_base
 
 router = APIRouter()
 
@@ -99,7 +99,8 @@ async def _card_payload(db, student: dict, base_url: str) -> dict:
     fid, faculty_name, dept_name = await _resolve_faculty(db, student)
     card = await _ensure_card(db, student)
     settings = await db.card_settings.find_one({"_id": f"faculty_{fid}"}) or {}
-    verify_url = f"{(base_url or '').rstrip('/')}/verify-card?token={card['token']}" if base_url else card["token"]
+    verify_base = (await get_verify_base(db)) or (base_url or "").rstrip("/")
+    verify_url = f"{verify_base}/verify-card?token={card['token']}" if verify_base else card["token"]
     return {
         "student_db_id": str(student["_id"]),
         "student_name": student.get("full_name", ""),
@@ -347,7 +348,7 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
     faculty_name = (faculty or {}).get("name", "")
     tpl = (await db.card_settings.find_one({"_id": f"faculty_{fid}"}) or {}).get("template", "green")
     year = await _active_academic_year(db)
-    base = (data.base_url or "").rstrip("/")
+    base = (await get_verify_base(db)) or (data.base_url or "").rstrip("/")
 
     from services.storage_service import get_object
 
