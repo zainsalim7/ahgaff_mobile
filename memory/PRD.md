@@ -1037,6 +1037,8 @@ Comprehensive student/teacher management system for Ahgaff University with:
 
   - **(2026-07-30) خيار اتجاه الإخراج بالطباعة**: `orientation` (auto/portrait/landscape) في batch-pdf + محفوظ بالإعدادات — عند مخالفته لاتجاه القالب تُدار صورة البطاقة 90° بـPIL دون تغيير التصميم. أزرار بالواجهة (orientation-*-btn) + معاينة تتبع الخيار + تنبيه بالتدوير. مختبر: PDF أفقي لقالب عمودي (تدوير سليم) + حفظ الخيار + لقطة شاشة.
 
+- ✅ **Fix: Browser Auto-Translate mangling Arabic (2026-07-30)**: مستخدمو الإنتاج رأوا نصوصاً مشوهة ("جامعة الأحقاف"→"القوات المسلحة") — السبب: expo export يولّد `<html lang="en">` فتترجم متصفحاتهم الصفحة العربية تلقائياً. الحل: `app/+html.tsx` (expo-router v6 HTML template) في **كل التطبيقات** (frontend, student-app-standalone, student-app, teacher-app-standalone, teacher-app) مع `lang="ar" dir="rtl" translate="no"` + `<meta name="google" content="notranslate">` + body.notranslate. تحقق بالمعاينة: lang=ar وtranslate=no ✔️. يلزم النشر ليصل للإنتاج.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)
