@@ -1048,6 +1048,8 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - اختبار: ضبط الرابط → إفادة وبطاقة جديدتان تولّدان `https://ahgaff.net/verify-...` ✔️ رفض رابط بلا https ✔️ لقطة للبوابة ✔️. أعيد الإعداد فارغاً محلياً (المعاينة).
   - **ما بعد النشر (تم 2026-07-30)**: ضُبط `verify_base_url=https://ahgaff.net` في الإنتاج عبر PUT ✔️ + تحقق بمتصفح: ahgaff.net → يحوّل تلقائياً لبوابة التحقق (لا نظام) ✔️ وapp.ahgaff.net يعمل طبيعياً ✔️
 
+  - **(2026-07-30) بوابة التحقق المطورة**: زر "امسح رمز QR بالكاميرا" (jsqr + getUserMedia، يستخرج token= ويميز إفادة/بطاقة، رسالة عربية عند رفض إذن الكاميرا) + الشعار/اسم الجامعة والرابط السفلي يفتحان https://ahgaff.edu بنافذة جديدة. مختبر: كاميرا تعمل + الإدخال اليدوي يوجه للتحقق + الروابط ظاهرة. أُضيفت jsqr@1.4.0 لحزم frontend.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)
