@@ -1035,6 +1035,8 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - Frontend `batch-print.tsx`: فلاتر كلية/قسم/مستوى، عدّاد الطلاب/الورقات، حقول المواضع، **معاينة A4 حية** تتبع اتجاه قالب الكلية، تنزيل PDF (timeout 5 دقائق). بطاقة "طباعة البطاقات" في reports (batch-print-btn).
   - اختبار: curl (إعدادات/عدّاد/PDF 10 صفحات بمواضع مخصصة + حفظ الإعدادات + معاينة بصرية للاتجاهين) + لقطة شاشة للصفحة ✔️
 
+  - **(2026-07-30) خيار اتجاه الإخراج بالطباعة**: `orientation` (auto/portrait/landscape) في batch-pdf + محفوظ بالإعدادات — عند مخالفته لاتجاه القالب تُدار صورة البطاقة 90° بـPIL دون تغيير التصميم. أزرار بالواجهة (orientation-*-btn) + معاينة تتبع الخيار + تنبيه بالتدوير. مختبر: PDF أفقي لقالب عمودي (تدوير سليم) + حفظ الخيار + لقطة شاشة.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

@@ -285,6 +285,7 @@ DEFAULT_PRINT_SETTINGS = {
     "card1_x": 62.0, "card1_y": 40.0,
     "card2_x": 62.0, "card2_y": 180.0,
 }
+ORIENTATIONS = ("auto", "portrait", "landscape")
 
 
 @router.get("/cards/print-settings")
@@ -293,7 +294,8 @@ async def get_print_settings(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     db = get_db()
     doc = await db.card_print_settings.find_one({"_id": "global"}) or {}
-    return {**DEFAULT_PRINT_SETTINGS, **{k: v for k, v in doc.items() if k != "_id"}}
+    return {**DEFAULT_PRINT_SETTINGS, "orientation": doc.get("orientation", "auto"),
+            **{k: v for k, v in doc.items() if k not in ("_id", "orientation")}}
 
 
 class BatchPrintRequest(BaseModel):
@@ -301,6 +303,7 @@ class BatchPrintRequest(BaseModel):
     level: Optional[int] = None
     section: Optional[str] = None
     base_url: Optional[str] = None
+    orientation: Optional[str] = "auto"
     settings: Optional[dict] = None
 
 
@@ -319,6 +322,7 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
         raise HTTPException(status_code=403, detail="غير مصرح لك")
 
     # حفظ إعدادات المواضع للاستخدام القادم
+    orientation = data.orientation if data.orientation in ORIENTATIONS else "auto"
     st = {**DEFAULT_PRINT_SETTINGS}
     if data.settings:
         for k in DEFAULT_PRINT_SETTINGS:
@@ -326,7 +330,7 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
                 st[k] = float(data.settings.get(k, st[k]))
             except (TypeError, ValueError):
                 pass
-        await db.card_print_settings.update_one({"_id": "global"}, {"$set": st}, upsert=True)
+        await db.card_print_settings.update_one({"_id": "global"}, {"$set": {**st, "orientation": orientation}}, upsert=True)
 
     q = {"department_id": data.department_id, "is_alumni": {"$ne": True}}
     if data.level:
@@ -378,8 +382,23 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
     from reportlab.lib.utils import ImageReader
 
     W, H = A4
-    portrait = tpl != "horizontal"
-    if portrait:
+    # اتجاه الإخراج: auto = حسب القالب، أو فرض عمودي/أفقي مع تدوير البطاقة عند الحاجة
+    template_portrait = tpl != "horizontal"
+    if orientation == "auto":
+        out_portrait = template_portrait
+    else:
+        out_portrait = orientation == "portrait"
+    rotate_needed = out_portrait != template_portrait
+    if rotate_needed:
+        from PIL import Image as PILImage
+        rotated = []
+        for png in pngs:
+            im = PILImage.open(io.BytesIO(png)).rotate(90, expand=True)
+            b = io.BytesIO()
+            im.save(b, format="PNG")
+            rotated.append(b.getvalue())
+        pngs = rotated
+    if out_portrait:
         cw, ch = st["card_h"] * mm, st["card_w"] * mm
     else:
         cw, ch = st["card_w"] * mm, st["card_h"] * mm

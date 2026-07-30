@@ -24,6 +24,7 @@ export default function BatchPrintScreen() {
   const [count, setCount] = useState<{ count: number; pages: number } | null>(null);
   const [st, setSt] = useState<any>({ ...DEFAULTS });
   const [template, setTemplate] = useState('green');
+  const [orientation, setOrientation] = useState('auto');
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [msg, setMsg] = useState('');
@@ -39,6 +40,7 @@ export default function BatchPrintScreen() {
         setFaculties(list);
         if (list.length > 0) setFacultyId(list[0].id);
         setSt({ ...DEFAULTS, ...setRes.data });
+        if (setRes.data?.orientation) setOrientation(setRes.data.orientation);
       } finally {
         setLoading(false);
       }
@@ -79,6 +81,7 @@ export default function BatchPrintScreen() {
         department_id: departmentId,
         level: level ? parseInt(level, 10) : undefined,
         base_url: baseUrl,
+        orientation,
         settings,
       }, { responseType: 'blob', timeout: 300000 });
       if (Platform.OS === 'web') {
@@ -119,7 +122,8 @@ export default function BatchPrintScreen() {
   }
 
   const n = (k: string) => parseFloat(st[k]) || 0;
-  const portrait = template !== 'horizontal';
+  const templatePortrait = template !== 'horizontal';
+  const portrait = orientation === 'auto' ? templatePortrait : orientation === 'portrait';
   const pw = portrait ? n('card_h') : n('card_w');
   const ph = portrait ? n('card_w') : n('card_h');
 
@@ -161,6 +165,29 @@ export default function BatchPrintScreen() {
               </View>
             )}
 
+            <Text style={styles.sectionTitle}>اتجاه البطاقة في الورقة</Text>
+            <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
+              {[
+                { key: 'auto', label: 'تلقائي (حسب القالب)' },
+                { key: 'portrait', label: 'عمودي ↕' },
+                { key: 'landscape', label: 'أفقي ↔' },
+              ].map((o) => (
+                <TouchableOpacity
+                  key={o.key}
+                  onPress={() => setOrientation(o.key)}
+                  style={[styles.orientBtn, orientation === o.key && styles.orientBtnActive]}
+                  testID={`orientation-${o.key}-btn`}
+                >
+                  <Text style={[styles.orientBtnText, orientation === o.key && { color: '#fff' }]}>{o.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {orientation !== 'auto' && portrait !== templatePortrait && (
+              <Text style={{ fontSize: 10.5, color: '#e65100', textAlign: 'right', marginTop: 4 }}>
+                ستُدار البطاقة 90° تلقائياً لتناسب هذا الاتجاه — دون تغيير تصميمها الأساسي
+              </Text>
+            )}
+
             <Text style={styles.sectionTitle}>مقاس البطاقة (ملم)</Text>
             <View style={styles.fieldsRow}>
               <NumField label="العرض" k="card_w" />
@@ -196,7 +223,7 @@ export default function BatchPrintScreen() {
           <View style={styles.panel}>
             <Text style={styles.sectionTitle}>معاينة الورقة A4</Text>
             <Text style={{ fontSize: 10.5, color: '#5b6678', textAlign: 'right', marginBottom: 6 }}>
-              قالب الكلية: {template === 'horizontal' ? 'أفقي' : 'عمودي'} — تُطبع البطاقة {portrait ? 'بالطول' : 'بالعرض'} تلقائياً
+              قالب الكلية: {template === 'horizontal' ? 'أفقي' : 'عمودي'} — الإخراج: {portrait ? 'بالطول ↕' : 'بالعرض ↔'}
             </Text>
             <View style={[styles.a4, { width: A4W, height: A4H }]} testID="a4-preview">
               {[1, 2].map((i) => (
@@ -249,4 +276,7 @@ const styles = StyleSheet.create({
   dlBtn: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#00796b', borderRadius: 10, padding: 13, marginTop: 14 },
   dlBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
   a4: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cfd6e1', alignSelf: 'center', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, position: 'relative' },
+  orientBtn: { flex: 1, borderWidth: 1.5, borderColor: '#dde3ec', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
+  orientBtnActive: { backgroundColor: '#00796b', borderColor: '#00796b' },
+  orientBtnText: { fontSize: 11, fontWeight: '700', color: '#5b6678' },
 });
