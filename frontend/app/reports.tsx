@@ -661,6 +661,21 @@ export default function ReportsScreen() {
               <Text style={styles.reportTypeDesc}>صور البطاقات المرفوعة من الطلاب</Text>
             </TouchableOpacity>
             )}
+
+            {/* طباعة البطاقات دفعة واحدة */}
+            {!['teacher', 'student'].includes(userRole) && (
+            <TouchableOpacity
+              style={styles.reportTypeCard}
+              onPress={() => router.push('/batch-print')}
+              data-testid="batch-print-btn"
+            >
+              <View style={[styles.reportTypeIcon, { backgroundColor: '#e8eaf6' }]}>
+                <Ionicons name="print" size={28} color="#3949ab" />
+              </View>
+              <Text style={styles.reportTypeTitle}>طباعة البطاقات</Text>
+              <Text style={styles.reportTypeDesc}>PDF دفعة واحدة — بطاقتان بكل ورقة</Text>
+            </TouchableOpacity>
+            )}
           </View>
         </View>
 

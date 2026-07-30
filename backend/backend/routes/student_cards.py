@@ -279,6 +279,137 @@ async def public_card_photo(token: str):
     return Response(content=data, media_type=content_type or "image/jpeg")
 
 
+# ==================== الطباعة الدفعية ====================
+DEFAULT_PRINT_SETTINGS = {
+    "card_w": 85.6, "card_h": 54.0,
+    "card1_x": 62.0, "card1_y": 40.0,
+    "card2_x": 62.0, "card2_y": 180.0,
+}
+
+
+@router.get("/cards/print-settings")
+async def get_print_settings(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") in ("teacher", "student"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    doc = await db.card_print_settings.find_one({"_id": "global"}) or {}
+    return {**DEFAULT_PRINT_SETTINGS, **{k: v for k, v in doc.items() if k != "_id"}}
+
+
+class BatchPrintRequest(BaseModel):
+    department_id: str
+    level: Optional[int] = None
+    section: Optional[str] = None
+    base_url: Optional[str] = None
+    settings: Optional[dict] = None
+
+
+@router.post("/cards/batch-pdf")
+async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depends(get_current_user)):
+    """PDF واحد: بطاقتان في كل ورقة A4 بمواضع قابلة للضبط (ملم)."""
+    db = get_db()
+    try:
+        dept = await db.departments.find_one({"_id": ObjectId(data.department_id)})
+    except Exception:
+        dept = None
+    if not dept:
+        raise HTTPException(status_code=404, detail="القسم غير موجود")
+    fid = dept.get("faculty_id", "")
+    if not _can_manage(current_user, fid):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+
+    # حفظ إعدادات المواضع للاستخدام القادم
+    st = {**DEFAULT_PRINT_SETTINGS}
+    if data.settings:
+        for k in DEFAULT_PRINT_SETTINGS:
+            try:
+                st[k] = float(data.settings.get(k, st[k]))
+            except (TypeError, ValueError):
+                pass
+        await db.card_print_settings.update_one({"_id": "global"}, {"$set": st}, upsert=True)
+
+    q = {"department_id": data.department_id, "is_alumni": {"$ne": True}}
+    if data.level:
+        q["level"] = data.level
+    if data.section:
+        q["section"] = data.section
+    students = [s async for s in db.students.find(q).sort("full_name", 1)]
+    if not students:
+        raise HTTPException(status_code=404, detail="لا يوجد طلاب مطابقون")
+    if len(students) > 400:
+        raise HTTPException(status_code=400, detail="العدد يتجاوز 400 طالب — قسّم الطلبات حسب المستوى")
+
+    faculty = await db.faculties.find_one({"_id": ObjectId(fid)}) if fid else None
+    faculty_name = (faculty or {}).get("name", "")
+    tpl = (await db.card_settings.find_one({"_id": f"faculty_{fid}"}) or {}).get("template", "green")
+    year = await _active_academic_year(db)
+    base = (data.base_url or "").rstrip("/")
+
+    from services.storage_service import get_object
+
+    def make_payload(s, card):
+        return {
+            "student_name": s.get("full_name", ""),
+            "enrollment_no": s.get("student_id", ""),
+            "reference_number": s.get("reference_number", ""),
+            "nationality": s.get("nationality") or "يمني",
+            "level": s.get("level") or 1,
+            "department_name": dept.get("name", ""),
+            "faculty_name": faculty_name,
+            "academic_year": card["academic_year"],
+            "template": tpl,
+        }
+
+    pngs = []
+    for s in students:
+        card = await _ensure_card(db, s)
+        verify_url = f"{base}/verify-card?token={card['token']}" if base else card["token"]
+        photo_bytes = None
+        if s.get("photo_path"):
+            try:
+                photo_bytes, _ct = get_object(s["photo_path"])
+            except Exception:
+                photo_bytes = None
+        pngs.append(_render_card_png(make_payload(s, card), photo_bytes, verify_url))
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdfcanvas
+    from reportlab.lib.utils import ImageReader
+
+    W, H = A4
+    portrait = tpl != "horizontal"
+    if portrait:
+        cw, ch = st["card_h"] * mm, st["card_w"] * mm
+    else:
+        cw, ch = st["card_w"] * mm, st["card_h"] * mm
+    positions = [(st["card1_x"] * mm, st["card1_y"] * mm), (st["card2_x"] * mm, st["card2_y"] * mm)]
+    buf = io.BytesIO()
+    c = pdfcanvas.Canvas(buf, pagesize=A4)
+    for i in range(0, len(pngs), 2):
+        for j, png in enumerate(pngs[i:i + 2]):
+            x, y_top = positions[j]
+            c.drawImage(ImageReader(io.BytesIO(png)), x, H - y_top - ch, cw, ch)
+        c.showPage()
+    c.save()
+    fname = f"cards_{dept.get('name', 'dept')}"
+    return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/pdf",
+                             headers={"Content-Disposition": f"attachment; filename=batch_cards.pdf"})
+
+
+@router.get("/cards/batch-count")
+async def batch_count(department_id: str, level: Optional[int] = None, section: Optional[str] = None,
+                      current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    q = {"department_id": department_id, "is_alumni": {"$ne": True}}
+    if level:
+        q["level"] = level
+    if section:
+        q["section"] = section
+    n = await db.students.count_documents(q)
+    return {"count": n, "pages": (n + 1) // 2}
+
+
 # ==================== توليد PNG / PDF ====================
 THEMES = {
     "green": {"band": (27, 94, 32), "bg": (255, 255, 255), "text": (26, 37, 64), "band_text": (255, 255, 255), "accent": (27, 94, 32), "muted": (91, 102, 120), "strip": (232, 245, 233), "strip_text": (27, 94, 32)},

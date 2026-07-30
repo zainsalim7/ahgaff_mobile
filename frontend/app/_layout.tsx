@@ -131,6 +131,7 @@ export default function RootLayout() {
           <Stack.Screen name="student-card" options={{ title: 'بطاقة الطالب' }} />
           <Stack.Screen name="card-settings" options={{ title: 'تصميم البطاقة الرقمية' }} />
           <Stack.Screen name="photo-approvals" options={{ title: 'اعتماد صور الطلاب' }} />
+          <Stack.Screen name="batch-print" options={{ title: 'طباعة البطاقات دفعة واحدة' }} />
           <Stack.Screen name="statement-settings" options={{ title: 'إعدادات كليشة الإفادة' }} />
           <Stack.Screen name="statements-log" options={{ title: 'سجل الإفادات الصادرة' }} />
           <Stack.Screen name="schedule" options={{ title: 'جدول المحاضرات' }} />

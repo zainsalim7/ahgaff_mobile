@@ -1029,6 +1029,12 @@ Comprehensive student/teacher management system for Ahgaff University with:
   - اختبار: testing_agent iteration_60 — Backend 21/21 ✔️ Frontend كل التدفقات ✔️ (pytest دائم في /app/backend/tests/test_student_cards.py). ملاحظات الوكيل عولجت: مسافة QR بالقالب الأفقي + نص "امسح للتحقق". ملاحظة dist القديم (404 لمسارات جديدة عند الفتح المباشر) لا تؤثر: الإنتاج يبني `expo export` داخل Dockerfile تلقائياً.
   - حساب طالب للاختبار: 234/test1234 (خالد — خريج فبطاقته "لم تعد سارية" وهذا صحيح).
 
+- ✅ **Batch Card Printing + Production Nationality Fill (2026-07-30)**:
+  - **تعبئة الإنتاج**: نُفذت عبر `POST /api/admin/students/bulk-nationality` على Railway بعد نشر المستخدم — 1254 طالباً: 1055 إندونيسي (شريعة 891 + علوم إسلامية 164) و199 يمني (إدارة واقتصاد). كلية البنات/هندسة الحاسوب/دراسات عليا بلا طلاب حالياً بالإنتاج. ملاحظة: الاستدعاء الأول انقطع بمهلة 120ث — التنفيذ الناجح تم بخلفية nohup بمهلة 600ث.
+  - **الطباعة الدفعية**: `GET /cards/print-settings` (إعدادات عامة محفوظة في card_print_settings/_id=global) + `POST /cards/batch-pdf` (قسم/مستوى/شعبة، حد 400، بطاقتان لكل A4 بمواضع مم قابلة للضبط card1_x/y وcard2_x/y ومقاس card_w/h، **القوالب العمودية تُطبع بالطول بأبعاد معكوسة تلقائياً**) + `GET /cards/batch-count`.
+  - Frontend `batch-print.tsx`: فلاتر كلية/قسم/مستوى، عدّاد الطلاب/الورقات، حقول المواضع، **معاينة A4 حية** تتبع اتجاه قالب الكلية، تنزيل PDF (timeout 5 دقائق). بطاقة "طباعة البطاقات" في reports (batch-print-btn).
+  - اختبار: curl (إعدادات/عدّاد/PDF 10 صفحات بمواضع مخصصة + حفظ الإعدادات + معاينة بصرية للاتجاهين) + لقطة شاشة للصفحة ✔️
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)
