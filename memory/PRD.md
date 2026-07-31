@@ -1105,3 +1105,9 @@ See `/app/memory/test_credentials.md`
   - الحل الجذري: رسم نصوص الشهادة عبر HarfBuzz + FreeType (`_hb_draw`/`_hb_width` في certificates.py) — تشكيل مستقل تماماً عن البيئة (uharfbuzz==0.55.0, freetype-py==2.5.1 في requirements.txt، wheels ذاتية بلا system deps). الأرقام/التواريخ تُعكس مسبقاً لأن hb يعكس RTL بصرياً.
   - البطاقات والإفادات غير متأثرة (Amiri فيها Presentation Forms).
   - اختبار: توليد الشهادة كاملة بمعاينة بصرية (كل النصوص مشكّلة والتواريخ بترتيب صحيح) + API pdf 200 ✔️. ⚠️ يتطلب إعادة النشر للإنتاج.
+
+- **(2026-08-01) السبب الجذري النهائي لفشل شهادة التخرج في الإنتاج**:
+  - رسالة الإنتاج التفصيلية: `ModuleNotFoundError: No module named 'uharfbuzz'`.
+  - الاكتشاف: إنتاج الخادم على Railway يُبنى من `/app/backend/Dockerfile` الذي يستخدم **`/app/backend/backend/requirements.txt` (الداخلي)** — كانت المكتبات الجديدة تُضاف للملف الخارجي فقط.
+  - الإصلاح: مزامنة الملف الداخلي (pypdf, uharfbuzz, freetype-py, xlrd) + تسجيل القاعدة في `/app/memory/deployment_learnings.md`: أي مكتبة جديدة تضاف للملفين معاً.
+  - تحسين إظهار الأخطاء: نافذة إصدار الشهادة تعرض الآن الخطأ التفصيلي (شمل رقم الشهادة الصادرة إن فشل التنزيل فقط). ⚠️ يتطلب حفظ إلى GitHub وإعادة نشر Railway.
