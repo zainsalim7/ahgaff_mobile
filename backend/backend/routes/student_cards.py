@@ -481,6 +481,14 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
     if logo_path.exists():
         logo = Image.open(logo_path).convert("RGBA")
 
+    def paste_watermark(im, cx, cy, size, alpha=26):
+        if not logo:
+            return
+        wm = logo.resize((size, size)).convert("RGBA")
+        mask = wm.convert("L").point(lambda v: 0 if v > 235 else alpha)
+        wm.putalpha(mask)
+        im.paste(wm, (cx - size // 2, cy - size // 2), wm)
+
     # صورة الطالب
     photo = None
     if photo_bytes:
@@ -527,6 +535,7 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
         d.rectangle([W - 18, 0, W, H], fill=DG)
         d.rectangle([W - 26, 0, W - 22, H], fill=MG)
         d.rectangle([0, 0, 6, H], fill=LG)
+        paste_watermark(img, W // 2, 660, 480)
         # الشعار داخل حلقة خضراء
         cy = 96
         d.ellipse([W // 2 - 76, cy - 76, W // 2 + 76, cy + 76], outline=LG, width=10)
@@ -577,6 +586,7 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
         d = ImageDraw.Draw(img)
         # الشريط العلوي
         d.rectangle([0, 0, W, 180], fill=theme["band"])
+        paste_watermark(img, W // 2, 620, 460)
         if logo:
             lg = logo.resize((110, 110))
             white = Image.new("RGB", (122, 122), (255, 255, 255))
@@ -618,6 +628,7 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
         img = Image.new("RGB", (W, H), theme["bg"])
         d = ImageDraw.Draw(img)
         d.rectangle([0, 0, W, 120], fill=theme["band"])
+        paste_watermark(img, 420, 380, 380)
         if logo:
             lg = logo.resize((92, 92))
             white = Image.new("RGB", (100, 100), (255, 255, 255))

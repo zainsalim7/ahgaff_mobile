@@ -149,6 +149,7 @@ export default function StudentCardScreen() {
         {/* ===== البطاقة الرقمية ===== */}
         {card.template === 'official' ? (
           <View style={[styles.card, { width: 330, backgroundColor: '#fff', borderRightWidth: 7, borderRightColor: '#1b5e20', borderLeftWidth: 3, borderLeftColor: '#e8f5e9' }]} data-testid="digital-card">
+            <Image source={require('../assets/images/icon.png')} style={{ position: 'absolute', top: 270, left: 45, width: 240, height: 240, opacity: 0.07 }} resizeMode="contain" />
             <View style={{ alignItems: 'center', paddingTop: 16 }}>
               <View style={{ width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: '#1b5e20', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' }}>
                 <Image source={require('../assets/images/icon.png')} style={{ width: 60, height: 60, borderRadius: 30 }} resizeMode="contain" />
@@ -191,6 +192,7 @@ export default function StudentCardScreen() {
           </View>
         ) : !horizontal ? (
           <View style={[styles.card, { width: 330, backgroundColor: t.bg }]} data-testid="digital-card">
+            <Image source={require('../assets/images/icon.png')} style={{ position: 'absolute', top: 250, left: 45, width: 240, height: 240, opacity: 0.07 }} resizeMode="contain" />
             <View style={{ backgroundColor: t.band, alignItems: 'center', paddingVertical: 12 }}>
               <Image source={require('../assets/images/icon.png')} style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: '#fff' }} resizeMode="contain" />
               <Text style={{ color: t.bandText, fontSize: 17, fontWeight: '800', marginTop: 4 }}>جامعة الأحقاف</Text>
@@ -216,6 +218,7 @@ export default function StudentCardScreen() {
           </View>
         ) : (
           <View style={[styles.card, { width: 560, maxWidth: '100%', backgroundColor: '#fff' }]} data-testid="digital-card">
+            <Image source={require('../assets/images/icon.png')} style={{ position: 'absolute', top: 55, left: 170, width: 220, height: 220, opacity: 0.07 }} resizeMode="contain" />
             <View style={{ backgroundColor: THEME.green.band, flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 8 }}>
               <View>
                 <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'right' }}>جامعة الأحقاف</Text>
