@@ -16,7 +16,7 @@ from .statements import _can_issue as _can_manage, get_verify_base
 
 router = APIRouter()
 
-TEMPLATES = ("green", "dark", "horizontal")
+TEMPLATES = ("green", "dark", "horizontal", "official")
 LEVEL_AR = {1: "الأول", 2: "الثاني", 3: "الثالث", 4: "الرابع", 5: "الخامس", 6: "السادس", 7: "السابع", 8: "الثامن"}
 
 
@@ -435,6 +435,7 @@ async def batch_count(department_id: str, level: Optional[int] = None, section: 
 THEMES = {
     "green": {"band": (27, 94, 32), "bg": (255, 255, 255), "text": (26, 37, 64), "band_text": (255, 255, 255), "accent": (27, 94, 32), "muted": (91, 102, 120), "strip": (232, 245, 233), "strip_text": (27, 94, 32)},
     "dark": {"band": (7, 20, 23), "bg": (15, 32, 39), "text": (255, 255, 255), "band_text": (255, 255, 255), "accent": (77, 182, 172), "muted": (176, 190, 197), "strip": (7, 20, 23), "strip_text": (77, 182, 172)},
+    "official": {"band": (27, 94, 32), "bg": (255, 255, 255), "text": (26, 37, 64), "band_text": (255, 255, 255), "accent": (27, 94, 32), "muted": (91, 102, 120), "strip": (232, 245, 233), "strip_text": (27, 94, 32)},
 }
 
 
@@ -509,7 +510,68 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
     if p.get("reference_number"):
         rows.insert(1, ("الرقم المرجعي", p["reference_number"]))
 
-    if not horizontal:
+    if template == "official":
+        DG = (27, 94, 32)
+        MG = (46, 125, 50)
+        LG = (232, 245, 233)
+        MUT = (96, 125, 102)
+        NAVY = (26, 37, 64)
+        W, H = 640, 1010
+        img = Image.new("RGB", (W, H), (255, 255, 255))
+        d = ImageDraw.Draw(img)
+        # زخارف دوائر خفيفة
+        d.ellipse([-150, -150, 170, 170], outline=LG, width=3)
+        d.ellipse([-95, -95, 115, 115], outline=LG, width=3)
+        d.ellipse([W - 170, H - 240, W + 150, H + 80], outline=LG, width=3)
+        # الأشرطة الجانبية
+        d.rectangle([W - 18, 0, W, H], fill=DG)
+        d.rectangle([W - 26, 0, W - 22, H], fill=MG)
+        d.rectangle([0, 0, 6, H], fill=LG)
+        # الشعار داخل حلقة خضراء
+        cy = 96
+        d.ellipse([W // 2 - 76, cy - 76, W // 2 + 76, cy + 76], outline=LG, width=10)
+        d.ellipse([W // 2 - 66, cy - 66, W // 2 + 66, cy + 66], outline=DG, width=3)
+        if logo:
+            lg = logo.resize((108, 108))
+            img.paste(lg, (W // 2 - 54, cy - 54), lg)
+        center(d, W // 2, 176, "جامعة الأحقاف", F(40), DG)
+        center(d, W // 2, 234, "AL-AHGAFF UNIVERSITY", F(18), MUT)
+        # اسم الكلية في كبسولة فاتحة
+        fac_w = d.textlength(ar(p.get("faculty_name", "")), font=F(22), **_dir)
+        d.rounded_rectangle([W // 2 - fac_w / 2 - 26, 274, W // 2 + fac_w / 2 + 26, 318], radius=22, fill=LG)
+        center(d, W // 2, 281, p.get("faculty_name", ""), F(22), DG)
+        # شريط بطاقة طالب
+        d.rounded_rectangle([W // 2 - 108, 334, W // 2 + 108, 378], radius=10, fill=DG)
+        center(d, W // 2, 340, "بطاقة طالب", F(24), (255, 255, 255))
+        # الصورة بإطار أخضر مزدوج
+        py = 404
+        d.rounded_rectangle([W // 2 - 114, py - 14, W // 2 + 114, py + 264], radius=14, fill=LG)
+        d.rectangle([W // 2 - 104, py - 4, W // 2 + 104, py + 254], fill=DG)
+        if photo:
+            ph = fit_photo(photo, 200, 250)
+            img.paste(ph, (W // 2 - 100, py))
+        else:
+            d.rectangle([W // 2 - 100, py, W // 2 + 100, py + 250], fill=(244, 248, 245))
+            center(d, W // 2, py + 110, "لا توجد صورة", F(20), MUT)
+        # الاسم
+        center(d, W // 2, py + 272, p.get("student_name", ""), F(32), DG)
+        d.rectangle([130, py + 326, W - 130, py + 328], fill=LG)
+        # البيانات يميناً + QR يساراً
+        y = py + 344
+        spacing = min(34, 190 // max(len(rows), 1))
+        for label, value in rows:
+            rtl(d, W - 62, y, f"{label}:", F(19), MG)
+            rtl(d, W - 216, y, value, F(21), NAVY)
+            y += spacing
+        d.rounded_rectangle([36, 748, 198, 948], radius=10, outline=LG, width=4)
+        q = qr_img.resize((140, 140))
+        img.paste(q, (47, 760))
+        center(d, 117, 908, "امسح للتحقق", F(16), MUT)
+        # الشريط السفلي
+        d.rectangle([0, H - 64, W, H - 60], fill=DG)
+        d.rectangle([0, H - 60, W, H], fill=LG)
+        center(d, W // 2, H - 50, f"صالحة للعام الجامعي {p.get('academic_year', '')}", F(23), DG)
+    elif not horizontal:
         W, H = 640, 1010
         img = Image.new("RGB", (W, H), theme["bg"])
         d = ImageDraw.Draw(img)

@@ -13,6 +13,7 @@ import { useAuthStore } from '../src/store/authStore';
 const THEME: any = {
   green: { band: '#1b5e20', bg: '#fff', text: '#1a2540', bandText: '#fff', accent: '#1b5e20', muted: '#5b6678', strip: '#e8f5e9', stripText: '#1b5e20' },
   dark: { band: '#071417', bg: '#0f2027', text: '#fff', bandText: '#fff', accent: '#4db6ac', muted: '#b0bec5', strip: '#071417', stripText: '#4db6ac' },
+  official: { band: '#1b5e20', bg: '#fff', text: '#1a2540', bandText: '#fff', accent: '#1b5e20', muted: '#607d66', strip: '#e8f5e9', stripText: '#1b5e20' },
 };
 
 export default function StudentCardScreen() {
@@ -146,7 +147,49 @@ export default function StudentCardScreen() {
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <ScrollView contentContainerStyle={{ padding: 16, alignItems: 'center', paddingBottom: 40 }}>
         {/* ===== البطاقة الرقمية ===== */}
-        {!horizontal ? (
+        {card.template === 'official' ? (
+          <View style={[styles.card, { width: 330, backgroundColor: '#fff', borderRightWidth: 7, borderRightColor: '#1b5e20', borderLeftWidth: 3, borderLeftColor: '#e8f5e9' }]} data-testid="digital-card">
+            <View style={{ alignItems: 'center', paddingTop: 16 }}>
+              <View style={{ width: 74, height: 74, borderRadius: 37, borderWidth: 3, borderColor: '#1b5e20', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' }}>
+                <Image source={require('../assets/images/icon.png')} style={{ width: 60, height: 60, borderRadius: 30 }} resizeMode="contain" />
+              </View>
+              <Text style={{ color: '#1b5e20', fontSize: 19, fontWeight: '800', marginTop: 6 }}>جامعة الأحقاف</Text>
+              <Text style={{ color: '#607d66', fontSize: 9.5, fontWeight: '700', letterSpacing: 1 }}>AL-AHGAFF UNIVERSITY</Text>
+              <View style={{ backgroundColor: '#e8f5e9', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 4, marginTop: 8 }}>
+                <Text style={{ color: '#1b5e20', fontSize: 11.5, fontWeight: '800' }}>{card.faculty_name}</Text>
+              </View>
+              <View style={{ backgroundColor: '#1b5e20', borderRadius: 8, paddingHorizontal: 26, paddingVertical: 5, marginTop: 8 }}>
+                <Text style={{ color: '#fff', fontSize: 12.5, fontWeight: '800' }}>بطاقة طالب</Text>
+              </View>
+              <View style={{ backgroundColor: '#e8f5e9', borderRadius: 10, padding: 6, marginTop: 12 }}>
+                <View style={{ borderWidth: 3, borderColor: '#1b5e20' }}>
+                  <Photo w={112} h={140} />
+                </View>
+              </View>
+              <Text style={{ fontSize: 16.5, fontWeight: '800', color: '#1b5e20', marginTop: 8, textAlign: 'center', paddingHorizontal: 10 }} data-testid="card-student-name">{card.student_name}</Text>
+              <View style={{ height: 2, backgroundColor: '#e8f5e9', width: '70%', marginTop: 6 }} />
+              <View style={{ width: '100%', paddingHorizontal: 18, marginTop: 8 }}>
+                {rows.map(([k, v]) => (
+                  <View key={k} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={{ fontSize: 11, color: '#2e7d32', fontWeight: '800' }}>{k}:</Text>
+                    <Text style={{ fontSize: 12, color: '#1a2540', fontWeight: '700' }}>{v}</Text>
+                  </View>
+                ))}
+              </View>
+              <View style={{ flexDirection: 'row-reverse', width: '100%', paddingHorizontal: 18, alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                <Text style={{ fontSize: 10, color: '#607d66', width: 110, textAlign: 'right' }}>امسح الرمز للتحقق من صحة البطاقة</Text>
+                <View style={{ borderWidth: 2, borderColor: '#e8f5e9', borderRadius: 8, padding: 5, backgroundColor: '#fff' }}>
+                  <QRCode value={card.verify_url} size={76} />
+                </View>
+              </View>
+            </View>
+            <View style={{ borderTopWidth: 2, borderTopColor: '#1b5e20', backgroundColor: '#e8f5e9', paddingVertical: 6, marginTop: 10 }}>
+              <Text style={{ textAlign: 'center', color: '#1b5e20', fontSize: 12, fontWeight: '800' }} data-testid="card-validity">
+                صالحة للعام الجامعي {card.academic_year}
+              </Text>
+            </View>
+          </View>
+        ) : !horizontal ? (
           <View style={[styles.card, { width: 330, backgroundColor: t.bg }]} data-testid="digital-card">
             <View style={{ backgroundColor: t.band, alignItems: 'center', paddingVertical: 12 }}>
               <Image source={require('../assets/images/icon.png')} style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: '#fff' }} resizeMode="contain" />

@@ -8,6 +8,7 @@ import api from '../src/services/api';
 
 const TEMPLATES = [
   { key: 'green', name: 'الرسمي الأخضر', desc: 'ألوان الجامعة — بطاقة عمودية تقليدية', colors: ['#1b5e20', '#fff', '#e8f5e9'] },
+  { key: 'official', name: 'الرسمي الأنيق', desc: 'أخضر وأبيض بشريط جانبي وزخارف خفيفة — بطاقة عمودية', colors: ['#1b5e20', '#e8f5e9', '#fff'] },
   { key: 'dark', name: 'العصري الداكن', desc: 'خلفية داكنة أنيقة — بطاقة عمودية', colors: ['#071417', '#0f2027', '#4db6ac'] },
   { key: 'horizontal', name: 'الأفقي المدمج', desc: 'كبطاقة الهوية — الصورة يميناً والبيانات يساراً', colors: ['#1b5e20', '#fff', '#e8f5e9'] },
 ];
