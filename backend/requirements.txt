@@ -148,3 +148,5 @@ xlrd==2.0.2
 yarl==1.22.0
 zipp==3.23.0
 pypdf==6.14.2
+freetype-py==2.5.1
+uharfbuzz==0.55.0

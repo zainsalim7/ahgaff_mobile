@@ -219,45 +219,78 @@ def _build_certificate_pdf(s: dict, photo_bytes: Optional[bytes]) -> bytes:
     return buf.getvalue()
 
 
+def _hb_draw(img, text, font_path, size, x, y_top, fill, align="center"):
+    """رسم نص عربي مُشكَّل عبر HarfBuzz + FreeType — مستقل عن بيئة التشغيل (لا يعتمد على raqm)."""
+    import re
+    import uharfbuzz as hb
+    import freetype
+    from PIL import Image
+
+    text = str(text or "")
+    if not text.strip():
+        return
+    # الأرقام والتواريخ تُعكس مسبقاً لأن HarfBuzz سيعكس الترتيب البصري في الاتجاه RTL
+    text = re.sub(r"[0-9٠-٩/:]+", lambda m: m.group(0)[::-1], text)
+
+    blob = hb.Blob.from_file_path(str(font_path))
+    face = hb.Face(blob)
+    font = hb.Font(face)
+    buf = hb.Buffer()
+    buf.add_str(text)
+    buf.guess_segment_properties()
+    hb.shape(font, buf)
+    scale = size / face.upem
+    total = sum(p.x_advance for p in buf.glyph_positions) * scale
+
+    ft = freetype.Face(str(font_path))
+    ft.set_pixel_sizes(0, size)
+    ascender = ft.size.ascender / 64.0
+
+    if align == "center":
+        pen_x = x - total / 2
+    elif align == "right":
+        pen_x = x - total
+    else:
+        pen_x = x
+    baseline = y_top + ascender
+
+    for info, pos in zip(buf.glyph_infos, buf.glyph_positions):
+        ft.load_glyph(info.codepoint, freetype.FT_LOAD_RENDER)
+        bmp = ft.glyph.bitmap
+        if bmp.width and bmp.rows:
+            mask = Image.frombytes("L", (bmp.width, bmp.rows), bytes(bmp.buffer))
+            gx = int(pen_x + pos.x_offset * scale) + ft.glyph.bitmap_left
+            gy = int(baseline - pos.y_offset * scale) - ft.glyph.bitmap_top
+            img.paste(Image.new("RGB", mask.size, fill), (gx, gy), mask)
+        pen_x += pos.x_advance * scale
+
+
 def _render_certificate_png(s: dict, photo_bytes: Optional[bytes]) -> bytes:
     import qrcode
     from pathlib import Path
-    from PIL import Image, ImageDraw, ImageFont, features
-
-    HAS_RAQM = features.check("raqm")
-    if not HAS_RAQM:
-        import arabic_reshaper
-        from bidi.algorithm import get_display
-
-    def ar(t):
-        t = str(t or "")
-        if HAS_RAQM:
-            return t
-        return get_display(arabic_reshaper.reshape(t))
-
-    _dir = {"direction": "rtl"} if HAS_RAQM else {}
+    from PIL import Image, ImageDraw
 
     fonts_dir = Path(__file__).parent.parent / "fonts"
-    ruqaa = str(fonts_dir / "ArefRuqaa-Regular.ttf")
-    ruqaa_bold = str(fonts_dir / "ArefRuqaa-Bold.ttf")
-
-    def F(size, bold=False):
-        return ImageFont.truetype(ruqaa_bold if bold else ruqaa, size)
+    ruqaa_bold = fonts_dir / "ArefRuqaa-Bold.ttf"
+    amiri = fonts_dir / "Amiri-Regular.ttf"
 
     tpl_path = Path(__file__).parent.parent / "assets" / "certificate_template.png"
     img = Image.open(tpl_path).convert("RGB")  # 1136x1628 (أصلها 568x814 × 2)
     d = ImageDraw.Draw(img)
     INK = (35, 35, 40)
 
-    def center(x, y, text, font, fill=INK):
-        t = ar(text)
-        w = d.textlength(t, font=font, **_dir)
-        d.text((x - w / 2, y), t, font=font, fill=fill, **_dir)
-
-    def rtl(right_x, y, text, font, fill=INK):
-        t = ar(text)
-        w = d.textlength(t, font=font, **_dir)
-        d.text((right_x - w, y), t, font=font, fill=fill, **_dir)
+    def _hb_width(text, font_path, size):
+        import re
+        import uharfbuzz as hb
+        t = re.sub(r"[0-9٠-٩/:]+", lambda m: m.group(0)[::-1], str(text or ""))
+        blob = hb.Blob.from_file_path(str(font_path))
+        face = hb.Face(blob)
+        font = hb.Font(face)
+        buf = hb.Buffer()
+        buf.add_str(t)
+        buf.guess_segment_properties()
+        hb.shape(font, buf)
+        return sum(p.x_advance for p in buf.glyph_positions) * size / face.upem
 
     CX = 468  # مركز كتلة النص بالنسبة للأصل ×2 (منطقة 24..453 → مركز 238×2)
 
@@ -277,31 +310,30 @@ def _render_certificate_png(s: dict, photo_bytes: Optional[bytes]) -> bytes:
             pass
 
     # كتلة النص (المنطقة الممسوحة 341..578 ×2 → 682..1156)
-    center(CX, 690, s.get("student_name", ""), F(76, bold=True))
-    center(CX, 800, "الإجازة العامة ( البكالوريوس )", F(60, bold=True))
-    center(CX, 890, f"في {s.get('department_name', '')}", F(56, bold=True))
+    _hb_draw(img, s.get("student_name", ""), ruqaa_bold, 76, CX, 690, INK)
+    _hb_draw(img, "الإجازة العامة ( البكالوريوس )", ruqaa_bold, 60, CX, 800, INK)
+    _hb_draw(img, f"في {s.get('department_name', '')}", ruqaa_bold, 56, CX, 890, INK)
     fac = (s.get("faculty_name") or "").strip()
     if fac.startswith("كلية"):
         fac = fac[4:].strip()
-    center(CX, 978, f"من كلية {fac}", F(56, bold=True))
-    center(CX, 1066, f"بتقدير عام (( {s.get('grade', '')} ))", F(56, bold=True))
+    _hb_draw(img, f"من كلية {fac}", ruqaa_bold, 56, CX, 978, INK)
+    _hb_draw(img, f"بتقدير عام (( {s.get('grade', '')} ))", ruqaa_bold, 56, CX, 1066, INK)
 
     # التواريخ (المنطقة 272..478 × 753..796 ×2)
     hijri = (s.get("hijri_date") or "").translate(AR_NUM)
     greg = (s.get("greg_date") or "").translate(AR_NUM)
     date_text = f"منح بتاريخ {hijri}هـ الموافق {greg}م"
     fsize = 40
-    while fsize > 24 and d.textlength(ar(date_text), font=F(fsize, bold=True), **_dir) > 400:
+    while fsize > 24 and _hb_width(date_text, ruqaa_bold, fsize) > 400:
         fsize -= 2
-    rtl(950, 1524, date_text, F(fsize, bold=True))
+    _hb_draw(img, date_text, ruqaa_bold, fsize, 950, 1524, INK, align="right")
 
     # QR أعلى اليسار + رقم الشهادة
-    amiri = ImageFont.truetype(str(fonts_dir / "Amiri-Regular.ttf"), 30)
     qr = qrcode.make(s.get("verify_url", ""), box_size=6, border=1).convert("RGB").resize((190, 190))
     img.paste(qr, (44, 44))
     num = (s.get("number_display") or "").translate(AR_NUM)
-    center(139, 240, f"رقم: {num}", amiri, (60, 80, 65))
-    center(139, 282, "امسح للتحقق", amiri, (60, 80, 65))
+    _hb_draw(img, f"رقم: {num}", amiri, 30, 139, 240, (60, 80, 65))
+    _hb_draw(img, "امسح للتحقق", amiri, 30, 139, 282, (60, 80, 65))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
