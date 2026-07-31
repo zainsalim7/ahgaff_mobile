@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, Stack } from 'expo-router';
 import { alumniAPI, facultiesAPI, departmentsAPI } from '../src/services/api';
+import api from '../src/services/api';
 import { useAuth, PERMISSIONS } from '../src/contexts/AuthContext';
 
 interface AlumniRow {
@@ -75,6 +76,12 @@ export default function AlumniScreen() {
 
   // Edit modal
   const [editing, setEditing] = useState<AlumniRow | null>(null);
+  // 🆕 إصدار شهادة تخرج
+  const [certAlumni, setCertAlumni] = useState<AlumniRow | null>(null);
+  const [certGrade, setCertGrade] = useState('');
+  const [certDate, setCertDate] = useState('');
+  const [certIssuing, setCertIssuing] = useState(false);
+  const [certMsg, setCertMsg] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [editForm, setEditForm] = useState<any>({});
 
@@ -176,6 +183,43 @@ export default function AlumniScreen() {
       else Alert.alert('خطأ', msg);
     } finally {
       setRestoringId(null);
+    }
+  };
+
+  const openCert = (a: AlumniRow) => {
+    setCertGrade((a as any).honors || '');
+    setCertDate(((a as any).graduation_date || '').slice(0, 10));
+    setCertMsg('');
+    setCertAlumni(a);
+  };
+
+  const issueCertificate = async () => {
+    if (!certAlumni) return;
+    if (!certGrade.trim()) { setCertMsg('أدخل التقدير العام'); return; }
+    setCertIssuing(true);
+    setCertMsg('');
+    try {
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const res = await api.post('/certificates/issue', {
+        student_id: certAlumni.id,
+        grade: certGrade.trim(),
+        graduation_date: certDate.trim() || undefined,
+        base_url: baseUrl,
+      });
+      const pdf = await api.get(`/certificates/${res.data.id}/pdf`, { responseType: 'blob' });
+      if (Platform.OS === 'web') {
+        const url = window.URL.createObjectURL(new Blob([pdf.data]));
+        const el = document.createElement('a');
+        el.href = url;
+        el.download = `certificate_${certAlumni.student_id || 'alumni'}.pdf`;
+        el.click();
+        window.URL.revokeObjectURL(url);
+      }
+      setCertMsg(`✅ صدرت الشهادة رقم ${res.data.number} وتم تنزيل ملف PDF`);
+    } catch (e: any) {
+      setCertMsg(e?.response?.data?.detail || 'فشل إصدار الشهادة');
+    } finally {
+      setCertIssuing(false);
     }
   };
 
@@ -590,6 +634,9 @@ export default function AlumniScreen() {
                   <Text style={styles.td} numberOfLines={1}>{a.honors || 'البكالوريوس'}</Text>
                   {canManage && (
                     <View style={[styles.tdActions, { width: 110, flex: 0 }]}>
+                      <TouchableOpacity onPress={() => openCert(a)} style={[styles.iconBtnBlue, { backgroundColor: '#e8f5e9' }]} data-testid={`cert-alumni-${a.id}`}>
+                        <Ionicons name="ribbon" size={14} color="#2e7d32" />
+                      </TouchableOpacity>
                       <TouchableOpacity onPress={() => openEdit(a)} style={styles.iconBtnBlue} data-testid={`edit-alumni-${a.id}`}>
                         <Ionicons name="create" size={14} color="#1565c0" />
                       </TouchableOpacity>
@@ -671,6 +718,54 @@ export default function AlumniScreen() {
       </ScrollView>
 
       {/* ============ مودال التحرير ============ */}
+      <Modal visible={certAlumni !== null} animationType="fade" transparent onRequestClose={() => setCertAlumni(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '92%', maxWidth: 430 }} data-testid="cert-modal">
+            <Ionicons name="ribbon" size={36} color="#2e7d32" style={{ alignSelf: 'center', marginBottom: 10 }} />
+            <Text style={{ fontSize: 17, fontWeight: '800', color: '#1a2540', textAlign: 'center', marginBottom: 4 }}>
+              إصدار شهادة تخرج
+            </Text>
+            <Text style={{ fontSize: 13, color: '#5b6678', textAlign: 'center', marginBottom: 14 }}>
+              {certAlumni?.full_name} — {certAlumni?.department_name || ''}
+            </Text>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>التقدير العام (كما سيظهر في الشهادة)</Text>
+            <TextInput
+              value={certGrade}
+              onChangeText={setCertGrade}
+              placeholder="مثال: جيد جداً"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 12, fontSize: 13 }}
+              data-testid="cert-grade-input"
+            />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>تاريخ المنح الميلادي (YYYY-MM-DD — فارغ = تاريخ التخرج أو اليوم)</Text>
+            <TextInput
+              value={certDate}
+              onChangeText={setCertDate}
+              placeholder="2025-08-06"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 6, fontSize: 13 }}
+              data-testid="cert-date-input"
+            />
+            <Text style={{ fontSize: 11, color: '#8a95a8', textAlign: 'right', marginBottom: 10 }}>
+              يُحسب التاريخ الهجري تلقائياً — وتُطبع صورة الخريج إن وُجدت في ملفه
+            </Text>
+            {!!certMsg && <Text style={{ fontSize: 12.5, fontWeight: '700', color: certMsg.startsWith('✅') ? '#2e7d32' : '#c62828', textAlign: 'right', marginBottom: 10 }} data-testid="cert-msg">{certMsg}</Text>}
+            <TouchableOpacity
+              onPress={issueCertificate}
+              disabled={certIssuing}
+              style={{ backgroundColor: '#2e7d32', padding: 13, borderRadius: 10, alignItems: 'center', opacity: certIssuing ? 0.6 : 1 }}
+              data-testid="cert-issue-btn"
+            >
+              {certIssuing ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>إصدار وتنزيل الشهادة PDF</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setCertAlumni(null)}
+              style={{ backgroundColor: '#f5f5f5', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 }}
+            >
+              <Text style={{ color: '#666', fontWeight: '600' }}>إغلاق</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={editing !== null} animationType="fade" transparent onRequestClose={() => setEditing(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
