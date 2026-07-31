@@ -1067,3 +1067,8 @@ Comprehensive student/teacher management system for Ahgaff University with:
 
 ## Credentials
 See `/app/memory/test_credentials.md`
+
+- **(2026-08-01) الصلاحية الافتراضية 90 يوماً + الشعبة على البطاقة**:
+  - `routes/statements.py`: عند إصدار إفادة بدون تحديد مدة صلاحية تُعتمد 90 يوماً تلقائياً (لم يعد هناك إفادات بلا انتهاء). تحديث نص الحقل في `student-details.tsx`.
+  - `routes/student_cards.py` + `student-card.tsx`: إضافة صف "الشعبة" للبطاقة الرقمية (PDF + المعاينة + الطباعة الجماعية) — يُخفى تماماً إذا لم تكن للطالب شعبة (قرار المستخدم).
+  - اختبار: إصدار إفادة عبر API بدون مدة → expires_at بعد 90 يوماً ✔️ + توليد PNG لبطاقتين (بشعبة/بدون) ومعاينة بصرية ✔️. ⚠️ يتطلب النشر للإنتاج.

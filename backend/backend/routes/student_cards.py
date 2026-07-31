@@ -359,6 +359,7 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
             "reference_number": s.get("reference_number", ""),
             "nationality": s.get("nationality") or "يمني",
             "level": s.get("level") or 1,
+            "section": s.get("section", ""),
             "department_name": dept.get("name", ""),
             "faculty_name": faculty_name,
             "academic_year": card["academic_year"],
@@ -501,8 +502,10 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
         ("رقم القيد", p.get("enrollment_no", "")),
         ("التخصص", p.get("department_name", "")),
         ("المستوى", f"المستوى {level_ar}"),
-        ("الجنسية", p.get("nationality", "")),
     ]
+    if (p.get("section") or "").strip():
+        rows.append(("الشعبة", str(p["section"]).strip()))
+    rows.append(("الجنسية", p.get("nationality", "")))
     if p.get("reference_number"):
         rows.insert(1, ("الرقم المرجعي", p["reference_number"]))
 

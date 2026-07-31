@@ -116,6 +116,7 @@ export default function StudentCardScreen() {
     ...(card.reference_number ? [['الرقم المرجعي', card.reference_number]] : []),
     ['التخصص', card.department_name],
     ['المستوى', `المستوى ${levelAr}`],
+    ...((card.section || '').trim() ? [['الشعبة', card.section.trim()]] : []),
     ['الجنسية', card.nationality],
   ];
 

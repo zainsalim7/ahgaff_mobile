@@ -129,10 +129,9 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
     verify_base = (await get_verify_base(db)) or (data.base_url or "").rstrip("/")
     verify_url = f"{verify_base}/verify-statement?token={token}" if verify_base else token
 
-    expires_at = ""
-    if data.valid_days and data.valid_days > 0:
-        from datetime import timedelta
-        expires_at = (datetime.now(timezone.utc) + timedelta(days=data.valid_days)).isoformat()
+    from datetime import timedelta
+    valid_days = data.valid_days if (data.valid_days and data.valid_days > 0) else 90
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=valid_days)).isoformat()
 
     doc = {
         "serial": seq,

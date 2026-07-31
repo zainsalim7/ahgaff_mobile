@@ -2130,7 +2130,7 @@ export default function StudentDetailsScreen() {
               style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 12, fontSize: 13 }}
               testID="statement-purpose-input"
             />
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>مدة الصلاحية بالأيام (اختياري — اتركه فارغاً لتكون بدون انتهاء)</Text>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>مدة الصلاحية بالأيام (اختياري — الافتراضي 90 يوماً)</Text>
             <TextInput
               value={statementValidDays}
               onChangeText={(t) => setStatementValidDays(t.replace(/[^0-9]/g, ''))}
