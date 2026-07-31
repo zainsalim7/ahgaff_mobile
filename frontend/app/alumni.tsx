@@ -206,18 +206,26 @@ export default function AlumniScreen() {
         graduation_date: certDate.trim() || undefined,
         base_url: baseUrl,
       });
-      const pdf = await api.get(`/certificates/${res.data.id}/pdf`, { responseType: 'blob' });
-      if (Platform.OS === 'web') {
-        const url = window.URL.createObjectURL(new Blob([pdf.data]));
-        const el = document.createElement('a');
-        el.href = url;
-        el.download = `certificate_${certAlumni.student_id || 'alumni'}.pdf`;
-        el.click();
-        window.URL.revokeObjectURL(url);
+      try {
+        const pdf = await api.get(`/certificates/${res.data.id}/pdf`, { responseType: 'blob' });
+        if (Platform.OS === 'web') {
+          const url = window.URL.createObjectURL(new Blob([pdf.data]));
+          const el = document.createElement('a');
+          el.href = url;
+          el.download = `certificate_${certAlumni.student_id || 'alumni'}.pdf`;
+          el.click();
+          window.URL.revokeObjectURL(url);
+        }
+        setCertMsg(`✅ صدرت الشهادة رقم ${res.data.number} وتم تنزيل ملف PDF`);
+      } catch (pdfErr: any) {
+        let d = pdfErr?.response?.data?.detail;
+        if (pdfErr?.response?.data instanceof Blob) {
+          try { d = JSON.parse(await pdfErr.response.data.text()).detail; } catch {}
+        }
+        setCertMsg(`⚠️ صدرت الشهادة رقم ${res.data.number} لكن تعذر تنزيل الملف: ${d || pdfErr?.message || 'خطأ غير معروف'}`);
       }
-      setCertMsg(`✅ صدرت الشهادة رقم ${res.data.number} وتم تنزيل ملف PDF`);
     } catch (e: any) {
-      setCertMsg(e?.response?.data?.detail || 'فشل إصدار الشهادة');
+      setCertMsg(`فشل إصدار الشهادة: ${e?.response?.data?.detail || e?.message || 'خطأ غير معروف'}`);
     } finally {
       setCertIssuing(false);
     }

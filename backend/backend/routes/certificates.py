@@ -201,7 +201,11 @@ async def certificate_pdf(cert_id: str, current_user: dict = Depends(get_current
             photo_bytes, _ct = get_object(s["photo_path"])
         except Exception:
             photo_bytes = None
-    pdf = _build_certificate_pdf(s, photo_bytes)
+    pdf = None
+    try:
+        pdf = _build_certificate_pdf(s, photo_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"تعذر توليد ملف الشهادة: {type(e).__name__}: {e}")
     return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
                              headers={"Content-Disposition": f"attachment; filename=certificate_{s.get('serial')}.pdf"})
 
