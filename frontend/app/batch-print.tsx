@@ -6,6 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Picker } from '@react-native-picker/picker';
+import { useLocalSearchParams } from 'expo-router';
 import api from '../src/services/api';
 
 // معاينة A4 مصغّرة: 210×297مم → مقياس
@@ -16,6 +17,9 @@ const A4H = 297 * SCALE;
 const DEFAULTS = { card_w: 85.6, card_h: 54, card1_x: 62, card1_y: 40, card2_x: 62, card2_y: 180 };
 
 export default function BatchPrintScreen() {
+  const { ids } = useLocalSearchParams<{ ids?: string }>();
+  const selIds = typeof ids === 'string' && ids.length > 0 ? ids.split(',').filter(Boolean) : [];
+  const idsMode = selIds.length > 0;
   const [faculties, setFaculties] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [facultyId, setFacultyId] = useState('');
@@ -48,7 +52,12 @@ export default function BatchPrintScreen() {
   }, []);
 
   useEffect(() => {
-    if (!facultyId) return;
+    if (!idsMode) return;
+    api.get(`/students/${selIds[0]}/card`).then((r) => setTemplate(r.data?.template || 'green')).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!facultyId || idsMode) return;
     api.get(`/cards/settings/${facultyId}`).then((r) => setTemplate(r.data?.template || 'green')).catch(() => setTemplate('green'));
     api.get('/departments', { params: { faculty_id: facultyId } }).then((r) => {
       const list = (r.data || []).filter((d: any) => !facultyId || d.faculty_id === facultyId);
@@ -58,6 +67,7 @@ export default function BatchPrintScreen() {
   }, [facultyId]);
 
   const refreshCount = useCallback(() => {
+    if (idsMode) { setCount({ count: selIds.length, pages: Math.ceil(selIds.length / 2) }); return; }
     if (!departmentId) { setCount(null); return; }
     api.get('/cards/batch-count', { params: { department_id: departmentId, ...(level ? { level } : {}) } })
       .then((r) => setCount(r.data)).catch(() => setCount(null));
@@ -78,8 +88,9 @@ export default function BatchPrintScreen() {
       Object.keys(DEFAULTS).forEach((k) => { settings[k] = parseFloat(st[k]) || (DEFAULTS as any)[k]; });
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
       const res = await api.post('/cards/batch-pdf', {
-        department_id: departmentId,
-        level: level ? parseInt(level, 10) : undefined,
+        ...(idsMode
+          ? { student_ids: selIds }
+          : { department_id: departmentId, level: level ? parseInt(level, 10) : undefined }),
         base_url: baseUrl,
         orientation,
         settings,
@@ -136,6 +147,13 @@ export default function BatchPrintScreen() {
             <Text style={styles.title}>🖨️ طباعة البطاقات دفعة واحدة</Text>
             <Text style={styles.hint}>بطاقتان في كل ورقة A4 — اضبط مواضعهما بالملم لتطابق طابعتك، وتُحفظ الإعدادات تلقائياً.</Text>
 
+            {idsMode ? (
+              <View style={[styles.countBox, { backgroundColor: '#e3f2fd' }]} testID="ids-mode-box">
+                <Ionicons name="checkbox" size={15} color="#1565c0" />
+                <Text style={[styles.countText, { color: '#1565c0' }]}>طلاب محددون من قائمة الطلاب — ستُطبع بطاقاتهم فقط</Text>
+              </View>
+            ) : (
+            <>
             <Text style={styles.label}>الكلية</Text>
             <View style={styles.pickerWrap}>
               <Picker selectedValue={facultyId} onValueChange={(v) => setFacultyId(String(v))} style={{ height: 40 }} testID="print-faculty-picker">
@@ -157,6 +175,8 @@ export default function BatchPrintScreen() {
                 {[1, 2, 3, 4, 5, 6, 7, 8].map((l) => <Picker.Item key={l} label={`المستوى ${l}`} value={String(l)} />)}
               </Picker>
             </View>
+            </>
+            )}
 
             {count && (
               <View style={styles.countBox} testID="print-count-box">
@@ -210,8 +230,8 @@ export default function BatchPrintScreen() {
 
             <TouchableOpacity
               onPress={download}
-              disabled={downloading || !departmentId || !count?.count}
-              style={[styles.dlBtn, (downloading || !departmentId || !count?.count) && { opacity: 0.6 }]}
+              disabled={downloading || (!idsMode && !departmentId) || !count?.count}
+              style={[styles.dlBtn, (downloading || (!idsMode && !departmentId) || !count?.count) && { opacity: 0.6 }]}
               testID="batch-print-download-btn"
             >
               {downloading ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="print" size={17} color="#fff" />}

@@ -97,16 +97,11 @@ async def set_verify_base(payload: dict, current_user: dict = Depends(get_curren
     return {"message": "تم حفظ رابط التحقق — سيُستخدم في رموز QR الجديدة", "value": value}
 
 
-@router.post("/statements/issue")
-async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_current_user)):
-    db = get_db()
-    student = await db.students.find_one({"_id": ObjectId(data.student_id)})
-    if not student:
-        raise HTTPException(status_code=404, detail="الطالب غير موجود")
+async def _issue_core(db, student: dict, current_user: dict, nationality, purpose, valid_days, base_url) -> dict:
     dept = await db.departments.find_one({"_id": ObjectId(student.get("department_id", ""))}) if student.get("department_id") else None
     faculty_id = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
     if not _can_issue(current_user, faculty_id):
-        raise HTTPException(status_code=403, detail="غير مصرح لك بإصدار إفادات لهذه الكلية")
+        raise HTTPException(status_code=403, detail=f"غير مصرح لك بإصدار إفادات لكلية الطالب {student.get('full_name', '')}")
     faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)}) if faculty_id else None
 
     active_sem = await db.semesters.find_one({"status": "active"})
@@ -126,12 +121,12 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
     number_display = f"{seq}/{year}"
 
     token = uuid.uuid4().hex
-    verify_base = (await get_verify_base(db)) or (data.base_url or "").rstrip("/")
+    verify_base = (await get_verify_base(db)) or (base_url or "").rstrip("/")
     verify_url = f"{verify_base}/verify-statement?token={token}" if verify_base else token
 
     from datetime import timedelta
-    valid_days = data.valid_days if (data.valid_days and data.valid_days > 0) else 90
-    expires_at = (datetime.now(timezone.utc) + timedelta(days=valid_days)).isoformat()
+    vd = valid_days if (valid_days and valid_days > 0) else 90
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=vd)).isoformat()
 
     doc = {
         "serial": seq,
@@ -140,7 +135,7 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
         "student_id": str(student["_id"]),
         "student_name": student.get("full_name", ""),
         "enrollment_no": student.get("student_id", ""),
-        "nationality": (data.nationality or student.get("nationality") or "يمني").strip(),
+        "nationality": (nationality or student.get("nationality") or "يمني").strip(),
         "level": student.get("level") or 1,
         "department_id": str((dept or {}).get("_id", "")) if dept else "",
         "department_name": (dept or {}).get("name", ""),
@@ -148,7 +143,7 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
         "faculty_name": (faculty or {}).get("name", ""),
         "academic_year": academic_year_display,
         "student_status": student.get("status", "active"),
-        "purpose": (data.purpose or "").strip(),
+        "purpose": (purpose or "").strip(),
         "verify_token": token,
         "verify_url": verify_url,
         "issued_by": current_user.get("id", ""),
@@ -158,9 +153,72 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
         "is_revoked": False,
     }
     res = await db.student_statements.insert_one(doc)
+    doc["inserted_id"] = str(res.inserted_id)
     await log_activity(current_user, "issue_student_statement", "student", str(student["_id"]),
                        student.get("full_name", ""), {"number": number_display})
-    return {"id": str(res.inserted_id), "number": number_display, "verify_url": verify_url, "token": token}
+    return doc
+
+
+@router.post("/statements/issue")
+async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    student = await db.students.find_one({"_id": ObjectId(data.student_id)})
+    if not student:
+        raise HTTPException(status_code=404, detail="الطالب غير موجود")
+    doc = await _issue_core(db, student, current_user, data.nationality, data.purpose, data.valid_days, data.base_url)
+    return {"id": doc["inserted_id"], "number": doc["number_display"], "verify_url": doc["verify_url"], "token": doc["verify_token"]}
+
+
+class BulkIssueRequest(BaseModel):
+    student_ids: list
+    purpose: Optional[str] = None
+    valid_days: Optional[int] = None
+    base_url: Optional[str] = None
+
+
+@router.post("/statements/bulk-issue")
+async def bulk_issue_statements(data: BulkIssueRequest, current_user: dict = Depends(get_current_user)):
+    """إصدار إفادات لعدة طلاب دفعة واحدة — ملف PDF واحد (إفادة لكل صفحة) وتُسجَّل كلها في السجل."""
+    db = get_db()
+    ids = [str(i) for i in (data.student_ids or []) if i][:200]
+    if not ids:
+        raise HTTPException(status_code=400, detail="لم يتم تحديد طلاب")
+
+    students = []
+    for sid in ids:
+        try:
+            s = await db.students.find_one({"_id": ObjectId(sid)})
+        except Exception:
+            s = None
+        if s:
+            students.append(s)
+    if not students:
+        raise HTTPException(status_code=404, detail="لا يوجد طلاب مطابقون")
+
+    # فحص الصلاحية على كل الكليات قبل إصدار أي إفادة
+    for s in students:
+        dept = await db.departments.find_one({"_id": ObjectId(s.get("department_id", ""))}) if s.get("department_id") else None
+        fid = s.get("faculty_id") or (dept or {}).get("faculty_id", "")
+        if not _can_issue(current_user, fid):
+            raise HTTPException(status_code=403, detail=f"غير مصرح لك بإصدار إفادات لكلية الطالب {s.get('full_name', '')}")
+
+    from pypdf import PdfReader, PdfWriter
+    writer = PdfWriter()
+    settings_cache = {}
+    for s in students:
+        doc = await _issue_core(db, s, current_user, None, data.purpose, data.valid_days, data.base_url)
+        fid = doc.get("faculty_id", "")
+        if fid not in settings_cache:
+            settings_cache[fid] = await db.statement_settings.find_one({"_id": f"faculty_{fid}"}) or {}
+        pdf = _build_pdf(doc, settings_cache[fid])
+        for page in PdfReader(io.BytesIO(pdf)).pages:
+            writer.add_page(page)
+
+    out = io.BytesIO()
+    writer.write(out)
+    return StreamingResponse(io.BytesIO(out.getvalue()), media_type="application/pdf",
+                             headers={"Content-Disposition": "attachment; filename=statements_bulk.pdf",
+                                      "X-Issued-Count": str(len(students))})
 
 
 @router.get("/statements")

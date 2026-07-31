@@ -300,7 +300,8 @@ async def get_print_settings(current_user: dict = Depends(get_current_user)):
 
 
 class BatchPrintRequest(BaseModel):
-    department_id: str
+    department_id: Optional[str] = None
+    student_ids: Optional[list] = None
     level: Optional[int] = None
     section: Optional[str] = None
     base_url: Optional[str] = None
@@ -310,17 +311,42 @@ class BatchPrintRequest(BaseModel):
 
 @router.post("/cards/batch-pdf")
 async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depends(get_current_user)):
-    """PDF واحد: بطاقتان في كل ورقة A4 بمواضع قابلة للضبط (ملم)."""
+    """PDF واحد: بطاقتان في كل ورقة A4 بمواضع قابلة للضبط (ملم) — حسب القسم أو طلاب محددين."""
     db = get_db()
-    try:
-        dept = await db.departments.find_one({"_id": ObjectId(data.department_id)})
-    except Exception:
-        dept = None
-    if not dept:
-        raise HTTPException(status_code=404, detail="القسم غير موجود")
-    fid = dept.get("faculty_id", "")
-    if not _can_manage(current_user, fid):
-        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    ids_mode = bool(data.student_ids)
+    dept = None
+    if ids_mode:
+        oids = []
+        for i in (data.student_ids or [])[:400]:
+            try:
+                oids.append(ObjectId(str(i)))
+            except Exception:
+                pass
+        students = [s async for s in db.students.find({"_id": {"$in": oids}}).sort("full_name", 1)]
+        if not students:
+            raise HTTPException(status_code=404, detail="لا يوجد طلاب مطابقون")
+        tpl_map = {}
+        for s in students:
+            fid_s, fac_name_s, dept_name_s = await _resolve_faculty(db, s)
+            if not _can_manage(current_user, fid_s):
+                raise HTTPException(status_code=403, detail=f"غير مصرح لك بطباعة بطاقات كلية الطالب {s.get('full_name', '')}")
+            if fid_s not in tpl_map:
+                tpl_map[fid_s] = (await db.card_settings.find_one({"_id": f"faculty_{fid_s}"}) or {}).get("template", "green")
+            s["_fid"], s["_fac_name"], s["_dept_name"] = fid_s, fac_name_s, dept_name_s
+        fid = students[0].get("_fid", "")
+        tpl = tpl_map.get(fid, "green")
+    else:
+        if not data.department_id:
+            raise HTTPException(status_code=400, detail="اختر القسم أو حدد طلاباً")
+        try:
+            dept = await db.departments.find_one({"_id": ObjectId(data.department_id)})
+        except Exception:
+            dept = None
+        if not dept:
+            raise HTTPException(status_code=404, detail="القسم غير موجود")
+        fid = dept.get("faculty_id", "")
+        if not _can_manage(current_user, fid):
+            raise HTTPException(status_code=403, detail="غير مصرح لك")
 
     # حفظ إعدادات المواضع للاستخدام القادم
     orientation = data.orientation if data.orientation in ORIENTATIONS else "auto"
@@ -333,26 +359,29 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
                 pass
         await db.card_print_settings.update_one({"_id": "global"}, {"$set": {**st, "orientation": orientation}}, upsert=True)
 
-    q = {"department_id": data.department_id, "is_alumni": {"$ne": True}}
-    if data.level:
-        q["level"] = data.level
-    if data.section:
-        q["section"] = data.section
-    students = [s async for s in db.students.find(q).sort("full_name", 1)]
-    if not students:
-        raise HTTPException(status_code=404, detail="لا يوجد طلاب مطابقون")
-    if len(students) > 400:
-        raise HTTPException(status_code=400, detail="العدد يتجاوز 400 طالب — قسّم الطلبات حسب المستوى")
+    if not ids_mode:
+        q = {"department_id": data.department_id, "is_alumni": {"$ne": True}}
+        if data.level:
+            q["level"] = data.level
+        if data.section:
+            q["section"] = data.section
+        students = [s async for s in db.students.find(q).sort("full_name", 1)]
+        if not students:
+            raise HTTPException(status_code=404, detail="لا يوجد طلاب مطابقون")
+        if len(students) > 400:
+            raise HTTPException(status_code=400, detail="العدد يتجاوز 400 طالب — قسّم الطلبات حسب المستوى")
 
-    faculty = await db.faculties.find_one({"_id": ObjectId(fid)}) if fid else None
+    faculty = await db.faculties.find_one({"_id": ObjectId(fid)}) if fid and not ids_mode else None
     faculty_name = (faculty or {}).get("name", "")
-    tpl = (await db.card_settings.find_one({"_id": f"faculty_{fid}"}) or {}).get("template", "green")
+    if not ids_mode:
+        tpl = (await db.card_settings.find_one({"_id": f"faculty_{fid}"}) or {}).get("template", "green")
     year = await _active_academic_year(db)
     base = (await get_verify_base(db)) or (data.base_url or "").rstrip("/")
 
     from services.storage_service import get_object
 
     def make_payload(s, card):
+        s_tpl = tpl_map.get(s.get("_fid"), "green") if ids_mode else tpl
         return {
             "student_name": s.get("full_name", ""),
             "enrollment_no": s.get("student_id", ""),
@@ -360,10 +389,10 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
             "nationality": s.get("nationality") or "يمني",
             "level": s.get("level") or 1,
             "section": s.get("section", ""),
-            "department_name": dept.get("name", ""),
-            "faculty_name": faculty_name,
+            "department_name": s.get("_dept_name", "") if ids_mode else dept.get("name", ""),
+            "faculty_name": s.get("_fac_name", "") if ids_mode else faculty_name,
             "academic_year": card["academic_year"],
-            "template": tpl,
+            "template": s_tpl,
         }
 
     pngs = []
@@ -376,7 +405,8 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
                 photo_bytes, _ct = get_object(s["photo_path"])
             except Exception:
                 photo_bytes = None
-        pngs.append(_render_card_png(make_payload(s, card), photo_bytes, verify_url))
+        payload = make_payload(s, card)
+        pngs.append((_render_card_png(payload, photo_bytes, verify_url), payload["template"] != "horizontal"))
 
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -390,16 +420,16 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
         out_portrait = template_portrait
     else:
         out_portrait = orientation == "portrait"
-    rotate_needed = out_portrait != template_portrait
-    if rotate_needed:
-        from PIL import Image as PILImage
-        rotated = []
-        for png in pngs:
+    from PIL import Image as PILImage
+    final_pngs = []
+    for png, tp in pngs:
+        if tp != out_portrait:
             im = PILImage.open(io.BytesIO(png)).rotate(90, expand=True)
             b = io.BytesIO()
             im.save(b, format="PNG")
-            rotated.append(b.getvalue())
-        pngs = rotated
+            png = b.getvalue()
+        final_pngs.append(png)
+    pngs = final_pngs
     if out_portrait:
         cw, ch = st["card_h"] * mm, st["card_w"] * mm
     else:
@@ -413,7 +443,6 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
             c.drawImage(ImageReader(io.BytesIO(png)), x, H - y_top - ch, cw, ch)
         c.showPage()
     c.save()
-    fname = f"cards_{dept.get('name', 'dept')}"
     return StreamingResponse(io.BytesIO(buf.getvalue()), media_type="application/pdf",
                              headers={"Content-Disposition": f"attachment; filename=batch_cards.pdf"})
 

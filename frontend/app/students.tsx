@@ -196,6 +196,12 @@ export default function StudentsScreen() {
   const [bulkTrgSection, setBulkTrgSection] = useState('');
   const [bulkTrgReason, setBulkTrgReason] = useState('');
   const [bulkTransferring, setBulkTransferring] = useState(false);
+
+  // 🆕 إصدار إفادات جماعي
+  const [showStatementBulkModal, setShowStatementBulkModal] = useState(false);
+  const [stBulkPurpose, setStBulkPurpose] = useState('');
+  const [stBulkValidDays, setStBulkValidDays] = useState('90');
+  const [stBulkIssuing, setStBulkIssuing] = useState(false);
   // سجل التاريخ لطالب
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [historyData, setHistoryData] = useState<any[]>([]);
@@ -419,6 +425,39 @@ export default function StudentsScreen() {
   };
 
   // حذف المحدد
+  // 🆕 إصدار إفادات جماعي لكل الطلاب المحددين — PDF واحد
+  const handleBulkIssueStatements = async () => {
+    if (selectedIds.size === 0) return;
+    setStBulkIssuing(true);
+    try {
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const res = await api.post('/statements/bulk-issue', {
+        student_ids: Array.from(selectedIds),
+        purpose: stBulkPurpose.trim() || undefined,
+        valid_days: stBulkValidDays && parseInt(stBulkValidDays, 10) > 0 ? parseInt(stBulkValidDays, 10) : undefined,
+        base_url: baseUrl,
+      }, { responseType: 'blob', timeout: 300000 });
+      if (Platform.OS === 'web') {
+        const url = window.URL.createObjectURL(new Blob([res.data]));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'statements_bulk.pdf';
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }
+      showMessage('تم', `تم إصدار ${selectedIds.size} إفادة وتنزيل الملف — وسُجّلت في سجل الإفادات`);
+      setShowStatementBulkModal(false);
+    } catch (e: any) {
+      let detail = e?.response?.data?.detail;
+      if (e?.response?.data instanceof Blob) {
+        try { detail = JSON.parse(await e.response.data.text()).detail; } catch {}
+      }
+      showMessage('خطأ', detail || 'فشل إصدار الإفادات');
+    } finally {
+      setStBulkIssuing(false);
+    }
+  };
+
   const handleBulkDelete = () => {
     if (selectedIds.size === 0) return;
     
@@ -1531,6 +1570,14 @@ export default function StudentsScreen() {
                   <Ionicons name="remove-circle" size={14} color="#fff" />
                   <Text style={styles.selActionText}>إلغاء تسجيل</Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={[styles.selActionBtn, { backgroundColor: '#00695c' }]} onPress={() => { setStBulkPurpose(''); setStBulkValidDays('90'); setShowStatementBulkModal(true); }} testID="bulk-statements-btn">
+                  <Ionicons name="document-text" size={14} color="#fff" />
+                  <Text style={styles.selActionText}>إصدار إفادات</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.selActionBtn, { backgroundColor: '#00838f' }]} onPress={() => router.push(`/batch-print?ids=${Array.from(selectedIds).join(',')}`)} testID="bulk-cards-btn">
+                  <Ionicons name="card" size={14} color="#fff" />
+                  <Text style={styles.selActionText}>طباعة بطاقات</Text>
+                </TouchableOpacity>
                 <TouchableOpacity style={[styles.selActionBtn, { backgroundColor: '#f44336' }]} onPress={handleBulkDelete} disabled={deleting}>
                   {deleting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="trash" size={14} color="#fff" />}
                   <Text style={styles.selActionText}>حذف</Text>
@@ -2272,6 +2319,55 @@ export default function StudentsScreen() {
       )}
       
       {/* نافذة تغيير المستوى */}
+      {/* 🆕 نافذة إصدار الإفادات الجماعي */}
+      {showStatementBulkModal && (
+      <Modal visible={showStatementBulkModal} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '90%', maxWidth: 420 }} data-testid="bulk-statements-modal">
+            <Ionicons name="document-text" size={36} color="#00695c" style={{ alignSelf: 'center', marginBottom: 10 }} />
+            <Text style={{ fontSize: 17, fontWeight: '700', color: '#333', textAlign: 'center', marginBottom: 4 }}>
+              إصدار إفادات جماعي
+            </Text>
+            <Text style={{ fontSize: 13, color: '#888', textAlign: 'center', marginBottom: 16 }}>
+              سيتم إصدار إفادة رسمية برقم متسلسل لكل طالب من الطلاب المحددين ({selectedIds.size}) وتنزيلها في ملف PDF واحد
+            </Text>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الغرض (اختياري — يسري على الجميع)</Text>
+            <TextInput
+              value={stBulkPurpose}
+              onChangeText={setStBulkPurpose}
+              placeholder="مثال: تقديمها للسفارة"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 12, fontSize: 13 }}
+              testID="bulk-statement-purpose-input"
+            />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>مدة الصلاحية بالأيام (الافتراضي 90 يوماً)</Text>
+            <TextInput
+              value={stBulkValidDays}
+              onChangeText={(t) => setStBulkValidDays(t.replace(/[^0-9]/g, ''))}
+              placeholder="90"
+              keyboardType="numeric"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 16, fontSize: 13 }}
+              testID="bulk-statement-valid-days-input"
+            />
+            <TouchableOpacity
+              style={{ backgroundColor: '#00695c', padding: 13, borderRadius: 10, alignItems: 'center', opacity: stBulkIssuing ? 0.6 : 1 }}
+              onPress={handleBulkIssueStatements}
+              disabled={stBulkIssuing}
+              testID="bulk-statements-confirm-btn"
+            >
+              {stBulkIssuing ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14 }}>إصدار وتنزيل PDF</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ backgroundColor: '#f5f5f5', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 10 }}
+              onPress={() => setShowStatementBulkModal(false)}
+              disabled={stBulkIssuing}
+            >
+              <Text style={{ color: '#666', fontWeight: '600' }}>إلغاء</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      )}
+
       {showLevelModal && (
       <Modal visible={showLevelModal} transparent animationType="fade">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
