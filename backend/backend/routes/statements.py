@@ -97,12 +97,26 @@ async def set_verify_base(payload: dict, current_user: dict = Depends(get_curren
     return {"message": "تم حفظ رابط التحقق — سيُستخدم في رموز QR الجديدة", "value": value}
 
 
+async def _safe_dept(db, student: dict):
+    if not student.get("department_id"):
+        return None
+    try:
+        return await db.departments.find_one({"_id": ObjectId(student["department_id"])})
+    except Exception:
+        return None
+
+
 async def _issue_core(db, student: dict, current_user: dict, nationality, purpose, valid_days, base_url) -> dict:
-    dept = await db.departments.find_one({"_id": ObjectId(student.get("department_id", ""))}) if student.get("department_id") else None
+    dept = await _safe_dept(db, student)
     faculty_id = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
     if not _can_issue(current_user, faculty_id):
         raise HTTPException(status_code=403, detail=f"غير مصرح لك بإصدار إفادات لكلية الطالب {student.get('full_name', '')}")
-    faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)}) if faculty_id else None
+    faculty = None
+    if faculty_id:
+        try:
+            faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
+        except Exception:
+            faculty = None
 
     active_sem = await db.semesters.find_one({"status": "active"})
     academic_year = (active_sem or {}).get("academic_year") or ""
@@ -197,7 +211,7 @@ async def bulk_issue_statements(data: BulkIssueRequest, current_user: dict = Dep
 
     # فحص الصلاحية على كل الكليات قبل إصدار أي إفادة
     for s in students:
-        dept = await db.departments.find_one({"_id": ObjectId(s.get("department_id", ""))}) if s.get("department_id") else None
+        dept = await _safe_dept(db, s)
         fid = s.get("faculty_id") or (dept or {}).get("faculty_id", "")
         if not _can_issue(current_user, fid):
             raise HTTPException(status_code=403, detail=f"غير مصرح لك بإصدار إفادات لكلية الطالب {s.get('full_name', '')}")
@@ -206,11 +220,16 @@ async def bulk_issue_statements(data: BulkIssueRequest, current_user: dict = Dep
     writer = PdfWriter()
     settings_cache = {}
     for s in students:
-        doc = await _issue_core(db, s, current_user, None, data.purpose, data.valid_days, data.base_url)
-        fid = doc.get("faculty_id", "")
-        if fid not in settings_cache:
-            settings_cache[fid] = await db.statement_settings.find_one({"_id": f"faculty_{fid}"}) or {}
-        pdf = _build_pdf(doc, settings_cache[fid])
+        try:
+            doc = await _issue_core(db, s, current_user, None, data.purpose, data.valid_days, data.base_url)
+            fid = doc.get("faculty_id", "")
+            if fid not in settings_cache:
+                settings_cache[fid] = await db.statement_settings.find_one({"_id": f"faculty_{fid}"}) or {}
+            pdf = _build_pdf(doc, settings_cache[fid])
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"تعذر إصدار إفادة الطالب {s.get('full_name', '')}: {e}")
         for page in PdfReader(io.BytesIO(pdf)).pages:
             writer.add_page(page)
 

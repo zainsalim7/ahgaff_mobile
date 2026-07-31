@@ -1094,3 +1094,8 @@ See `/app/memory/test_credentials.md`
   - Backend `routes/certificates.py`: `POST /certificates/issue` (للخريجين فقط، ترقيم تسلسلي لكل كلية/سنة في `certificate_counters`، تحويل هجري تلقائي بـhijridate)، سجل `graduation_certificates`، `GET /certificates`، `GET /certificates/{id}/pdf`، إلغاء/استعادة، `GET /verify/certificate/{token}` عام. QR أعلى يسار الشهادة + رقمها. صورة الخريج تُطبع في إطارها إن وُجدت. إزالة تكرار "كلية كلية".
   - Frontend: زر شريط أخضر (ribbon) لكل خريج في `alumni.tsx` → نافذة (تقدير معبأ من honors + تاريخ الميلادي) → إصدار وتنزيل PDF. صفحة `verify-certificate.tsx` عامة مسجلة في `_layout.tsx` (VERIFY_PATHS + Stack.Screen).
   - اختبار E2E: إصدار عبر API (1/2026، هجري 1446/12/19) + PDF 1MB + تحقق عام valid + معاينة بصرية كاملة للشهادة + لقطات شاشة (صفحة التحقق + نافذة الإصدار بالمتصفح) ✔️. ⚠️ يتطلب النشر للإنتاج.
+
+- **(2026-08-01) إصلاح: فشل الإصدار الجماعي للإفادات في الإنتاج**:
+  - السبب الجذري: طلاب ببيانات قديمة/مستوردة لديهم `department_id` غير صالح (ليس ObjectId) → `ObjectId()` يرمي استثناء → 500 → "فشل إصدار الإفادات". (البطاقات لم تتأثر لأن `_resolve_faculty` محمية أصلاً).
+  - الإصلاح: `_safe_dept` في statements.py + حماية lookups الكلية + رسالة عربية واضحة باسم الطالب عند أي فشل فردي، ونفس الحماية في certificates.py.
+  - أُعيد إنتاج الخطأ في المعاينة بطالب بقسم تالف (500) ثم التحقق بعد الإصلاح (200، صفحتان). ⚠️ يتطلب إعادة النشر للإنتاج.

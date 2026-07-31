@@ -36,11 +36,21 @@ async def issue_certificate(data: CertIssueRequest, current_user: dict = Depends
         raise HTTPException(status_code=404, detail="الطالب غير موجود")
     if not (student.get("is_alumni") or student.get("status") == "graduated"):
         raise HTTPException(status_code=400, detail="شهادة التخرج تصدر للخريجين فقط")
-    dept = await db.departments.find_one({"_id": ObjectId(student.get("department_id", ""))}) if student.get("department_id") else None
+    dept = None
+    if student.get("department_id"):
+        try:
+            dept = await db.departments.find_one({"_id": ObjectId(student["department_id"])})
+        except Exception:
+            dept = None
     faculty_id = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
     if not _can_issue(current_user, faculty_id):
         raise HTTPException(status_code=403, detail="غير مصرح لك بإصدار شهادات لهذه الكلية")
-    faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)}) if faculty_id else None
+    faculty = None
+    if faculty_id:
+        try:
+            faculty = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
+        except Exception:
+            faculty = None
 
     grade = (data.grade or "").strip()
     if not grade:
