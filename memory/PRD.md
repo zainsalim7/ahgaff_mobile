@@ -1052,6 +1052,8 @@ Comprehensive student/teacher management system for Ahgaff University with:
 
 - ✅ **Fix: "‎.0" suffix on enrollment numbers (2026-07-30)**: استيراد Excel كان يحول أرقام القيد/الهاتف/سنة الالتحاق float→str فينتج "128001.0" (**217 طالباً بالإنتاج متأثرون**). الإصلاح: helper `_xl_str()` في server.py (يقص .0) طُبق على كل مواضع الاستيراد (استيراد الطلاب + التسجيل بالجدول + enrollment_year/phone) + أداة `POST /api/admin/students/fix-dotted-ids` (أدمن) تنظف البيانات الموجودة وتصلح qr_code وusername المرتبط. مختبر محلياً E2E (استيراد float نظيف + تنظيف بيانات قديمة مزروعة). **نُفذ على الإنتاج (2026-07-30): 217 student_id + 15 username أُصلحوا، المتبقي بـ.0 = صفر من 1254** ✔️
 
+- ✅ **(2026-07-30) الجنسية في تصدير Excel**: أضيف عمود "الجنسية" لتصدير الطلاب من الخادم (`GET /export/students` بعد سنة الالتحاق) وتصدير المحددين بالواجهة (students.tsx rows). مختبر: التصدير يعرض العمود بالقيم.
+
 ## P3 / Backlog
 - server.py modularization (Phase 2: Reports; Phase 3+: Templates, Courses, Lectures…)
 - Migrate Atlas cluster AWS Oregon → GCP Doha (latency)

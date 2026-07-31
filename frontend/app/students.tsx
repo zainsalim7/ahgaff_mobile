@@ -897,6 +897,7 @@ export default function StudentsScreen() {
             'الشعبة': s.section || '',
             'البرنامج': (s as any).program_code || '',
             'سنة الالتحاق': (s as any).enrollment_year || '',
+            'الجنسية': (s as any).nationality || '',
             'الهاتف': (s as any).phone || '',
             'البريد': (s as any).email || '',
           };

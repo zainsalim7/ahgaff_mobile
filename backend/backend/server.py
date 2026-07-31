@@ -13417,6 +13417,7 @@ async def export_students_to_excel(
             "الشعبة": s.get("section", ""),
             "البرنامج": s.get("program_code", ""),
             "سنة الالتحاق": s.get("enrollment_year", ""),
+            "الجنسية": s.get("nationality", "") or "",
             "الهاتف": s.get("phone", ""),
             "البريد": s.get("email", ""),
             "نشط": "نعم" if s.get("is_active", True) else "لا",
