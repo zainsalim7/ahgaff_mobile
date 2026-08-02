@@ -17,3 +17,9 @@
 ## ملاحظات أخرى
 - الإنتاج بدون libraqm → أي رسم نص عربي بـPIL يجب أن يمر عبر HarfBuzz+FreeType (`_hb_draw` في certificates.py) أو خط فيه Presentation Forms (مثل Amiri).
 - بيانات الإنتاج فيها طلاب بـ`department_id` غير صالح → استخدم دائماً lookups آمنة (try/except حول ObjectId).
+
+## نطاق التحقق الجديد verify.ahgaff.edu (2026-08-01)
+- ahgaff.edu ملك المستخدم — DNS يُدار عند Opalstack (ns1/2/3.us.opalstack.com).
+- verify.ahgaff.edu كان يشير لخادم موقع الجامعة (207.244.121.250) — يجب تغييره ليشير لنشر التطبيق.
+- الكود جاهز: _layout.tsx (host verify-only) + api.ts (توجيه API) + CORS في server.py.
+- المتبقي على المستخدم: سجل DNS في Opalstack + Custom Domain في منصة النشر + تحديث verify_base_url من إعدادات الإفادات.

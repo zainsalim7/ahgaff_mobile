@@ -417,6 +417,9 @@ _DEFAULT_ORIGINS = [
     "https://ahgaffstudent-web-production.up.railway.app",
     "https://app.ahgaff.net",
     "https://api.ahgaff.net",
+    "https://ahgaff.net",
+    "https://www.ahgaff.net",
+    "https://verify.ahgaff.edu",
     "http://localhost:3000",
     "http://localhost:8081",
 ]

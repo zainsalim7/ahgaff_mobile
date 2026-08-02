@@ -33,8 +33,8 @@ const getApiUrl = () => {
       return 'https://api.ahgaff.net';
     }
 
-    // إذا كنا على الدومين الرسمي (app.ahgaff.net أو ahgaff.net)، استخدم api.ahgaff.net
-    if (origin.includes('ahgaff.net')) {
+    // إذا كنا على الدومين الرسمي (app.ahgaff.net أو ahgaff.net أو verify.ahgaff.edu)، استخدم api.ahgaff.net
+    if (origin.includes('ahgaff.net') || origin.includes('ahgaff.edu')) {
       return 'https://api.ahgaff.net';
     }
     

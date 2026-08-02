@@ -107,7 +107,7 @@ export default function RootLayout() {
     if (typeof window === 'undefined') return;
     const host = window.location.hostname;
     const VERIFY_PATHS = ['/verify-portal', '/verify-statement', '/verify-card', '/verify-certificate'];
-    if ((host === 'ahgaff.net' || host === 'www.ahgaff.net') && !VERIFY_PATHS.includes(pathname)) {
+    if ((host === 'ahgaff.net' || host === 'www.ahgaff.net' || host === 'verify.ahgaff.edu') && !VERIFY_PATHS.includes(pathname)) {
       router.replace('/verify-portal');
     }
   }, [pathname]);
