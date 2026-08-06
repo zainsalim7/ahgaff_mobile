@@ -247,15 +247,44 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       return;
     }
     if (selected.id === entry.id) { setSelected(null); setValidMap(null); return; }
-    // تبديل
+    // 🆕 محاضرتان متطابقتان (نفس المقرر والمدرس) → اقتراح الدمج في محاضرة مشتركة
+    if (selected.merge_group_id && selected.merge_group_id === entry.merge_group_id) {
+      showMsg('error', '⚠️ المحاضرتان ضمن نفس المجموعة المشتركة أصلاً');
+      return;
+    }
+    const sameCourse = (selected.course_name || '').trim() === (entry.course_name || '').trim() && (entry.course_name || '').trim();
+    const sameTeacher = selected.teacher_id && selected.teacher_id === entry.teacher_id;
+    if (sameCourse && sameTeacher) {
+      setMergePrompt({ a: selected, b: entry });
+      return;
+    }
+    await doSwap(selected, entry);
+  };
+
+  // تبديل مكاني محاضرتين
+  const doSwap = async (a: any, b: any) => {
     setBusy(true);
     try {
-      const res = await api.post('/weekly-schedule/swap-slots', { slot_a_id: selected.id, slot_b_id: entry.id });
+      const res = await api.post('/weekly-schedule/swap-slots', { slot_a_id: a.id, slot_b_id: b.id });
       showMsg('success', `✅ ${res.data.message}`);
       setSelected(null);
       setValidMap(null);
       await load();
     } catch (e: any) { handleConflictError(e); }
+    finally { setBusy(false); }
+  };
+
+  // 🆕 دمج محاضرتين في محاضرة مشتركة
+  const doMerge = async (a: any, b: any) => {
+    setBusy(true);
+    try {
+      const res = await api.post('/weekly-schedule/merge-slots', { slot_a_id: a.id, slot_b_id: b.id });
+      showMsg('success', `✅ ${res.data.message}`);
+      setSelected(null);
+      setValidMap(null);
+      setMergePrompt(null);
+      await load();
+    } catch (e: any) { setMergePrompt(null); handleConflictError(e); }
     finally { setBusy(false); }
   };
 

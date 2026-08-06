@@ -2826,6 +2826,80 @@ class SwapSlotsRequest(BaseModel):
     slot_b_id: str
 
 
+class MergeSlotsRequest(BaseModel):
+    slot_a_id: str  # المحاضرة المنضمّة (تنتقل لموقع الهدف)
+    slot_b_id: str  # المحاضرة الهدف (تبقى في مكانها)
+
+
+@router.post("/weekly-schedule/merge-slots")
+async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Depends(get_current_user)):
+    """🆕 دمج محاضرتين متطابقتين (نفس المقرر والمدرس) في محاضرة مشتركة — A تنضم لموقع B"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    a = await db.weekly_schedule.find_one({"_id": ObjectId(data.slot_a_id)})
+    b = await db.weekly_schedule.find_one({"_id": ObjectId(data.slot_b_id)})
+    if not a or not b:
+        raise HTTPException(status_code=404, detail="المحاضرة غير موجودة")
+    if str(a["_id"]) == str(b["_id"]):
+        raise HTTPException(status_code=400, detail="لا يمكن دمج المحاضرة مع نفسها")
+    if a.get("merge_group_id") and a["merge_group_id"] == b.get("merge_group_id"):
+        raise HTTPException(status_code=400, detail="المحاضرتان ضمن نفس المجموعة المشتركة أصلاً")
+
+    ca = await db.courses.find_one({"_id": ObjectId(a["course_id"])}) if a.get("course_id") else None
+    cb = await db.courses.find_one({"_id": ObjectId(b["course_id"])}) if b.get("course_id") else None
+    same_course = (ca or {}).get("name", "").strip() == (cb or {}).get("name", "").strip() and (ca or {}).get("name")
+    same_teacher = a.get("teacher_id") and a.get("teacher_id") == b.get("teacher_id")
+    if not (same_course and same_teacher):
+        raise HTTPException(status_code=400, detail="الدمج متاح فقط لمحاضرتين بنفس المقرر ونفس المدرس")
+
+    group_a = [a]
+    if a.get("merge_group_id"):
+        group_a = await db.weekly_schedule.find({"merge_group_id": a["merge_group_id"]}).to_list(50)
+    group_b = [b]
+    if b.get("merge_group_id"):
+        group_b = await db.weekly_schedule.find({"merge_group_id": b["merge_group_id"]}).to_list(50)
+
+    # منع تكرار نفس (القسم، المستوى، الشعبة) داخل المجموعة الموحدة
+    keys_b = {(g["department_id"], g["level"], g.get("section", "") or "") for g in group_b}
+    for g in group_a:
+        if (g["department_id"], g["level"], g.get("section", "") or "") in keys_b:
+            raise HTTPException(status_code=400, detail="لا يمكن الدمج: نفس المستوى/الشعبة موجودة في الطرفين")
+
+    gid = b.get("merge_group_id") or uuid.uuid4().hex
+    exclude_ids = {str(g["_id"]) for g in group_a} | {str(g["_id"]) for g in group_b}
+
+    conflicts = []
+    for g in group_a:
+        conflicts += await _check_slot_placement(db, {**g, "merge_group_id": gid}, b["day"], b["slot_number"], exclude_ids)
+    conflicts = list(dict.fromkeys(conflicts))
+    if conflicts:
+        raise HTTPException(status_code=409, detail={"message": "يوجد تعارضات تمنع الدمج", "conflicts": conflicts})
+
+    try:
+        for g in group_b:
+            if g.get("merge_group_id") != gid or not g.get("merge_key"):
+                await db.weekly_schedule.update_one({"_id": g["_id"]}, {"$set": {
+                    "merge_group_id": gid, "merge_key": f"{gid}:{g['level']}:{g.get('section', '') or ''}"}})
+        for g in group_a:
+            await db.weekly_schedule.update_one({"_id": g["_id"]}, {"$set": {
+                "day": b["day"], "slot_number": b["slot_number"],
+                "room_id": b.get("room_id", ""), "teacher_id": b.get("teacher_id", ""),
+                "merge_group_id": gid, "merge_key": f"{gid}:{g['level']}:{g.get('section', '') or ''}"}})
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail={"message": "تعارض في الجدول (مرفوض من قاعدة البيانات)", "conflicts": ["تعارض فريد في قاعدة البيانات"]})
+
+    await log_activity(current_user, "merge_schedule_slots", "weekly_schedule", data.slot_a_id, None,
+                       {"joined_to": data.slot_b_id, "group": gid})
+
+    sync = {}
+    for g in group_a:
+        s = await _sync_future_lectures(db, g, "move", new_day=b["day"], new_slot_number=b["slot_number"])
+        sync = {k: sync.get(k, 0) + v for k, v in s.items()} if sync else s
+    total = len(group_a) + len(group_b)
+    return {"message": f"تم الدمج في محاضرة مشتركة تضم {total} جداول" + _sync_summary(sync), "merge_group_id": gid}
+
+
 def _needed_weekly_slots(credit_hours) -> int:
     try:
         credit = int(credit_hours or 3)
