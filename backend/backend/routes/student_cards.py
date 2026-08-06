@@ -211,6 +211,37 @@ async def list_pending_photos(current_user: dict = Depends(get_current_user)):
     return items
 
 
+# ==================== إشعار قرار الصورة ====================
+async def _notify_photo_decision(db, student: dict, approved: bool):
+    """إشعار داخل التطبيق + Push للطالب عند اعتماد/رفض صورته."""
+    user_id = student.get("user_id")
+    if not user_id:
+        return
+    if approved:
+        title = "✅ تم اعتماد صورتك الشخصية"
+        message = "تم اعتماد صورتك الشخصية من المسجل وأصبحت ظاهرة على بطاقتك الرقمية."
+    else:
+        title = "❌ لم يتم اعتماد صورتك الشخصية"
+        message = "نعتذر، لم يتم اعتماد الصورة التي رفعتها. يرجى رفع صورة شخصية واضحة وبخلفية مناسبة من شاشة البطاقة."
+    from datetime import timedelta
+    await db.notifications.insert_one({
+        "student_id": str(student["_id"]),
+        "user_id": user_id,
+        "title": title,
+        "message": message,
+        "type": "photo_approved" if approved else "photo_rejected",
+        "is_read": False,
+        "created_at": datetime.now(timezone(timedelta(hours=3))).isoformat(),
+    })
+    try:
+        from services.firebase_service import send_notification_to_many
+        tokens = [d["token"] async for d in db.fcm_tokens.find({"user_id": user_id})]
+        if tokens:
+            await send_notification_to_many(tokens, title, message)
+    except Exception:
+        pass
+
+
 @router.post("/students/{student_id}/photo/approve")
 async def approve_student_photo(student_id: str, current_user: dict = Depends(get_current_user)):
     db = get_db()
@@ -223,6 +254,7 @@ async def approve_student_photo(student_id: str, current_user: dict = Depends(ge
         raise HTTPException(status_code=400, detail="لا توجد صورة معلقة لهذا الطالب")
     await db.students.update_one({"_id": student["_id"]}, {"$set": {"photo_path": pending}, "$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
     await log_activity(current_user, "approve_student_photo", "student", str(student["_id"]), student.get("full_name", ""), {})
+    await _notify_photo_decision(db, student, approved=True)
     return {"message": "تم اعتماد صورة الطالب"}
 
 
@@ -235,6 +267,8 @@ async def reject_student_photo(student_id: str, current_user: dict = Depends(get
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     await db.students.update_one({"_id": student["_id"]}, {"$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
     await log_activity(current_user, "reject_student_photo", "student", str(student["_id"]), student.get("full_name", ""), {})
+    if student.get("pending_photo_path"):
+        await _notify_photo_decision(db, student, approved=False)
     return {"message": "تم رفض الصورة المعلقة"}
 
 
