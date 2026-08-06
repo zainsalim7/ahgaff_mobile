@@ -544,8 +544,6 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
     if (p.get("section") or "").strip():
         rows.append(("الشعبة", str(p["section"]).strip()))
     rows.append(("الجنسية", p.get("nationality", "")))
-    if p.get("reference_number"):
-        rows.insert(1, ("الرقم المرجعي", p["reference_number"]))
 
     if template == "official":
         DG = (27, 94, 32)

@@ -114,7 +114,6 @@ export default function StudentCardScreen() {
   const levelAr = ['', 'الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن'][card.level] || String(card.level);
   const rows = [
     ['رقم القيد', card.enrollment_no],
-    ...(card.reference_number ? [['الرقم المرجعي', card.reference_number]] : []),
     ['التخصص', card.department_name],
     ['المستوى', `المستوى ${levelAr}`],
     ...((card.section || '').trim() ? [['الشعبة', card.section.trim()]] : []),
