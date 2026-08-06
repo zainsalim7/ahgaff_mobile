@@ -104,6 +104,8 @@ export default function WeeklySchedulePage() {
   // Add slot modal
   const [showAddSlot, setShowAddSlot] = useState(false);
   const [addSlotData, setAddSlotData] = useState({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '' });
+  const [mergeLevels, setMergeLevels] = useState<number[]>([]);
+  const [mergeSections, setMergeSections] = useState('');
   const [addSlotFreeRooms, setAddSlotFreeRooms] = useState<any[] | null>(null);
   const [courses, setCourses] = useState<any[]>([]);
 
@@ -594,6 +596,13 @@ export default function WeeklySchedulePage() {
       return;
     }
     const course = courses.find((c: any) => c.id === addSlotData.course_id);
+    // 🆕 محاضرة مشتركة: مستويات إضافية + شعب من نفس المستوى
+    const merge_with: any[] = mergeLevels
+      .filter(l => l !== (course?.level || 1))
+      .map(l => ({ level: l, section: '' }));
+    mergeSections.split(/[+,،\s]+/).map(s => s.trim()).filter(Boolean).forEach(sec => {
+      if (sec !== (course?.section || '')) merge_with.push({ level: course?.level || 1, section: sec });
+    });
     try {
       await scheduleAPI.createSlot({
         faculty_id: selectedFaculty,
@@ -605,9 +614,12 @@ export default function WeeklySchedulePage() {
         course_id: addSlotData.course_id,
         teacher_id: addSlotData.teacher_id || course?.teacher_id || '',
         room_id: addSlotData.room_id,
+        ...(merge_with.length ? { merge_with } : {}),
       });
       setShowAddSlot(false);
       setAddSlotData({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '' });
+      setMergeLevels([]);
+      setMergeSections('');
       loadSchedule();
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
@@ -975,6 +987,32 @@ export default function WeeklySchedulePage() {
                     )}
                   </View>
                 </View>
+                <View style={{ marginTop: 10, backgroundColor: '#e8f5e9', borderRadius: 8, padding: 10 }} data-testid="merge-lecture-box">
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#2e7d32', textAlign: 'right', marginBottom: 6 }}>🔗 محاضرة مشتركة (اختياري) — تُنشأ في جدول كل مستوى/شعبة بنفس المدرس والقاعة والوقت</Text>
+                  <View style={{ flexDirection: 'row-reverse', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 11.5, color: '#33691e', fontWeight: '700' }}>مستويات إضافية:</Text>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].filter(l => l !== (courses.find((c: any) => c.id === addSlotData.course_id)?.level || 1)).map(l => (
+                      <TouchableOpacity
+                        key={l}
+                        onPress={() => setMergeLevels(p => p.includes(l) ? p.filter(x => x !== l) : [...p, l])}
+                        style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14, backgroundColor: mergeLevels.includes(l) ? '#2e7d32' : '#fff', borderWidth: 1, borderColor: '#a5d6a7' }}
+                        data-testid={`merge-level-${l}`}
+                      >
+                        <Text style={{ fontSize: 11.5, fontWeight: '700', color: mergeLevels.includes(l) ? '#fff' : '#33691e' }}>م{l}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 8, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 11.5, color: '#33691e', fontWeight: '700' }}>شُعب إضافية من نفس المستوى:</Text>
+                    <TextInput
+                      value={mergeSections}
+                      onChangeText={setMergeSections}
+                      placeholder="مثال: ب أو ب+ج"
+                      style={{ borderWidth: 1, borderColor: '#a5d6a7', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, fontSize: 12, textAlign: 'right', backgroundColor: '#fff', minWidth: 110 }}
+                      data-testid="merge-sections-input"
+                    />
+                  </View>
+                </View>
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                   <TouchableOpacity style={[st.btn, { backgroundColor: '#1565c0' }]} onPress={handleAddScheduleSlot}>
                     <Text style={st.btnText}>إضافة</Text>
@@ -1045,6 +1083,11 @@ export default function WeeklySchedulePage() {
                                   <div style={{ fontSize: 10, color: '#666', textAlign: 'right' }}>{item.course_code}</div>
                                   <div style={{ fontSize: 10, color: '#1565c0', textAlign: 'right' }}>{item.teacher_name}</div>
                                   <div style={{ fontSize: 10, color: '#888', textAlign: 'right' }}>{item.room_name} | {item.department_name} م{item.level}{item.section ? ` ${item.section}` : ''}</div>
+                                  {item.merged_with?.length > 0 && (
+                                    <div style={{ fontSize: 9.5, color: '#2e7d32', fontWeight: 700, textAlign: 'right', backgroundColor: '#e8f5e9', borderRadius: 4, padding: '1px 4px', marginTop: 2 }}>
+                                      🔗 مشتركة مع: {item.merged_with.join('، ')}
+                                    </div>
+                                  )}
                                   <button onClick={() => handleDeleteSlot(item.id)} style={{ position: 'absolute', top: 2, left: 2, background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#e53935' }}>x</button>
                                 </div>
                                 );

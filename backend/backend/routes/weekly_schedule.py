@@ -3,6 +3,7 @@ Weekly Schedule Routes - مسارات الجدول الأسبوعي
 """
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
+import uuid
 from bson import ObjectId
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -106,6 +107,11 @@ def _is_period_unavailable(pref: dict, day: str, slot_number: int) -> bool:
     return False
 
 
+class MergeTarget(BaseModel):
+    level: int
+    section: str = ""
+
+
 class ScheduleSlotCreate(BaseModel):
     faculty_id: str
     department_id: str
@@ -116,6 +122,7 @@ class ScheduleSlotCreate(BaseModel):
     course_id: str
     teacher_id: str
     room_id: str
+    merge_with: Optional[List[MergeTarget]] = None  # 🆕 محاضرة مشتركة: مستويات/شعب إضافية
 
 
 class ScheduleSlotUpdate(BaseModel):
@@ -732,6 +739,30 @@ async def get_weekly_schedule(
             depts_map[str(d["_id"])] = d
 
     result = []
+    # 🆕 معلومات المحاضرات المشتركة (شارة "مشتركة مع ...")
+    gids = list({s["merge_group_id"] for s in slots if s.get("merge_group_id")})
+    merge_map = {}
+    if gids:
+        async for m in db.weekly_schedule.find({"merge_group_id": {"$in": gids}}):
+            merge_map.setdefault(m["merge_group_id"], []).append(m)
+
+    def _merge_labels(s):
+        gid = s.get("merge_group_id")
+        if not gid:
+            return []
+        labels = []
+        for m in merge_map.get(gid, []):
+            if m["_id"] == s["_id"]:
+                continue
+            if m.get("level") != s.get("level"):
+                lbl = f"المستوى {m.get('level')}"
+                if m.get("section"):
+                    lbl += f" ({m['section']})"
+            else:
+                lbl = f"شعبة {m.get('section') or '؟'}"
+            labels.append(lbl)
+        return labels
+
     for s in slots:
         course = courses_map.get(s.get("course_id", ""), {})
         teacher = teachers_map.get(s.get("teacher_id", ""), {})
@@ -753,6 +784,8 @@ async def get_weekly_schedule(
             "teacher_name": teacher.get("full_name", ""),
             "room_id": s.get("room_id", ""),
             "room_name": room.get("name", ""),
+            "merge_group_id": s.get("merge_group_id", ""),
+            "merged_with": _merge_labels(s),
         })
     return result
 
@@ -825,11 +858,17 @@ async def get_schedule_conflicts(
                     "count": len(conflicts),
                 })
 
-        # 2. تعارض المعلم: نفس teacher_id
+        # 2. تعارض المعلم: نفس teacher_id (🆕 أعضاء المحاضرة المشتركة يُحسبون كواحد)
         teacher_groups: dict = {}
+        _seen_tg: set = set()
         for s in group:
             tid = s.get("teacher_id", "")
             if tid:
+                mg = s.get("merge_group_id")
+                if mg and (tid, mg) in _seen_tg:
+                    continue
+                if mg:
+                    _seen_tg.add((tid, mg))
                 teacher_groups.setdefault(tid, []).append(s)
         for tid, conflicts in teacher_groups.items():
             if len(conflicts) > 1:
@@ -844,11 +883,17 @@ async def get_schedule_conflicts(
                     "count": len(conflicts),
                 })
 
-        # 3. تعارض القاعة: نفس room_id
+        # 3. تعارض القاعة: نفس room_id (🆕 أعضاء المحاضرة المشتركة يُحسبون كواحد)
         room_groups: dict = {}
+        _seen_rg: set = set()
         for s in group:
             rid = s.get("room_id", "")
             if rid:
+                mg = s.get("merge_group_id")
+                if mg and (rid, mg) in _seen_rg:
+                    continue
+                if mg:
+                    _seen_rg.add((rid, mg))
                 room_groups.setdefault(rid, []).append(s)
         for rid, conflicts in room_groups.items():
             if len(conflicts) > 1:
@@ -917,17 +962,25 @@ async def create_schedule_slot(
     # === كشف التعارضات ===
     conflicts = []
 
-    # 1. تعارض الشعبة (نفس القسم+المستوى+الشعبة+اليوم+الفترة)
-    existing_section = await db.weekly_schedule.find_one({
-        "department_id": data.department_id,
-        "level": data.level,
-        "section": data.section,
-        "day": data.day,
-        "slot_number": data.slot_number,
-    })
-    if existing_section:
-        c = await db.courses.find_one({"_id": ObjectId(existing_section["course_id"])})
-        conflicts.append(f"تعارض شعبة: يوجد مقرر '{c.get('name', '')}' لنفس الشعبة في هذه الفترة")
+    # 🆕 أهداف المحاضرة (الأساسي + المشتركة معها)
+    targets = [(data.level, data.section or "")]
+    for m in (data.merge_with or []):
+        t = (m.level, (m.section or "").strip())
+        if t not in targets:
+            targets.append(t)
+
+    # 1. تعارض الشعبة (لكل هدف)
+    for lvl, sec in targets:
+        existing_section = await db.weekly_schedule.find_one({
+            "department_id": data.department_id,
+            "level": lvl,
+            "section": sec,
+            "day": data.day,
+            "slot_number": data.slot_number,
+        })
+        if existing_section:
+            c = await db.courses.find_one({"_id": ObjectId(existing_section["course_id"])})
+            conflicts.append(f"تعارض شعبة: يوجد مقرر '{c.get('name', '')}' للمستوى {lvl}{f' شعبة {sec}' if sec else ''} في هذه الفترة")
 
     # 2. تعارض المعلم
     teacher_busy = await db.weekly_schedule.find_one({
@@ -969,11 +1022,28 @@ async def create_schedule_slot(
     if conflicts:
         raise HTTPException(status_code=409, detail={"message": "يوجد تعارضات", "conflicts": conflicts})
 
-    doc = data.dict()
-    doc["created_at"] = datetime.now(timezone.utc)
-    doc["created_by"] = current_user["id"]
+    base = data.dict()
+    base.pop("merge_with", None)
+    base["created_at"] = datetime.now(timezone.utc)
+    base["created_by"] = current_user["id"]
+
+    # 🆕 محاضرة مشتركة: وثيقة لكل هدف بمعرّف مجموعة موحد
+    merge_gid = uuid.uuid4().hex if len(targets) > 1 else None
+    docs = []
+    for lvl, sec in targets:
+        d = {**base, "level": lvl, "section": sec}
+        if merge_gid:
+            d["merge_group_id"] = merge_gid
+            d["merge_key"] = f"{merge_gid}:{lvl}:{sec}"
+        docs.append(d)
+
     try:
-        result = await db.weekly_schedule.insert_one(doc)
+        result = await db.weekly_schedule.insert_many(docs) if len(docs) > 1 else None
+        if result is None:
+            single = await db.weekly_schedule.insert_one(docs[0])
+            inserted_id = str(single.inserted_id)
+        else:
+            inserted_id = str(result.inserted_ids[0])
     except DuplicateKeyError as e:
         # 🔒 خط الدفاع الأخير: MongoDB رفض الحفظ لتعارض فريد.
         # هذا يحدث فقط إن أفلت التعارض من الفحوصات السابقة (race condition نادر أو بيانات قديمة).
@@ -987,7 +1057,10 @@ async def create_schedule_slot(
         else:
             msg = "تعارض في الجدول (تكرار مرفوض من قاعدة البيانات)"
         raise HTTPException(status_code=409, detail={"message": msg, "conflicts": [msg]})
-    return {"id": str(result.inserted_id), "message": "تم إضافة المحاضرة في الجدول"}
+    msg = "تم إضافة المحاضرة في الجدول"
+    if merge_gid:
+        msg = f"تم إضافة المحاضرة المشتركة في جداول {len(targets)} من المستويات/الشعب"
+    return {"id": inserted_id, "merge_group_id": merge_gid, "message": msg}
 
 
 @router.put("/weekly-schedule/{slot_id}")
@@ -1018,9 +1091,12 @@ async def update_schedule_slot(
     check_section = update.get("section", existing.get("section", ""))
 
     # تعارض الشعبة إن تغيّر أي حقل مؤثر
+    _mg = existing.get("merge_group_id")
+    _mg_excl = {"merge_group_id": {"$ne": _mg}} if _mg else {}
     if any(k in update for k in ("day", "slot_number", "department_id", "level", "section")):
         section_busy = await db.weekly_schedule.find_one({
             "_id": {"$ne": ObjectId(slot_id)},
+            **_mg_excl,
             "department_id": check_dept,
             "level": check_level,
             "section": check_section,
@@ -1033,6 +1109,7 @@ async def update_schedule_slot(
     if check_teacher and any(k in update for k in ("teacher_id", "day", "slot_number")):
         teacher_busy = await db.weekly_schedule.find_one({
             "_id": {"$ne": ObjectId(slot_id)},
+            **_mg_excl,
             "teacher_id": check_teacher,
             "day": check_day,
             "slot_number": check_slot,
@@ -1043,6 +1120,7 @@ async def update_schedule_slot(
     if check_room and any(k in update for k in ("room_id", "day", "slot_number")):
         room_busy = await db.weekly_schedule.find_one({
             "_id": {"$ne": ObjectId(slot_id)},
+            **_mg_excl,
             "room_id": check_room,
             "day": check_day,
             "slot_number": check_slot,
@@ -1060,6 +1138,12 @@ async def update_schedule_slot(
 
     try:
         await db.weekly_schedule.update_one({"_id": ObjectId(slot_id)}, {"$set": update})
+        # 🆕 محاضرة مشتركة: المقرر/المعلم/القاعة تسري على كل المجموعة
+        if _mg:
+            shared = {k: v for k, v in update.items() if k in ("course_id", "teacher_id", "room_id")}
+            if shared:
+                await db.weekly_schedule.update_many(
+                    {"merge_group_id": _mg, "_id": {"$ne": ObjectId(slot_id)}}, {"$set": shared})
     except DuplicateKeyError as e:
         idx_name = str(getattr(e, "details", {}).get("keyPattern", ""))
         if "teacher" in idx_name:
@@ -1101,6 +1185,14 @@ async def delete_schedule_slot(
     await db.weekly_schedule.delete_one({"_id": ObjectId(slot_id)})
     message = "تم الحذف"
     if slot:
+        # 🆕 محاضرة مشتركة: الحذف يسري على كل المجموعة
+        if slot.get("merge_group_id"):
+            siblings = await db.weekly_schedule.find({"merge_group_id": slot["merge_group_id"]}).to_list(50)
+            if siblings:
+                await db.weekly_schedule.delete_many({"merge_group_id": slot["merge_group_id"]})
+                for sib in siblings:
+                    await _sync_future_lectures(db, sib, "delete")
+                message = f"تم حذف المحاضرة المشتركة من {len(siblings) + 1} جدول"
         # 🔄 (جدول ← نظام) حذف المحاضرات اليومية المستقبلية المولّدة من هذه الخلية
         sync = await _sync_future_lectures(db, slot, "delete")
         message += _sync_summary(sync)
@@ -2816,12 +2908,31 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
 
     entries = []
     scheduled_counts: dict = {}
+    # 🆕 خريطة المحاضرات المشتركة
+    _mv_gids = list({s["merge_group_id"] for s in slots if s.get("merge_group_id")})
+    _mv_merge_map: dict = {}
+    if _mv_gids:
+        async for m in db.weekly_schedule.find({"merge_group_id": {"$in": _mv_gids}}):
+            _mv_merge_map.setdefault(m["merge_group_id"], []).append(m)
     for s in slots:
         course = courses_map.get(s.get("course_id", ""), {})
         # مصدر الحقيقة للإسناد هو المقرر — معرف الخلية القديم قد يكون شبحياً (بيانات سابقة)
         eff_tid = course.get("teacher_id") or s.get("teacher_id", "")
         teacher = teachers_map.get(eff_tid, {})
         room = rooms_map.get(s.get("room_id", ""), {})
+        _gid = s.get("merge_group_id")
+        _labels = []
+        if _gid:
+            for m in _mv_merge_map.get(_gid, []):
+                if m["_id"] == s["_id"]:
+                    continue
+                if m.get("level") != s.get("level"):
+                    lbl = f"المستوى {m.get('level')}"
+                    if m.get("section"):
+                        lbl += f" ({m['section']})"
+                else:
+                    lbl = f"شعبة {m.get('section') or '؟'}"
+                _labels.append(lbl)
         entries.append({
             "id": str(s["_id"]),
             "department_id": s.get("department_id", ""),
@@ -2835,6 +2946,8 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
             "teacher_name": teacher.get("full_name", ""),
             "room_id": s.get("room_id", ""),
             "room_name": room.get("name", ""),
+            "merge_group_id": _gid or "",
+            "merged_with": _labels,
         })
         ck = (s.get("course_id", ""), s.get("department_id", ""), s.get("level") or 1, s.get("section", "") or "")
         scheduled_counts[ck] = scheduled_counts.get(ck, 0) + 1
@@ -2875,9 +2988,13 @@ async def _check_slot_placement(db, slot: dict, target_day: str, target_slot: in
     """فحص إمكانية وضع محاضرة في (يوم، فترة) — يُرجع قائمة التعارضات"""
     conflicts = []
     exclude = {"$nin": [ObjectId(x) for x in exclude_ids]}
+    # 🆕 محاضرة مشتركة: تجاهل أعضاء نفس المجموعة في فحوصات المعلم/القاعة
+    _mg = slot.get("merge_group_id")
+    _mg_excl = {"merge_group_id": {"$ne": _mg}} if _mg else {}
 
     section_busy = await db.weekly_schedule.find_one({
         "_id": exclude,
+        **_mg_excl,
         "department_id": slot.get("department_id"),
         "level": slot.get("level"),
         "section": slot.get("section", ""),
@@ -2891,6 +3008,7 @@ async def _check_slot_placement(db, slot: dict, target_day: str, target_slot: in
     if slot.get("teacher_id"):
         teacher_busy = await db.weekly_schedule.find_one({
             "_id": exclude,
+            **_mg_excl,
             "teacher_id": slot["teacher_id"],
             "day": target_day,
             "slot_number": target_slot,
@@ -2916,6 +3034,7 @@ async def _check_slot_placement(db, slot: dict, target_day: str, target_slot: in
     if slot.get("room_id"):
         room_busy = await db.weekly_schedule.find_one({
             "_id": exclude,
+            **_mg_excl,
             "room_id": slot["room_id"],
             "day": target_day,
             "slot_number": target_slot,
@@ -2944,13 +3063,21 @@ async def move_schedule_slot(
     if slot.get("day") == data.target_day and slot.get("slot_number") == data.target_slot_number:
         return {"message": "لا تغيير"}
 
-    conflicts = await _check_slot_placement(db, slot, data.target_day, data.target_slot_number, {data.slot_id})
+    # 🆕 محاضرة مشتركة: النقل يشمل كل أعضاء المجموعة
+    group = [slot]
+    if slot.get("merge_group_id"):
+        group = await db.weekly_schedule.find({"merge_group_id": slot["merge_group_id"]}).to_list(50)
+    exclude_ids = {str(g["_id"]) for g in group}
+
+    conflicts = []
+    for g in group:
+        conflicts += await _check_slot_placement(db, g, data.target_day, data.target_slot_number, exclude_ids)
     if conflicts:
-        raise HTTPException(status_code=409, detail={"message": "يوجد تعارضات", "conflicts": conflicts})
+        raise HTTPException(status_code=409, detail={"message": "يوجد تعارضات", "conflicts": list(dict.fromkeys(conflicts))})
 
     try:
-        await db.weekly_schedule.update_one(
-            {"_id": ObjectId(data.slot_id)},
+        await db.weekly_schedule.update_many(
+            {"_id": {"$in": [g["_id"] for g in group]}},
             {"$set": {"day": data.target_day, "slot_number": data.target_slot_number}}
         )
     except DuplicateKeyError:
@@ -2960,8 +3087,12 @@ async def move_schedule_slot(
                        {"from": f"{slot.get('day')}-{slot.get('slot_number')}", "to": f"{data.target_day}-{data.target_slot_number}"})
 
     # 🔄 (جدول ← نظام) المحاضرات اليومية المستقبلية تتبع الموقع الجديد
-    sync = await _sync_future_lectures(db, slot, "move", new_day=data.target_day, new_slot_number=data.target_slot_number)
-    return {"message": "تم نقل المحاضرة بنجاح" + _sync_summary(sync)}
+    sync = {}
+    for g in group:
+        s = await _sync_future_lectures(db, g, "move", new_day=data.target_day, new_slot_number=data.target_slot_number)
+        sync = {k: sync.get(k, 0) + v for k, v in s.items()} if sync else s
+    msg = "تم نقل المحاضرة بنجاح" if len(group) == 1 else f"تم نقل المحاضرة المشتركة ({len(group)} جداول) بنجاح"
+    return {"message": msg + _sync_summary(sync)}
 
 
 @router.post("/weekly-schedule/swap-slots")
@@ -2979,34 +3110,50 @@ async def swap_schedule_slots(
         raise HTTPException(status_code=404, detail="إحدى المحاضرتين غير موجودة")
 
     exclude = {data.slot_a_id, data.slot_b_id}
+    # 🆕 محاضرة مشتركة: التبديل يشمل كل أعضاء مجموعتي الطرفين
+    group_a = [slot_a]
+    if slot_a.get("merge_group_id"):
+        group_a = await db.weekly_schedule.find({"merge_group_id": slot_a["merge_group_id"]}).to_list(50)
+    group_b = [slot_b]
+    if slot_b.get("merge_group_id"):
+        group_b = await db.weekly_schedule.find({"merge_group_id": slot_b["merge_group_id"]}).to_list(50)
+    exclude = {str(g["_id"]) for g in group_a} | {str(g["_id"]) for g in group_b}
+
     conflicts = []
-    conflicts += await _check_slot_placement(db, slot_a, slot_b["day"], slot_b["slot_number"], exclude)
-    conflicts += await _check_slot_placement(db, slot_b, slot_a["day"], slot_a["slot_number"], exclude)
+    for g in group_a:
+        conflicts += await _check_slot_placement(db, g, slot_b["day"], slot_b["slot_number"], exclude)
+    for g in group_b:
+        conflicts += await _check_slot_placement(db, g, slot_a["day"], slot_a["slot_number"], exclude)
+    conflicts = list(dict.fromkeys(conflicts))
     if conflicts:
         raise HTTPException(status_code=409, detail={"message": "يوجد تعارضات تمنع التبديل", "conflicts": conflicts})
 
     pos_a = {"day": slot_a["day"], "slot_number": slot_a["slot_number"]}
     pos_b = {"day": slot_b["day"], "slot_number": slot_b["slot_number"]}
 
-    # حذف الوثيقتين ثم إعادة إدراجهما بالمواقع المتبادلة (نفس الـ _id) لتفادي تعارض الفهارس الفريدة المؤقت
-    await db.weekly_schedule.delete_many({"_id": {"$in": [slot_a["_id"], slot_b["_id"]]}})
-    new_a = {**slot_a, **pos_b}
-    new_b = {**slot_b, **pos_a}
+    # حذف الوثائق ثم إعادة إدراجها بالمواقع المتبادلة (نفس الـ _id) لتفادي تعارض الفهارس الفريدة المؤقت
+    all_ids = [g["_id"] for g in group_a + group_b]
+    await db.weekly_schedule.delete_many({"_id": {"$in": all_ids}})
+    new_docs = [{**g, **pos_b} for g in group_a] + [{**g, **pos_a} for g in group_b]
     try:
-        await db.weekly_schedule.insert_many([new_a, new_b])
+        await db.weekly_schedule.insert_many(new_docs)
     except DuplicateKeyError:
         # استرجاع الوضع الأصلي
-        await db.weekly_schedule.delete_many({"_id": {"$in": [slot_a["_id"], slot_b["_id"]]}})
-        await db.weekly_schedule.insert_many([slot_a, slot_b])
+        await db.weekly_schedule.delete_many({"_id": {"$in": all_ids}})
+        await db.weekly_schedule.insert_many(group_a + group_b)
         raise HTTPException(status_code=409, detail={"message": "تعارض في الجدول (مرفوض من قاعدة البيانات)", "conflicts": ["تعارض فريد في قاعدة البيانات"]})
 
     await log_activity(current_user, "swap_schedule_slots", "weekly_schedule", data.slot_a_id, None,
                        {"a": f"{pos_a['day']}-{pos_a['slot_number']}", "b": f"{pos_b['day']}-{pos_b['slot_number']}"})
 
     # 🔄 (جدول ← نظام) محاضرات الطرفين المستقبلية تتبع الموقعين الجديدين
-    sync_a = await _sync_future_lectures(db, slot_a, "move", new_day=pos_b["day"], new_slot_number=pos_b["slot_number"])
-    sync_b = await _sync_future_lectures(db, slot_b, "move", new_day=pos_a["day"], new_slot_number=pos_a["slot_number"])
-    combined = {k: sync_a.get(k, 0) + sync_b.get(k, 0) for k in sync_a}
+    combined = {}
+    for g in group_a:
+        s = await _sync_future_lectures(db, g, "move", new_day=pos_b["day"], new_slot_number=pos_b["slot_number"])
+        combined = {k: combined.get(k, 0) + v for k, v in s.items()} if combined else s
+    for g in group_b:
+        s = await _sync_future_lectures(db, g, "move", new_day=pos_a["day"], new_slot_number=pos_a["slot_number"])
+        combined = {k: combined.get(k, 0) + v for k, v in s.items()}
     return {"message": "تم تبديل المحاضرتين بنجاح" + _sync_summary(combined)}
 
 

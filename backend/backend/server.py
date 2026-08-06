@@ -13103,7 +13103,8 @@ async def get_courses_template(current_user: dict = Depends(get_current_user)):
         "عدد الساعات": [3, 2, 3],
         "المستوى": [1, 2, 1],
         "عدد الشعب": [1, 2, 1],
-        "الوصف": ["مقدمة في الفقه", "أصول التفسير القرآني", ""],
+        "مشترك مع المستويات": ["", "3+4", ""],
+        "الوصف": ["مقدمة في الفقه", "مشترك مع المستويين الثالث والرابع", ""],
     }
     
     df = pd.DataFrame(data)
@@ -13147,6 +13148,9 @@ async def import_courses_from_excel(
             'الشعب': 'sections_count',
             'الوصف': 'description',
             'وصف المقرر': 'description',
+            'مشترك مع المستويات': 'shared_levels',
+            'مشترك مع': 'shared_levels',
+            'المستويات المشتركة': 'shared_levels',
         }
         
         df = df.rename(columns=column_mapping)
@@ -13205,6 +13209,17 @@ async def import_courses_from_excel(
                 description = ""
                 if 'description' in df.columns and pd.notna(row.get('description')):
                     description = str(row['description']).strip()
+
+                # 🆕 مشترك مع مستويات أخرى: يقبل "3" أو "3+4" أو "3،4" أو "3,4"
+                shared_levels = []
+                if 'shared_levels' in df.columns and pd.notna(row.get('shared_levels')):
+                    raw = str(row['shared_levels']).strip().replace('،', '+').replace(',', '+').replace(' ', '+')
+                    for part in raw.split('+'):
+                        part = part.strip().replace('.0', '')
+                        if part.isdigit():
+                            lv = int(part)
+                            if 1 <= lv <= 10 and lv != level and lv not in shared_levels:
+                                shared_levels.append(lv)
                 
                 # إنشاء الشعب
                 for si in range(sections_count):
@@ -13224,6 +13239,7 @@ async def import_courses_from_excel(
                         "teacher_id": None,
                         "semester_id": semester_id,
                         "syllabus_items": [],
+                        "shared_levels": shared_levels,
                         "is_active": True,
                         "is_deleted": False,
                         "created_at": get_yemen_time(),
@@ -16806,9 +16822,9 @@ async def _ensure_weekly_schedule_unique_indexes(db):
     try:
         # --- 1) إزالة أي تكرارات قائمة ---
         removed_total = 0
-        # (a) نفس المعلم في نفس اليوم/الفترة
+        # (a) نفس المعلم في نفس اليوم/الفترة (تُستثنى المحاضرات المشتركة)
         pipe = [
-            {"$match": {"teacher_id": {"$exists": True, "$nin": [None, ""]}}},
+            {"$match": {"teacher_id": {"$exists": True, "$nin": [None, ""]}, "merge_group_id": {"$in": [None, ""]}}},
             {"$group": {
                 "_id": {"t": "$teacher_id", "d": "$day", "s": "$slot_number"},
                 "docs": {"$push": {"id": "$_id", "created_at": "$created_at"}},
@@ -16827,9 +16843,9 @@ async def _ensure_weekly_schedule_unique_indexes(db):
                     f"day={group['_id']['d']} slot={group['_id']['s']} id={extra['id']}"
                 )
 
-        # (b) نفس القاعة في نفس اليوم/الفترة
+        # (b) نفس القاعة في نفس اليوم/الفترة (تُستثنى المحاضرات المشتركة)
         pipe = [
-            {"$match": {"room_id": {"$exists": True, "$nin": [None, ""]}}},
+            {"$match": {"room_id": {"$exists": True, "$nin": [None, ""]}, "merge_group_id": {"$in": [None, ""]}}},
             {"$group": {
                 "_id": {"r": "$room_id", "d": "$day", "s": "$slot_number"},
                 "docs": {"$push": {"id": "$_id", "created_at": "$created_at"}},
@@ -16876,15 +16892,23 @@ async def _ensure_weekly_schedule_unique_indexes(db):
 
         # --- 2) إنشاء فهارس فريدة جزئية (Partial Unique Indexes) ---
         # MongoDB لا يدعم $ne في partial index. نستخدم $exists+$type فقط.
-        # ملاحظة: السجلات ذات teacher_id="" ستُشملها الفهرس، لكن هذا مقبول لأن الحقل نصّي.
+        # 🆕 أُضيف merge_key للفهرسين (معلم/قاعة): فارغ للمحاضرات العادية (حماية كاملة)،
+        #     وقيمة مميزة لكل عضو في المحاضرة المشتركة (تسمح بتعايش أعضاء المجموعة).
+        for old_name in ("uniq_teacher_day_slot", "uniq_room_day_slot"):
+            try:
+                info = await db.weekly_schedule.index_information()
+                if old_name in info and not any(k[0] == "merge_key" for k in info[old_name].get("key", [])):
+                    await db.weekly_schedule.drop_index(old_name)
+            except Exception:
+                pass
         await db.weekly_schedule.create_index(
-            [("teacher_id", 1), ("day", 1), ("slot_number", 1)],
+            [("teacher_id", 1), ("day", 1), ("slot_number", 1), ("merge_key", 1)],
             unique=True,
             partialFilterExpression={"teacher_id": {"$exists": True, "$type": "string"}},
             name="uniq_teacher_day_slot",
         )
         await db.weekly_schedule.create_index(
-            [("room_id", 1), ("day", 1), ("slot_number", 1)],
+            [("room_id", 1), ("day", 1), ("slot_number", 1), ("merge_key", 1)],
             unique=True,
             partialFilterExpression={"room_id": {"$exists": True, "$type": "string"}},
             name="uniq_room_day_slot",

@@ -630,10 +630,15 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                                 opacity: editMode && selected && !isSel ? 0.85 : 1,
                               }}
                             >
-                              <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>{item.course_name}</div>
+                              <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>{item.merge_group_id ? '🔗 ' : ''}{item.course_name}</div>
                               <div style={{ fontSize: 8.5, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
                                 {shortName(item.teacher_name)}{item.room_name ? ` · ${item.room_name}` : ''}
                               </div>
+                              {item.merged_with?.length > 0 && (
+                                <div style={{ fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110, opacity: 0.95 }}>
+                                  مع: {item.merged_with.join('، ')}
+                                </div>
+                              )}
                             </div>
                           );
                         })}
