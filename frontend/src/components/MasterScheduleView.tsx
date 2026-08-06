@@ -47,6 +47,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [slotRooms, setSlotRooms] = useState<any[] | null>(null); // قاعات (يوم/فترة) مع حالة الانشغال
   const [validMap, setValidMap] = useState<Record<string, { valid: boolean; reasons: string[] }> | null>(null);
   const [placing, setPlacing] = useState<any>(null); // مقرر غير مدرج قيد الإدراج
+  const [mergePrompt, setMergePrompt] = useState<{ a: any; b: any } | null>(null); // 🔗 تأكيد دمج محاضرتين مشتركتين
   const [importModal, setImportModal] = useState(false);
   const [importDept, setImportDept] = useState('');
   const [importDepts, setImportDepts] = useState<any[]>([]);
@@ -755,6 +756,44 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
         </div>
       )}
 
+      {/* 🔗 تأكيد دمج محاضرتين في محاضرة مشتركة */}
+      {mergePrompt && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 110,
+          backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', direction: 'rtl',
+        }} onClick={() => !busy && setMergePrompt(null)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 470, maxWidth: '92%',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+          }} data-testid="merge-confirm-modal">
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 8, textAlign: 'right' }}>🔗 دمج في محاضرة مشتركة؟</div>
+            <div style={{ fontSize: 12.5, color: '#5b6678', marginBottom: 12, textAlign: 'right', lineHeight: 1.8 }}>
+              المحاضرتان متطابقتان (نفس المقرر ونفس المدرس). يمكنك دمجهما في <b style={{ color: '#00695c' }}>محاضرة مشتركة واحدة</b> بنفس الوقت والقاعة، أو تبديل مكانيهما فقط.
+            </div>
+            {[{ e: mergePrompt.a, t: 'ستنضم للهدف', c: '#e65100', bg: '#fff8f0' }, { e: mergePrompt.b, t: 'الهدف — تبقى بمكانها وقاعتها', c: '#2e7d32', bg: '#e8f5e9' }].map(({ e, t, c, bg }, i) => (
+              <div key={i} style={{ border: '1px solid #e3e9f2', borderRadius: 8, padding: '8px 10px', marginBottom: 6, backgroundColor: bg, textAlign: 'right' }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: '#333' }}>{e.course_name} — المستوى {e.level}{e.section ? ` / شعبة ${e.section}` : ''}</div>
+                <div style={{ fontSize: 11, color: '#777' }}>{e.day} · الفترة {e.slot_number}{e.room_name ? ` · ${e.room_name}` : ''} — <b style={{ color: c }}>{t}</b></div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' as any }}>
+              <button onClick={() => doMerge(mergePrompt.a, mergePrompt.b)} disabled={busy} style={{
+                flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                backgroundColor: '#00695c', color: '#fff', fontSize: 13, fontWeight: 700, minWidth: 140,
+              }} data-testid="confirm-merge-btn">{busy ? 'جاري الدمج...' : '🔗 دمج كمحاضرة مشتركة'}</button>
+              <button onClick={() => { const p = mergePrompt; setMergePrompt(null); doSwap(p.a, p.b); }} disabled={busy} style={{
+                flex: 1, padding: '10px 0', borderRadius: 8, border: '1px solid #1565c0', cursor: 'pointer',
+                backgroundColor: '#e3f2fd', color: '#0d47a1', fontSize: 13, fontWeight: 700, minWidth: 130,
+              }} data-testid="swap-instead-btn">🔁 تبديل المكانين فقط</button>
+              <button onClick={() => setMergePrompt(null)} disabled={busy} style={{
+                flex: 0.5, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
+                backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600, minWidth: 70,
+              }} data-testid="cancel-merge-btn">إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* نافذة فحص التكامل */}
       {integrityModal && (
         <div style={{
@@ -852,7 +891,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           }} data-testid="master-import-modal">
             <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>📥 استيراد الجدول الأسبوعي من Excel</div>
             <div style={{ fontSize: 11.5, color: '#5b6678', marginBottom: 12, textAlign: 'right', lineHeight: 1.7 }}>
-              السياسة: <b style={{ color: '#6a1b9a' }}>الإكسل هو الأساس حرفياً</b> — الخلايا المعبأة في الملف <b>تستبدل</b> ما يقابلها، و<b>المقرر المذكور في الملف تصبح مواضعه مطابقة للملف بالضبط</b> (أي خلية له غير مذكورة في الملف تُزال — إعادة تموضع)، و<b>الإسناد يتبع اسم الأستاذ في الملف</b> • الخلايا الفارغة لا تمس مقررات غير مذكورة • أخطاء الأسماء تُتخطى مع تقرير • <b style={{ color: '#c62828' }}>أي تعارض جدولة يوقف الاستيراد كاملاً</b>
+              السياسة: <b style={{ color: '#6a1b9a' }}>الإكسل هو الأساس حرفياً</b> — الخلايا المعبأة في الملف <b>تستبدل</b> ما يقابلها، و<b>المقرر المذكور في الملف تصبح مواضعه مطابقة للملف بالضبط</b> (أي خلية له غير مذكورة في الملف تُزال — إعادة تموضع)، و<b>الإسناد يتبع اسم الأستاذ في الملف</b> • الخلايا الفارغة لا تمس مقررات غير مذكورة • أخطاء الأسماء تُتخطى مع تقرير • <b style={{ color: '#00695c' }}>🔗 محاضرة مشتركة: اكتب نفس المحاضرة (نفس المقرر والمدرس والقاعة) في نفس اليوم/الفترة لأكثر من مستوى/شعبة وسيدمجها النظام تلقائياً</b> • <b style={{ color: '#c62828' }}>أي تعارض جدولة يوقف الاستيراد كاملاً</b>
             </div>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6, textAlign: 'right' }}>1) اختر القسم:</div>
@@ -909,6 +948,16 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                     <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #ef9a9a', borderRadius: 8, padding: 8, backgroundColor: '#fff8f8' }}>
                       {importReport.conflicts.map((c: string, i: number) => (
                         <div key={i} style={{ fontSize: 11, color: '#b71c1c', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #ffcdd2' }}>{c}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {importReport.merged?.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#00695c', textAlign: 'right', marginBottom: 4 }}>🔗 محاضرات مشتركة سيتم دمجها ({importReport.merged.length}):</div>
+                    <div style={{ maxHeight: 130, overflowY: 'auto', border: '1px solid #80cbc4', borderRadius: 8, padding: 8, backgroundColor: '#f0faf8' }} data-testid="import-merged-list">
+                      {importReport.merged.map((c: string, i: number) => (
+                        <div key={i} style={{ fontSize: 11, color: '#004d40', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #b2dfdb' }}>{c}</div>
                       ))}
                     </div>
                   </div>

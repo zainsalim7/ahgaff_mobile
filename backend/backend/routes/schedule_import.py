@@ -3,6 +3,7 @@
 """
 import io
 import re
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
@@ -361,6 +362,9 @@ async def import_master_schedule(
             candidates = courses_by_name.get(_norm(course_txt), [])
             nsec = _norm(section)
             matches = [x for x in candidates if (x.get("level") or 1) == level and _norm(x.get("section") or "") == nsec]
+            if not matches:
+                # 🔗 مقرر مشترك: مستوى الخلية ضمن المستويات المشتركة للمقرر
+                matches = [x for x in candidates if level in (x.get("shared_levels") or []) and _norm(x.get("section") or "") == nsec]
             if len(matches) > 1 and teacher_txt:
                 tmatches = [x for x in matches if _norm(teachers_map.get(x.get("teacher_id", ""), {}).get("full_name", "")) == _norm(teacher_txt)]
                 if tmatches:
@@ -489,9 +493,32 @@ async def import_master_schedule(
             it["teacher_id"] = reassign_map[it["course_id"]]["new_id"]
             it["_teacher_name"] = reassign_map[it["course_id"]]["new_name"]
 
+    # ===== 🔗 كشف المحاضرات المشتركة داخل الملف: نفس (اليوم/الفترة/المدرس/القاعة/الاسم الأساسي للمقرر) لمستويات/شعب مختلفة =====
+    def _base_cname(name, sec):
+        n = (name or "").strip()
+        suffix = f"({sec})" if sec else ""
+        if suffix and n.endswith(suffix):
+            n = n[: -len(suffix)].strip()
+        return _norm(n)
+
+    merge_msgs = []
+    _file_groups = {}
+    for it in to_create:
+        k = (it["day"], it["slot_number"], it["teacher_id"], it["room_id"], _base_cname(it["_course_name"], it.get("section") or ""))
+        _file_groups.setdefault(k, []).append(it)
+    for _k, _items in _file_groups.items():
+        if len(_items) < 2:
+            continue
+        _gid = uuid.uuid4().hex
+        for it in _items:
+            it["merge_group_id"] = _gid
+            it["merge_key"] = f"{_gid}:{it['level']}:{it.get('section', '') or ''}"
+        _labels = " + ".join(f"م{it['level']}" + (f"/{it['section']}" if it.get("section") else "") for it in _items)
+        merge_msgs.append(f"🔗 محاضرة مشتركة: '{_items[0]['_course_name']}' — {_labels} ({_items[0]['day']} الفترة {_items[0]['slot_number']}) بمدرس وقاعة موحدين")
+
     # ===== 4) فحص التعارضات (داخل الملف + مع الجدول القائم عبر كل الأقسام) =====
     # الخلايا المستبدلة تُستثنى، والإسنادات الجديدة تسري على المحاضرات القائمة لنفس المقرر (تحديث متسلسل)
-    all_slots = await db.weekly_schedule.find({}, {"teacher_id": 1, "room_id": 1, "day": 1, "slot_number": 1, "department_id": 1, "level": 1, "section": 1, "course_id": 1}).to_list(20000)
+    all_slots = await db.weekly_schedule.find({}, {"teacher_id": 1, "room_id": 1, "day": 1, "slot_number": 1, "department_id": 1, "level": 1, "section": 1, "course_id": 1, "merge_group_id": 1}).to_list(20000)
     all_slots = [s for s in all_slots if str(s["_id"]) not in replaced_ids and str(s["_id"]) not in removal_ids]
     reassign_new = {cid: info["new_id"] for cid, info in reassign_map.items()}
 
@@ -519,6 +546,7 @@ async def import_master_schedule(
     busy_teacher_owner = {}
     busy_room_owner = {}
     teacher_daily = {}
+    _counted_g = set()  # 🔗 أعضاء المحاضرة المشتركة يُحسبون محاضرة واحدة في العبء اليومي
     for s in all_slots:
         if s.get("room_id"):
             busy_room_owner.setdefault((s.get("room_id"), s.get("day"), s.get("slot_number")), s)
@@ -535,6 +563,11 @@ async def import_master_schedule(
         else:
             busy_teacher_owner[k] = s
         dk = (tid, s.get("day"))
+        mg0 = s.get("merge_group_id")
+        if mg0:
+            if (dk, mg0) in _counted_g:
+                continue
+            _counted_g.add((dk, mg0))
         teacher_daily[dk] = teacher_daily.get(dk, 0) + 1
 
     # تحقق أن المحاضرات القائمة للمقررات المعاد إسنادها تحترم تفضيلات الأستاذ الجديد وحدّه اليومي
@@ -557,7 +590,18 @@ async def import_master_schedule(
             if t == tid and cnt > max_daily:
                 conflicts.append(f"الإسناد الجديد: '{tname}' سيتجاوز الحد اليومي ({max_daily}) يوم {d} بالمحاضرات القائمة")
 
-    seen_teacher, seen_room, seen_cell = set(), set(), set()
+    seen_teacher, seen_room, seen_cell = {}, {}, set()
+    counted_groups = set()
+    existing_merge_joins = {}  # 🔗 محاضرات قائمة ستتحول لمشتركة بانضمام خلايا الملف إليها
+
+    def _is_same_lecture(exslot, item):
+        exc = course_info.get(exslot.get("course_id", ""), {})
+        return (
+            (exslot.get("room_id") or "") == item["room_id"]
+            and _eff_tid(exslot) == item["teacher_id"]
+            and _base_cname(exc.get("name", ""), exc.get("section") or "") == _base_cname(item["_course_name"], item.get("section") or "")
+        )
+
     for item in to_create:
         loc = item["_loc"]
         tk = (item["teacher_id"], item["day"], item["slot_number"])
@@ -565,16 +609,33 @@ async def import_master_schedule(
         ck = (item["level"], item["section"], item["day"], item["slot_number"])
         if ck in seen_cell:
             conflicts.append(f"{loc} خلية مكررة داخل الملف لنفس الشعبة")
+        gid_i = item.get("merge_group_id", "")
+        joined_existing = None
         bt = busy_teacher_owner.get(tk)
         if bt:
-            conflicts.append(f"{loc} تعارض معلم: '{item['_teacher_name']}' مشغول بمحاضرة قائمة {_slot_desc(bt)} بنفس (اليوم/الفترة)")
-        elif tk in seen_teacher:
+            if _is_same_lecture(bt, item):
+                joined_existing = bt  # 🔗 نفس المحاضرة قائمة لمستوى/شعبة أخرى → دمج بدل التعارض
+            else:
+                conflicts.append(f"{loc} تعارض معلم: '{item['_teacher_name']}' مشغول بمحاضرة قائمة {_slot_desc(bt)} بنفس (اليوم/الفترة)")
+        elif tk in seen_teacher and (not gid_i or seen_teacher[tk] != gid_i):
             conflicts.append(f"{loc} تعارض معلم داخل الملف: '{item['_teacher_name']}' مذكور في خليتين بنفس (اليوم/الفترة)")
         br = busy_room_owner.get(rk)
         if br:
-            conflicts.append(f"{loc} تعارض قاعة: '{item['_room_name']}' محجوزة لمحاضرة قائمة {_slot_desc(br)} بنفس (اليوم/الفترة)")
-        elif rk in seen_room:
+            if not _is_same_lecture(br, item):
+                conflicts.append(f"{loc} تعارض قاعة: '{item['_room_name']}' محجوزة لمحاضرة قائمة {_slot_desc(br)} بنفس (اليوم/الفترة)")
+        elif rk in seen_room and (not gid_i or seen_room[rk] != gid_i):
             conflicts.append(f"{loc} تعارض قاعة داخل الملف: '{item['_room_name']}' مذكورة في خليتين بنفس (اليوم/الفترة)")
+        if joined_existing is not None:
+            gid = joined_existing.get("merge_group_id") or uuid.uuid4().hex
+            members = [x for x in to_create if gid_i and x.get("merge_group_id") == gid_i] or [item]
+            for x in members:
+                x["merge_group_id"] = gid
+                x["merge_key"] = f"{gid}:{x['level']}:{x.get('section', '') or ''}"
+            gid_i = gid
+            if not joined_existing.get("merge_group_id"):
+                joined_existing["merge_group_id"] = gid
+                existing_merge_joins[str(joined_existing["_id"])] = (joined_existing, gid)
+            merge_msgs.append(f"🔗 {loc} سينضم لمحاضرة قائمة {_slot_desc(joined_existing)} كمحاضرة مشتركة")
         pref = prefs_map.get(item["teacher_id"])
         # استبدال محايد زمنياً: نفس المعلم الفعلي كان يشغل الخلية أصلاً — لا يُعامل كمحاضرة إضافية
         rep_eff = ""
@@ -582,14 +643,18 @@ async def import_master_schedule(
             rc = item.get("_replaced_course", "")
             rep_eff = reassign_new.get(rc) or (course_info.get(rc, {}) or {}).get("teacher_id") or item.get("_replaced_teacher", "")
         neutral_time = bool(item["_replace_id"]) and rep_eff == item["teacher_id"]
-        if pref and not neutral_time and _is_period_unavailable(pref, item["day"], item["slot_number"]):
+        if pref and not neutral_time and joined_existing is None and _is_period_unavailable(pref, item["day"], item["slot_number"]):
             conflicts.append(f"{loc} تعارض تفضيلات: '{item['_teacher_name']}' غير متاح يوم {item['day']} الفترة {item['slot_number']}")
         dk = (item["teacher_id"], item["day"])
-        teacher_daily[dk] = teacher_daily.get(dk, 0) + 1
-        if pref and not neutral_time and teacher_daily[dk] > int(pref.get("max_daily_lectures") or 3):
-            conflicts.append(f"{loc} تعارض تفضيلات: '{item['_teacher_name']}' سيتجاوز الحد اليومي ({pref.get('max_daily_lectures', 3)}) يوم {item['day']}")
-        seen_teacher.add(tk)
-        seen_room.add(rk)
+        already_counted = (joined_existing is not None) or (gid_i and (dk, gid_i) in counted_groups)
+        if not already_counted:
+            teacher_daily[dk] = teacher_daily.get(dk, 0) + 1
+            if gid_i:
+                counted_groups.add((dk, gid_i))
+            if pref and not neutral_time and teacher_daily[dk] > int(pref.get("max_daily_lectures") or 3):
+                conflicts.append(f"{loc} تعارض تفضيلات: '{item['_teacher_name']}' سيتجاوز الحد اليومي ({pref.get('max_daily_lectures', 3)}) يوم {item['day']}")
+        seen_teacher[tk] = gid_i
+        seen_room[rk] = gid_i
         seen_cell.add(ck)
 
     new_count = sum(1 for it in to_create if not it["_replace_id"])
@@ -608,6 +673,8 @@ async def import_master_schedule(
         "reassigned": reassign_msgs,
         "to_reposition": len(removal_ids),
         "repositioned": reposition_msgs,
+        "to_merge": len(merge_msgs),
+        "merged": merge_msgs,
         "created": 0,
         "skipped_existing": skipped_existing,
         "errors": errors,
@@ -628,6 +695,7 @@ async def import_master_schedule(
             return report
         report["message"] = (
             f"معاينة: سيتم إدراج {new_count} محاضرة جديدة"
+            + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
             + (f" • استبدال {len(replaced_msgs)} خلية بمحتوى الملف" if replaced_msgs else "")
             + (f" • إعادة تموضع: إزالة {len(removal_ids)} خلية غير مذكورة في الملف" if removal_ids else "")
             + (f" • تغيير إسناد {len(reassign_msgs)} مقرر" if reassign_msgs else "")
@@ -693,6 +761,11 @@ async def import_master_schedule(
         except DuplicateKeyError:
             conflicts.append(f"{item['_loc']} رُفض من قاعدة البيانات (تعارض فريد لحظي)")
 
+    # 🔗 تحويل المحاضرات القائمة التي انضمت إليها خلايا الملف إلى مشتركة
+    for _sid, (_sdoc, _gid) in existing_merge_joins.items():
+        await db.weekly_schedule.update_one({"_id": ObjectId(_sid)}, {"$set": {
+            "merge_group_id": _gid, "merge_key": f"{_gid}:{_sdoc.get('level')}:{_sdoc.get('section', '') or ''}"}})
+
     await log_activity(
         current_user, "import_master_schedule_excel", "weekly_schedule", department_id, None,
         {"faculty_id": faculty_id, "created": created, "replaced": replaced_count, "repositioned": len(removal_ids), "reassigned": len(reassign_map), "errors": len(errors), "skipped_identical": len(skipped_existing)},
@@ -701,6 +774,7 @@ async def import_master_schedule(
     report["replaced_count"] = replaced_count
     report["message"] = (
         f"✅ تم إدراج {created} محاضرة جديدة"
+        + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
         + (f" • استُبدلت {replaced_count} خلية بمحتوى الملف" if replaced_count else "")
         + (f" • أُزيلت {len(removal_ids)} خلية غير مذكورة في الملف (إعادة تموضع)" if removal_ids else "")
         + (f" • تغيّر إسناد {len(reassign_map)} مقرر" if reassign_map else "")
