@@ -365,6 +365,17 @@ async def import_master_schedule(
             if not matches:
                 # 🔗 مقرر مشترك: مستوى الخلية ضمن المستويات المشتركة للمقرر
                 matches = [x for x in candidates if level in (x.get("shared_levels") or []) and _norm(x.get("section") or "") == nsec]
+            cross_level = False
+            if not matches:
+                # 🔗 محاضرة مشتركة عبر المستويات: قبول مقرر من مستوى آخر بشرط الدمج (يُتحقق لاحقاً)
+                cl = [x for x in candidates if _norm(x.get("section") or "") == nsec]
+                if len(cl) > 1 and teacher_txt:
+                    tcl = [x for x in cl if _norm(teachers_map.get(x.get("teacher_id", "") or "", {}).get("full_name", "")) == _norm(teacher_txt)]
+                    if tcl:
+                        cl = tcl
+                if len(cl) == 1:
+                    matches = cl
+                    cross_level = True
             if len(matches) > 1 and teacher_txt:
                 tmatches = [x for x in matches if _norm(teachers_map.get(x.get("teacher_id", ""), {}).get("full_name", "")) == _norm(teacher_txt)]
                 if tmatches:
@@ -457,6 +468,7 @@ async def import_master_schedule(
                 "_replace_desc": replace_desc,
                 "_replaced_teacher": replace_teacher,
                 "_replaced_course": replace_course,
+                "_cross_level": cross_level,
             })
         r += 3
 
@@ -610,6 +622,16 @@ async def import_master_schedule(
         if ck in seen_cell:
             conflicts.append(f"{loc} خلية مكررة داخل الملف لنفس الشعبة")
         gid_i = item.get("merge_group_id", "")
+        # 🔗 خلية بمقرر من مستوى آخر: تُقبل فقط إذا كانت جزءاً من محاضرة مشتركة (ملف أو نظام)
+        if item.get("_cross_level") and not gid_i:
+            bt0 = busy_teacher_owner.get(tk)
+            if not (bt0 and _is_same_lecture(bt0, item)):
+                errors.append(
+                    f"{loc} المقرر '{item['_course_name']}' يخص مستوى آخر — يُقبل فقط كمحاضرة مشتركة: "
+                    f"ضع نفس المحاضرة (نفس المدرس والقاعة) في نفس اليوم/الفترة لمستواه الأصلي أيضاً — تُخُطيت الخلية"
+                )
+                item["_dropped"] = True
+                continue
         joined_existing = None
         bt = busy_teacher_owner.get(tk)
         if bt:
@@ -656,6 +678,12 @@ async def import_master_schedule(
         seen_teacher[tk] = gid_i
         seen_room[rk] = gid_i
         seen_cell.add(ck)
+
+    # إسقاط الخلايا المرفوضة (مستوى آخر بدون دمج) وإعادة حساب الاستبدالات
+    if any(x.get("_dropped") for x in to_create):
+        to_create = [x for x in to_create if not x.get("_dropped")]
+        replaced_msgs = [it["_replace_desc"] for it in to_create if it["_replace_id"]]
+        replaced_ids = {it["_replace_id"] for it in to_create if it["_replace_id"]}
 
     new_count = sum(1 for it in to_create if not it["_replace_id"])
     reassign_msgs = [
