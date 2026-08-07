@@ -1,5 +1,6 @@
 """إفادات الطلاب: إصدار PDF رسمي بترقيم تسلسلي + QR للتحقق العام + سجل إفادات + إعدادات لكل كلية."""
 import io
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -72,9 +73,23 @@ async def update_statement_settings(faculty_id: str, data: StatementSettings, cu
     return {"message": "تم حفظ إعدادات الإفادة"}
 
 
+def _sanitize_base_url(value: str) -> str:
+    """تنقية رابط التحقق: إصلاح النطاق المشوّه (مثل http://.ahgaff.net) وفرض https."""
+    value = (value or "").strip().rstrip("/")
+    if not value:
+        return ""
+    m = re.match(r"^(https?)://(.*)$", value, re.IGNORECASE)
+    if not m:
+        return ""
+    host_and_path = m.group(2).lstrip(".")  # نطاق فرعي مفقود: ".ahgaff.net" → "ahgaff.net"
+    if not host_and_path or host_and_path.startswith("/"):
+        return ""
+    return f"https://{host_and_path}"
+
+
 async def get_verify_base(db) -> str:
     doc = await db.system_settings.find_one({"_id": "verify_base_url"}) or {}
-    return (doc.get("value") or "").strip().rstrip("/")
+    return _sanitize_base_url(doc.get("value") or "")
 
 
 @router.get("/settings/verify-base-url")
@@ -89,9 +104,12 @@ async def read_verify_base(current_user: dict = Depends(get_current_user)):
 async def set_verify_base(payload: dict, current_user: dict = Depends(get_current_user)):
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="هذا الإعداد للأدمن فقط")
-    value = (payload.get("value") or "").strip().rstrip("/")
-    if value and not value.startswith("http"):
-        raise HTTPException(status_code=400, detail="الرابط يجب أن يبدأ بـ https://")
+    raw = (payload.get("value") or "").strip().rstrip("/")
+    value = _sanitize_base_url(raw)
+    if raw and not value:
+        raise HTTPException(status_code=400, detail="رابط غير صالح — يجب أن يكون بصيغة https://ahgaff.net (بنطاق صحيح)")
+    if raw and not re.match(r"^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(/.*)?$", value):
+        raise HTTPException(status_code=400, detail="رابط غير صالح — تحقق من اسم النطاق (مثال: https://ahgaff.net)")
     db = get_db()
     await db.system_settings.update_one({"_id": "verify_base_url"}, {"$set": {"value": value}}, upsert=True)
     return {"message": "تم حفظ رابط التحقق — سيُستخدم في رموز QR الجديدة", "value": value}
