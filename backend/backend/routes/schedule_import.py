@@ -524,7 +524,7 @@ async def import_master_schedule(
         _gid = uuid.uuid4().hex
         for it in _items:
             it["merge_group_id"] = _gid
-            it["merge_key"] = f"{_gid}:{it['level']}:{it.get('section', '') or ''}"
+            it["merge_key"] = f"{_gid}:{it['department_id']}:{it['level']}:{it.get('section', '') or ''}"
         _labels = " + ".join(f"م{it['level']}" + (f"/{it['section']}" if it.get("section") else "") for it in _items)
         merge_msgs.append(f"🔗 محاضرة مشتركة: '{_items[0]['_course_name']}' — {_labels} ({_items[0]['day']} الفترة {_items[0]['slot_number']}) بمدرس وقاعة موحدين")
 
@@ -652,7 +652,7 @@ async def import_master_schedule(
             members = [x for x in to_create if gid_i and x.get("merge_group_id") == gid_i] or [item]
             for x in members:
                 x["merge_group_id"] = gid
-                x["merge_key"] = f"{gid}:{x['level']}:{x.get('section', '') or ''}"
+                x["merge_key"] = f"{gid}:{x['department_id']}:{x['level']}:{x.get('section', '') or ''}"
             gid_i = gid
             if not joined_existing.get("merge_group_id"):
                 joined_existing["merge_group_id"] = gid
@@ -792,7 +792,7 @@ async def import_master_schedule(
     # 🔗 تحويل المحاضرات القائمة التي انضمت إليها خلايا الملف إلى مشتركة
     for _sid, (_sdoc, _gid) in existing_merge_joins.items():
         await db.weekly_schedule.update_one({"_id": ObjectId(_sid)}, {"$set": {
-            "merge_group_id": _gid, "merge_key": f"{_gid}:{_sdoc.get('level')}:{_sdoc.get('section', '') or ''}"}})
+            "merge_group_id": _gid, "merge_key": f"{_gid}:{_sdoc.get('department_id', '')}:{_sdoc.get('level')}:{_sdoc.get('section', '') or ''}"}})
 
     await log_activity(
         current_user, "import_master_schedule_excel", "weekly_schedule", department_id, None,

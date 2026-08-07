@@ -110,6 +110,7 @@ def _is_period_unavailable(pref: dict, day: str, slot_number: int) -> bool:
 class MergeTarget(BaseModel):
     level: int
     section: str = ""
+    department_id: str = ""  # 🆕 فارغ = نفس قسم المحاضرة الأساسية (يدعم قسماً آخر من نفس الكلية)
 
 
 class ScheduleSlotCreate(BaseModel):
@@ -745,6 +746,12 @@ async def get_weekly_schedule(
     if gids:
         async for m in db.weekly_schedule.find({"merge_group_id": {"$in": gids}}):
             merge_map.setdefault(m["merge_group_id"], []).append(m)
+        # أقسام أعضاء المجموعات غير المحمّلة (محاضرة مشتركة مع قسم آخر)
+        extra_dids = {m.get("department_id", "") for ms in merge_map.values() for m in ms} - set(depts_map.keys()) - {""}
+        if extra_dids:
+            docs = await db.departments.find({"_id": {"$in": [ObjectId(x) for x in extra_dids]}}).to_list(100)
+            for d in docs:
+                depts_map[str(d["_id"])] = d
 
     def _merge_labels(s):
         gid = s.get("merge_group_id")
@@ -754,12 +761,16 @@ async def get_weekly_schedule(
         for m in merge_map.get(gid, []):
             if m["_id"] == s["_id"]:
                 continue
-            if m.get("level") != s.get("level"):
+            same_dept = m.get("department_id") == s.get("department_id")
+            if not same_dept or m.get("level") != s.get("level"):
                 lbl = f"المستوى {m.get('level')}"
                 if m.get("section"):
                     lbl += f" ({m['section']})"
             else:
                 lbl = f"شعبة {m.get('section') or '؟'}"
+            if not same_dept:
+                dep_name = depts_map.get(m.get("department_id", ""), {}).get("name", "قسم آخر")
+                lbl = f"{dep_name} — {lbl}"
             labels.append(lbl)
         return labels
 
@@ -962,17 +973,22 @@ async def create_schedule_slot(
     # === كشف التعارضات ===
     conflicts = []
 
-    # 🆕 أهداف المحاضرة (الأساسي + المشتركة معها)
-    targets = [(data.level, data.section or "")]
+    # 🆕 أهداف المحاضرة (الأساسي + المشتركة معها) — تدعم أقساماً أخرى من نفس الكلية
+    targets = [(data.department_id, data.level, data.section or "")]
     for m in (data.merge_with or []):
-        t = (m.level, (m.section or "").strip())
+        m_dep = (m.department_id or "").strip() or data.department_id
+        if m_dep != data.department_id:
+            dep_doc = await db.departments.find_one({"_id": ObjectId(m_dep)})
+            if not dep_doc or dep_doc.get("faculty_id") != data.faculty_id:
+                raise HTTPException(status_code=400, detail="القسم المشترك غير موجود أو لا يتبع نفس الكلية")
+        t = (m_dep, m.level, (m.section or "").strip())
         if t not in targets:
             targets.append(t)
 
     # 1. تعارض الشعبة (لكل هدف)
-    for lvl, sec in targets:
+    for dep, lvl, sec in targets:
         existing_section = await db.weekly_schedule.find_one({
-            "department_id": data.department_id,
+            "department_id": dep,
             "level": lvl,
             "section": sec,
             "day": data.day,
@@ -1030,11 +1046,11 @@ async def create_schedule_slot(
     # 🆕 محاضرة مشتركة: وثيقة لكل هدف بمعرّف مجموعة موحد
     merge_gid = uuid.uuid4().hex if len(targets) > 1 else None
     docs = []
-    for lvl, sec in targets:
-        d = {**base, "level": lvl, "section": sec}
+    for dep, lvl, sec in targets:
+        d = {**base, "department_id": dep, "level": lvl, "section": sec}
         if merge_gid:
             d["merge_group_id"] = merge_gid
-            d["merge_key"] = f"{merge_gid}:{lvl}:{sec}"
+            d["merge_key"] = f"{merge_gid}:{dep}:{lvl}:{sec}"
         docs.append(d)
 
     try:
@@ -1059,7 +1075,10 @@ async def create_schedule_slot(
         raise HTTPException(status_code=409, detail={"message": msg, "conflicts": [msg]})
     msg = "تم إضافة المحاضرة في الجدول"
     if merge_gid:
+        n_depts = len({dep for dep, _, _ in targets})
         msg = f"تم إضافة المحاضرة المشتركة في جداول {len(targets)} من المستويات/الشعب"
+        if n_depts > 1:
+            msg += f" عبر {n_depts} أقسام"
     return {"id": inserted_id, "merge_group_id": merge_gid, "message": msg}
 
 
@@ -2880,12 +2899,12 @@ async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Dep
         for g in group_b:
             if g.get("merge_group_id") != gid or not g.get("merge_key"):
                 await db.weekly_schedule.update_one({"_id": g["_id"]}, {"$set": {
-                    "merge_group_id": gid, "merge_key": f"{gid}:{g['level']}:{g.get('section', '') or ''}"}})
+                    "merge_group_id": gid, "merge_key": f"{gid}:{g['department_id']}:{g['level']}:{g.get('section', '') or ''}"}})
         for g in group_a:
             await db.weekly_schedule.update_one({"_id": g["_id"]}, {"$set": {
                 "day": b["day"], "slot_number": b["slot_number"],
                 "room_id": b.get("room_id", ""), "teacher_id": b.get("teacher_id", ""),
-                "merge_group_id": gid, "merge_key": f"{gid}:{g['level']}:{g.get('section', '') or ''}"}})
+                "merge_group_id": gid, "merge_key": f"{gid}:{g['department_id']}:{g['level']}:{g.get('section', '') or ''}"}})
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail={"message": "تعارض في الجدول (مرفوض من قاعدة البيانات)", "conflicts": ["تعارض فريد في قاعدة البيانات"]})
 
@@ -3000,12 +3019,15 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
             for m in _mv_merge_map.get(_gid, []):
                 if m["_id"] == s["_id"]:
                     continue
-                if m.get("level") != s.get("level"):
+                _same_dept = m.get("department_id") == s.get("department_id")
+                if not _same_dept or m.get("level") != s.get("level"):
                     lbl = f"المستوى {m.get('level')}"
                     if m.get("section"):
                         lbl += f" ({m['section']})"
                 else:
                     lbl = f"شعبة {m.get('section') or '؟'}"
+                if not _same_dept:
+                    lbl = f"{depts_map.get(m.get('department_id', ''), 'قسم آخر')} — {lbl}"
                 _labels.append(lbl)
         entries.append({
             "id": str(s["_id"]),

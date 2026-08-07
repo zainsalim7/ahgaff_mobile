@@ -106,6 +106,8 @@ export default function WeeklySchedulePage() {
   const [addSlotData, setAddSlotData] = useState({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '' });
   const [mergeLevels, setMergeLevels] = useState<number[]>([]);
   const [mergeSections, setMergeSections] = useState('');
+  const [mergeDept, setMergeDept] = useState(''); // 🆕 قسم آخر من نفس الكلية للمحاضرة المشتركة
+  const [mergeDeptLevels, setMergeDeptLevels] = useState<number[]>([]);
   const [addSlotFreeRooms, setAddSlotFreeRooms] = useState<any[] | null>(null);
   const [courses, setCourses] = useState<any[]>([]);
 
@@ -603,6 +605,10 @@ export default function WeeklySchedulePage() {
     mergeSections.split(/[+,،\s]+/).map(s => s.trim()).filter(Boolean).forEach(sec => {
       if (sec !== (course?.section || '')) merge_with.push({ level: course?.level || 1, section: sec });
     });
+    // 🆕 قسم آخر من نفس الكلية
+    if (mergeDept && mergeDept !== selectedDept) {
+      mergeDeptLevels.forEach(l => merge_with.push({ department_id: mergeDept, level: l, section: '' }));
+    }
     try {
       await scheduleAPI.createSlot({
         faculty_id: selectedFaculty,
@@ -620,6 +626,8 @@ export default function WeeklySchedulePage() {
       setAddSlotData({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '' });
       setMergeLevels([]);
       setMergeSections('');
+      setMergeDept('');
+      setMergeDeptLevels([]);
       loadSchedule();
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
@@ -1012,6 +1020,39 @@ export default function WeeklySchedulePage() {
                       data-testid="merge-sections-input"
                     />
                   </View>
+                  {Platform.OS === 'web' && departments.filter((d: any) => d.id !== selectedDept).length > 0 && (
+                    <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: '#c8e6c9', paddingTop: 8 }}>
+                      <View style={{ flexDirection: 'row-reverse', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Text style={{ fontSize: 11.5, color: '#33691e', fontWeight: '700' }}>🏛️ مشتركة مع قسم آخر (نفس الكلية):</Text>
+                        <select
+                          value={mergeDept}
+                          onChange={(ev: any) => { setMergeDept(ev.target.value); setMergeDeptLevels([]); }}
+                          style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid #a5d6a7', fontSize: 12, direction: 'rtl', backgroundColor: '#fff' }}
+                          data-testid="merge-dept-select"
+                        >
+                          <option value="">— بدون —</option>
+                          {departments.filter((d: any) => d.id !== selectedDept).map((d: any) => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
+                      </View>
+                      {mergeDept ? (
+                        <View style={{ flexDirection: 'row-reverse', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                          <Text style={{ fontSize: 11.5, color: '#33691e', fontWeight: '700' }}>مستويات القسم الآخر:</Text>
+                          {[1, 2, 3, 4, 5, 6, 7, 8].map(l => (
+                            <TouchableOpacity
+                              key={l}
+                              onPress={() => setMergeDeptLevels(p => p.includes(l) ? p.filter(x => x !== l) : [...p, l])}
+                              style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 14, backgroundColor: mergeDeptLevels.includes(l) ? '#00695c' : '#fff', borderWidth: 1, borderColor: '#80cbc4' }}
+                              data-testid={`merge-dept-level-${l}`}
+                            >
+                              <Text style={{ fontSize: 11.5, fontWeight: '700', color: mergeDeptLevels.includes(l) ? '#fff' : '#00695c' }}>م{l}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
                 </View>
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                   <TouchableOpacity style={[st.btn, { backgroundColor: '#1565c0' }]} onPress={handleAddScheduleSlot}>
