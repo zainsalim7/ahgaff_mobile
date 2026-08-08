@@ -207,7 +207,11 @@ async def download_import_template(
     t_ids = [c.get("teacher_id") for c in courses if c.get("teacher_id")]
     teachers = {str(t["_id"]): t.get("full_name", "") for t in await db.teachers.find({"_id": {"$in": [ObjectId(x) for x in t_ids]}}).to_list(1000)} if t_ids else {}
     rooms = await db.rooms.find({"faculty_id": faculty_id, "is_active": True}).to_list(300)
-    dept_teachers = await db.teachers.find({"department_id": department_id, "is_active": True}).to_list(1000)
+    # 🆕 يشمل المدرسين المنتمين لهذا القسم أساسياً أو ضمن أقسامهم المتعددة (department_ids)
+    dept_teachers = await db.teachers.find({
+        "$or": [{"department_id": department_id}, {"department_ids": department_id}],
+        "is_active": True,
+    }).to_list(1000)
     heads = ["اسم المقرر (انسخه حرفياً)", "المستوى", "الشعبة", "الأستاذ المسند", "", "القاعات المتاحة", "", "أساتذة القسم (استخدم أي اسم للإسناد)"]
     for ci, h in enumerate(heads, 1):
         c = ws2.cell(row=1, column=ci, value=h)
