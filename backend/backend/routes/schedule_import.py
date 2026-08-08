@@ -647,8 +647,12 @@ async def import_master_schedule(
                 joined_existing = bt  # 🔗 نفس المحاضرة قائمة لمستوى/شعبة أخرى → دمج بدل التعارض
             else:
                 conflicts.append(f"{loc} تعارض معلم: '{item['_teacher_name']}' مشغول بمحاضرة قائمة {_slot_desc(bt)} بنفس (اليوم/الفترة)")
-        elif tk in seen_teacher and (not gid_i or seen_teacher[tk] != gid_i):
-            conflicts.append(f"{loc} تعارض معلم داخل الملف: '{item['_teacher_name']}' مذكور في خليتين بنفس (اليوم/الفترة)")
+        elif tk in seen_teacher and (not gid_i or seen_teacher[tk][0] != gid_i):
+            prev_it = seen_teacher[tk][1]
+            hint = ""
+            if _base_cname(prev_it["_course_name"], prev_it.get("section") or "") == _base_cname(item["_course_name"], item.get("section") or ""):
+                hint = f" — 💡 يبدو أنها محاضرة مشتركة لكن القاعة مختلفة ('{prev_it['_room_name']}' مقابل '{item['_room_name']}'): وحّد اسم القاعة في الخليتين ليتم دمجهما تلقائياً"
+            conflicts.append(f"{loc} تعارض معلم داخل الملف: '{item['_teacher_name']}' مذكور في خليتين بنفس (اليوم/الفترة){hint}")
         br = busy_room_owner.get(rk)
         if br:
             if not _is_same_lecture(br, item):
@@ -683,7 +687,7 @@ async def import_master_schedule(
                 counted_groups.add((dk, gid_i))
             if pref and not neutral_time and teacher_daily[dk] > int(pref.get("max_daily_lectures") or 3):
                 conflicts.append(f"{loc} تعارض تفضيلات: '{item['_teacher_name']}' سيتجاوز الحد اليومي ({pref.get('max_daily_lectures', 3)}) يوم {item['day']}")
-        seen_teacher[tk] = gid_i
+        seen_teacher[tk] = (gid_i, item)
         seen_room[rk] = gid_i
         seen_cell.add(ck)
 
