@@ -962,6 +962,16 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                     </div>
                   </div>
                 )}
+                {importReport.multi_teacher?.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#4527a0', textAlign: 'right', marginBottom: 4 }}>🧑‍🏫 مقررات بأكثر من أستاذ ({importReport.multi_teacher.length}):</div>
+                    <div style={{ maxHeight: 110, overflowY: 'auto', border: '1px solid #b39ddb', borderRadius: 8, padding: 8, backgroundColor: '#f6f2fc' }} data-testid="import-multi-teacher-list">
+                      {importReport.multi_teacher.map((c: string, i: number) => (
+                        <div key={i} style={{ fontSize: 11, color: '#311b92', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #d1c4e9' }}>{c}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {importReport.reassigned?.length > 0 && (
                   <div style={{ marginBottom: 8 }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#1565c0', textAlign: 'right', marginBottom: 4 }}>🧑‍🏫 إسنادات ستتغير ({importReport.reassigned.length}):</div>

@@ -401,6 +401,7 @@ async def import_master_schedule(
             # 🧑‍🏫 الإكسل هو الأساس في الإسناد أيضاً:
             # - مقرر بلا إسناد + اسم أستاذ في الملف → يُسند إليه
             # - اسم أستاذ مختلف عن المسند → يُستبدل الإسناد بما في الملف
+            cell_tid = None  # 🧑‍🏫 أستاذ الخلية نفسها (يدعم تعدد الأساتذة للمقرر الواحد)
             if teacher_txt and _norm(teacher_txt) != assigned_norm:
                 cands = teachers_by_name.get(_norm(teacher_txt), [])
                 if not cands:
@@ -409,22 +410,20 @@ async def import_master_schedule(
                 if len(cands) > 1:
                     errors.append(f"{loc} يوجد أكثر من معلم بالاسم '{teacher_txt}' في النظام — تُخُطيت الخلية")
                     continue
-                new_tid = str(cands[0]["_id"])
-                prev = reassign_map.get(cid_str)
-                if prev and prev["new_id"] != new_tid:
-                    conflicts.append(f"{loc} تناقض داخل الملف: المقرر '{course.get('name', '')}' مذكور بأستاذين مختلفين ('{prev['new_name']}' و'{teacher_txt}')")
-                    continue
-                if not prev:
+                cell_tid = str(cands[0]["_id"])
+                if cid_str not in reassign_map:
                     reassign_map[cid_str] = {
-                        "new_id": new_tid, "new_name": cands[0].get("full_name", ""),
+                        "new_id": cell_tid, "new_name": cands[0].get("full_name", ""),
                         "old_id": course.get("teacher_id") or "", "old_name": assigned.get("full_name", ""),
                         "course_name": course.get("name", ""),
                     }
+            elif teacher_txt:
+                cell_tid = course.get("teacher_id") or ""
             elif not course.get("teacher_id") and cid_str not in reassign_map:
                 errors.append(f"{loc} المقرر '{course_txt}' بلا أستاذ مسند في النظام ولا اسم أستاذ في الملف — تُخُطيت الخلية")
                 continue
 
-            effective_tid = reassign_map[cid_str]["new_id"] if cid_str in reassign_map else course["teacher_id"]
+            effective_tid = cell_tid or (reassign_map[cid_str]["new_id"] if cid_str in reassign_map else course["teacher_id"])
             teacher = teachers_map.get(effective_tid, {})
             if teacher_txt:
                 file_teachers.setdefault(cid_str, {})[_norm(teacher_txt)] = teacher_txt
@@ -473,6 +472,7 @@ async def import_master_schedule(
                 "_replaced_teacher": replace_teacher,
                 "_replaced_course": replace_course,
                 "_cross_level": cross_level,
+                "_explicit_teacher": bool(teacher_txt),
             })
         r += 3
 
@@ -498,14 +498,18 @@ async def import_master_schedule(
                 f"↪️ إعادة تموضع '{courses_by_id.get(cid0, '')}' ({grp}): ستُزال خليته في {s.get('day')} فترة {s.get('slot_number')} — غير مذكورة في الملف (الملف هو الأساس)"
             )
 
-    # تناقض الإسناد: نفس المقرر بأكثر من اسم أستاذ داخل الملف
+    # 🧑‍🏫 مقرر بأكثر من أستاذ في الملف: كل محاضرة تُسند لأستاذها المكتوب (لا يُغيَّر الإسناد الرسمي للمقرر)
+    multi_teacher_msgs = []
     for cid, names in file_teachers.items():
         if len(names) > 1:
-            conflicts.append(f"تناقض داخل الملف: المقرر '{courses_by_id.get(cid, '')}' مذكور بأكثر من أستاذ ({'، '.join(names.values())}) — وحّد الاسم ثم أعد الرفع")
+            reassign_map.pop(cid, None)
+            multi_teacher_msgs.append(
+                f"🧑‍🏫 المقرر '{courses_by_id.get(cid, '')}' يُدرّس بأكثر من أستاذ في الملف ({'، '.join(names.values())}) — كل محاضرة تُسند لأستاذها المكتوب في خليتها"
+            )
 
-    # ما بعد المرور: طبّق الإسنادات الجديدة على كل خلايا الملف لنفس المقرر (حتى المذكورة قبل اكتشاف الإسناد)
+    # ما بعد المرور: طبّق الإسنادات الجديدة على خلايا الملف التي لم يُكتب فيها اسم أستاذ صراحةً
     for it in to_create:
-        if it["course_id"] in reassign_map:
+        if it["course_id"] in reassign_map and not it.get("_explicit_teacher"):
             it["teacher_id"] = reassign_map[it["course_id"]]["new_id"]
             it["_teacher_name"] = reassign_map[it["course_id"]]["new_name"]
 
@@ -707,6 +711,7 @@ async def import_master_schedule(
         "repositioned": reposition_msgs,
         "to_merge": len(merge_msgs),
         "merged": merge_msgs,
+        "multi_teacher": multi_teacher_msgs,
         "created": 0,
         "skipped_existing": skipped_existing,
         "errors": errors,
