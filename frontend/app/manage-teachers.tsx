@@ -93,6 +93,62 @@ export default function ManageTeachersScreen() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
 
+  // ✅ التحديد المتعدد والإجراءات الجماعية
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<{ action: string; label: string; danger?: boolean; needsDept?: boolean } | null>(null);
+  const [bulkDeptId, setBulkDeptId] = useState('');
+  const [bulkResult, setBulkResult] = useState<any>(null);
+
+  const toggleSelect = (id: string) => setSelectedIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+
+  const runBulkAction = async (action: string) => {
+    setBulkBusy(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const res = await fetch(`${API_URL}/api/teachers/bulk-action`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, teacher_ids: selectedIds, department_id: bulkDeptId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || 'فشل تنفيذ الإجراء');
+      setBulkConfirm(null);
+      setBulkDeptId('');
+      setBulkResult(data);
+      setSelectedIds([]);
+      fetchData();
+    } catch (e: any) {
+      showMessage('خطأ', e?.message || 'فشل تنفيذ الإجراء');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const exportSelected = async () => {
+    setBulkBusy(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const res = await fetch(`${API_URL}/api/teachers/export-selected`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_ids: selectedIds }),
+      });
+      if (!res.ok) throw new Error('فشل التصدير');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `teachers_selected_${Date.now()}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      showMessage('خطأ', e?.message || 'فشل التصدير');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   // Alert helpers for web compatibility
   const showMessage = (title: string, message: string) => {
     if (Platform.OS === 'web') {
@@ -494,7 +550,14 @@ export default function ManageTeachersScreen() {
     const loadHours = item.current_semester_hours ?? item.weekly_hours ?? item.teaching_load ?? 0;
 
     return (
-      <View dataSet={{ responsive: "table-row" }} style={[styles.tRow, index % 2 === 1 && styles.tRowAlt]}>
+      <View dataSet={{ responsive: "table-row" }} style={[styles.tRow, index % 2 === 1 && styles.tRowAlt, selectedIds.includes(item.id) && { backgroundColor: '#e8f1fd' }]}>
+        <TouchableOpacity
+          onPress={() => toggleSelect(item.id)}
+          style={{ width: 34, alignItems: 'center', justifyContent: 'center' }}
+          testID={`teacher-select-${item.id}`}
+        >
+          <Ionicons name={selectedIds.includes(item.id) ? 'checkbox' : 'square-outline'} size={20} color={selectedIds.includes(item.id) ? '#1565c0' : '#b8c4d6'} />
+        </TouchableOpacity>
         <View style={[styles.colTeacher, styles.cellPad]}>
           <View style={[styles.tAvatar, { backgroundColor: hasAccount ? '#dcedc8' : '#eceff1' }]}>
             <Text style={[styles.tAvatarText, { color: hasAccount ? '#4caf50' : '#90a4ae' }]}>{teacherName.charAt(0)}</Text>
@@ -640,7 +703,7 @@ export default function ManageTeachersScreen() {
               }}
               placeholder="النصاب الأسبوعي (افتراضي 12 ساعة)"
               keyboardType="numeric"
-              data-testid="weekly-hours-input"
+              testID="weekly-hours-input"
             />
 
             <Text style={styles.label}>رقم الهاتف</Text>
@@ -838,6 +901,20 @@ export default function ManageTeachersScreen() {
               </View>
 
               <View dataSet={{ responsive: "table-header-row" }} style={styles.tableHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => {
+                    const ids = filteredTeachers.map((t: any) => t.id);
+                    setSelectedIds(p => ids.every(i => p.includes(i)) ? p.filter(x => !ids.includes(x)) : Array.from(new Set([...p, ...ids])));
+                  }}
+                  style={{ width: 34, alignItems: 'center', justifyContent: 'center' }}
+                  testID="teachers-select-all"
+                >
+                  <Ionicons
+                    name={filteredTeachers.length > 0 && filteredTeachers.every((t: any) => selectedIds.includes(t.id)) ? 'checkbox' : 'square-outline'}
+                    size={20}
+                    color="#1565c0"
+                  />
+                </TouchableOpacity>
                 <SortableHeader label="المعلم" field="name" currentSort={sortBy} onSort={(v) => { setSortBy(v); setCurrentPage(1); }} containerStyle={[styles.colTeacher, styles.cellPad]} />
                 <View style={[styles.colPhone, styles.cellPad]}><Text style={styles.thText}>رقم الجوال</Text></View>
                 <View style={[styles.colDept, styles.cellPad]}><Text style={styles.thText}>القسم</Text></View>
@@ -919,6 +996,119 @@ export default function ManageTeachersScreen() {
           </ScrollView>
         )}
       </KeyboardAvoidingView>
+
+      {/* ✅ شريط الإجراءات الجماعية */}
+      {selectedIds.length > 0 && !showForm && (
+        <View style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#1a2540',
+          flexDirection: 'row-reverse', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+          paddingHorizontal: 14, paddingVertical: 10, zIndex: 50,
+        }} testID="bulk-actions-bar">
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>☑️ {selectedIds.length} محدد</Text>
+          {[
+            { action: 'activate', label: 'تفعيل الحسابات', icon: 'key', color: '#2e7d32' },
+            { action: 'deactivate', label: 'إيقاف الحسابات', icon: 'lock-closed', color: '#ef6c00' },
+            { action: 'reset_password', label: 'إعادة كلمات المرور', icon: 'refresh', color: '#6a1b9a' },
+            { action: 'add_department', label: 'إضافة إلى قسم', icon: 'business', color: '#00695c', needsDept: true },
+            { action: 'safe_delete', label: 'حذف آمن', icon: 'trash', color: '#c62828', danger: true },
+          ].map((b: any) => (
+            <TouchableOpacity
+              key={b.action}
+              onPress={() => setBulkConfirm(b)}
+              style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, backgroundColor: b.color, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+              testID={`bulk-${b.action}-btn`}
+            >
+              <Ionicons name={b.icon} size={13} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{b.label}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            onPress={exportSelected}
+            disabled={bulkBusy}
+            style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, backgroundColor: '#1565c0', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+            testID="bulk-export-btn"
+          >
+            <Ionicons name="download" size={13} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{bulkBusy ? '...' : 'تصدير Excel'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setSelectedIds([])} style={{ marginRight: 'auto' as any }} testID="bulk-clear-btn">
+            <Text style={{ color: '#b8c4d6', fontSize: 12, fontWeight: '700' }}>✕ إلغاء التحديد</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* نافذة تأكيد الإجراء الجماعي */}
+      {bulkConfirm && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 420, maxWidth: '92%' }} testID="bulk-confirm-modal">
+            <Text style={{ fontSize: 15, fontWeight: '800', color: bulkConfirm.danger ? '#c62828' : '#1a2540', textAlign: 'right', marginBottom: 8 }}>
+              {bulkConfirm.danger ? '⚠️ ' : ''}{bulkConfirm.label} — {selectedIds.length} مدرس
+            </Text>
+            <Text style={{ fontSize: 12.5, color: '#5b6678', textAlign: 'right', lineHeight: 20, marginBottom: 12 }}>
+              {bulkConfirm.action === 'safe_delete'
+                ? 'سيتم أرشفة المدرسين المحددين مع نسخة احتياطية في سلة المحذوفات (يمكن استعادتهم)، وستُفك ارتباطاتهم بالمقررات والجدول.'
+                : bulkConfirm.action === 'activate'
+                ? 'سيتم إنشاء حساب دخول لكل مدرس محدد (اسم المستخدم وكلمة المرور = الرقم الوظيفي، مع إجبار تغييرها عند أول دخول).'
+                : bulkConfirm.action === 'deactivate'
+                ? 'سيتم حذف حسابات دخول المدرسين المحددين (بياناتهم تبقى، ويمكن إعادة التفعيل لاحقاً).'
+                : bulkConfirm.action === 'reset_password'
+                ? 'ستُعاد كلمات مرور المحددين إلى الرقم الوظيفي مع إجبار التغيير عند أول دخول.'
+                : 'سيُضاف القسم المختار إلى انتماءات كل المدرسين المحددين (دون إزالة أقسامهم الحالية).'}
+            </Text>
+            {bulkConfirm.needsDept && (
+              <View style={{ borderWidth: 1, borderColor: '#dbe3ee', borderRadius: 8, marginBottom: 12 }}>
+                <Picker selectedValue={bulkDeptId} onValueChange={setBulkDeptId} style={{ height: 40 }} testID="bulk-dept-picker">
+                  <Picker.Item label="— اختر القسم —" value="" />
+                  {departments.map((d: any) => <Picker.Item key={d.id} label={d.name} value={d.id} />)}
+                </Picker>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => runBulkAction(bulkConfirm.action)}
+                disabled={bulkBusy || (bulkConfirm.needsDept && !bulkDeptId)}
+                style={{ flex: 1, backgroundColor: bulkConfirm.danger ? '#c62828' : '#1565c0', opacity: (bulkBusy || (bulkConfirm.needsDept && !bulkDeptId)) ? 0.5 : 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' }}
+                testID="bulk-confirm-btn"
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{bulkBusy ? 'جاري التنفيذ...' : 'تأكيد'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => { setBulkConfirm(null); setBulkDeptId(''); }} disabled={bulkBusy} style={{ flex: 0.6, borderWidth: 1, borderColor: '#dbe3ee', paddingVertical: 10, borderRadius: 8, alignItems: 'center' }} testID="bulk-cancel-btn">
+                <Text style={{ color: '#5b6678', fontWeight: '700', fontSize: 13 }}>إلغاء</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* نتيجة الإجراء الجماعي */}
+      {bulkResult && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 440, maxWidth: '92%', maxHeight: '80%' }} testID="bulk-result-modal">
+            <Text style={{ fontSize: 14.5, fontWeight: '800', color: '#1a2540', textAlign: 'right', marginBottom: 10 }}>{bulkResult.message}</Text>
+            <ScrollView style={{ maxHeight: 300 }}>
+              {bulkResult.activated?.length > 0 && (
+                <View style={{ backgroundColor: '#e8f5e9', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#2e7d32', textAlign: 'right', marginBottom: 4 }}>الحسابات المفعلة (كلمة المرور = الرقم الوظيفي):</Text>
+                  {bulkResult.activated.map((a: any, i: number) => (
+                    <Text key={i} style={{ fontSize: 11.5, color: '#33691e', textAlign: 'right', paddingVertical: 2 }}>• {a.name} — {a.username}</Text>
+                  ))}
+                </View>
+              )}
+              {bulkResult.failed?.length > 0 && (
+                <View style={{ backgroundColor: '#fff3e0', borderRadius: 8, padding: 10 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '800', color: '#e65100', textAlign: 'right', marginBottom: 4 }}>لم يُنفذ على ({bulkResult.failed.length}):</Text>
+                  {bulkResult.failed.map((f: string, i: number) => (
+                    <Text key={i} style={{ fontSize: 11.5, color: '#bf360c', textAlign: 'right', paddingVertical: 2 }}>• {f}</Text>
+                  ))}
+                </View>
+              )}
+            </ScrollView>
+            <TouchableOpacity onPress={() => setBulkResult(null)} style={{ backgroundColor: '#1565c0', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginTop: 12 }} testID="bulk-result-close">
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>إغلاق</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* قائمة العمليات (3 نقاط) - Modal مركّز */}
       {openMenuId && (() => {
@@ -1089,7 +1279,7 @@ export default function ManageTeachersScreen() {
               <TouchableOpacity
                 style={{ flex: 1, backgroundColor: '#f5f5f5', padding: 14, borderRadius: 10, alignItems: 'center' }}
                 onPress={() => { setShowDeleteModal(false); setDeleteTarget(null); }}
-                data-testid="cancel-delete-teacher-btn"
+                testID="cancel-delete-teacher-btn"
               >
                 <Text style={{ color: '#666', fontWeight: '600' }}>إلغاء</Text>
               </TouchableOpacity>
@@ -1097,7 +1287,7 @@ export default function ManageTeachersScreen() {
                 style={{ flex: 1, backgroundColor: '#f44336', padding: 14, borderRadius: 10, alignItems: 'center', opacity: (deletingTeacher || !deleteInfo || deleteInfo.error) ? 0.6 : 1 }}
                 onPress={confirmSafeDelete}
                 disabled={deletingTeacher || !deleteInfo || deleteInfo.error}
-                data-testid="confirm-delete-teacher-btn"
+                testID="confirm-delete-teacher-btn"
               >
                 {deletingTeacher ? (
                   <ActivityIndicator color="#fff" size="small" />

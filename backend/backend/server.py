@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import io
 import logging
 import asyncio
 from pathlib import Path
@@ -4984,7 +4985,18 @@ async def safe_delete_teacher(teacher_id: str, current_user: dict = Depends(get_
     teacher = await db.teachers.find_one({"_id": ObjectId(teacher_id)})
     if not teacher:
         raise HTTPException(status_code=404, detail="المعلم غير موجود")
-    
+    backup, stats = await _do_safe_delete_teacher(teacher, current_user)
+    return {
+        "message": "تم حذف المعلم بنجاح",
+        "backup": backup,
+        "deleted": stats
+    }
+
+
+async def _do_safe_delete_teacher(teacher: dict, current_user: dict):
+    """منطق الحذف الآمن المشترك (فردي + جماعي): نسخة احتياطية + فك الارتباطات + سلة المحذوفات"""
+    teacher_id = str(teacher["_id"])
+
     def clean_doc(doc):
         d = {}
         for k, v in doc.items():
@@ -4995,13 +5007,13 @@ async def safe_delete_teacher(teacher_id: str, current_user: dict = Depends(get_
             else:
                 d[k] = v
         return d
-    
+
     # جمع نصاب التدريس والبيانات المرتبطة
     courses = await db.courses.find({"teacher_id": teacher_id}).to_list(100)
     course_ids = [str(c["_id"]) for c in courses]
     lectures = await db.lectures.find({"course_id": {"$in": course_ids}}).to_list(10000) if course_ids else []
     attendance = await db.attendance.find({"course_id": {"$in": course_ids}}).to_list(50000) if course_ids else []
-    
+
     backup = {
         "backup_type": "teacher_backup",
         "backup_date": get_yemen_time().isoformat(),
@@ -5010,31 +5022,28 @@ async def safe_delete_teacher(teacher_id: str, current_user: dict = Depends(get_
         "lectures": [clean_doc(l) for l in lectures],
         "attendance": [clean_doc(a) for a in attendance],
     }
-    
+
     # إزالة ربط المعلم بالمقررات (المقررات تبقى بدون معلم)
     await db.courses.update_many({"teacher_id": teacher_id}, {"$set": {"teacher_id": None}})
 
     # 🔄 تكامل: تنظيف خلايا الجدول الأسبوعي والعبء التدريسي من المعلم المحذوف
     await db.weekly_schedule.update_many({"teacher_id": teacher_id}, {"$unset": {"teacher_id": ""}})
     await db.teaching_loads.delete_many({"teacher_id": teacher_id})
-    
+
     # حذف حساب المستخدم
     if teacher.get("user_id"):
         await db.users.delete_one({"_id": ObjectId(teacher["user_id"])})
-    
+
     # حذف المعلم
     await db.teachers.delete_one({"_id": ObjectId(teacher_id)})
-    
+
     # حفظ في سلة المحذوفات
     await save_to_trash("teacher", teacher.get("full_name", ""), backup, current_user.get("username", "admin"))
-    
+
     await log_activity(current_user, "safe_delete_teacher", "teacher", teacher_id, teacher.get("full_name", ""))
-    
-    return {
-        "message": "تم حذف المعلم بنجاح",
-        "backup": backup,
-        "deleted": {"courses_unlinked": len(courses), "lectures_in_backup": len(lectures), "attendance_in_backup": len(attendance)}
-    }
+
+    stats = {"courses_unlinked": len(courses), "lectures_in_backup": len(lectures), "attendance_in_backup": len(attendance)}
+    return backup, stats
 
 @api_router.post("/teachers/restore")
 async def restore_teacher(request: Request, current_user: dict = Depends(get_current_user)):
@@ -5183,6 +5192,153 @@ async def reset_teacher_password(teacher_id: str, current_user: dict = Depends(g
         "message": "تم إعادة تعيين كلمة المرور بنجاح",
         "new_password": teacher["teacher_id"]
     }
+
+# ==================== إجراءات جماعية على المدرسين ====================
+
+@api_router.post("/teachers/bulk-action")
+async def teachers_bulk_action(request: Request, current_user: dict = Depends(get_current_user)):
+    """إجراء جماعي: activate / deactivate / reset_password / safe_delete / add_department"""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_teachers"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    data = await request.json()
+    action = data.get("action")
+    ids = [i for i in (data.get("teacher_ids") or []) if i]
+    labels = {
+        "activate": "تفعيل الحسابات", "deactivate": "إيقاف الحسابات",
+        "reset_password": "إعادة تعيين كلمات المرور", "safe_delete": "الحذف الآمن",
+        "add_department": "الإضافة إلى قسم",
+    }
+    if action not in labels:
+        raise HTTPException(status_code=400, detail="إجراء غير معروف")
+    if not ids:
+        raise HTTPException(status_code=400, detail="لم يتم تحديد أي مدرس")
+
+    dep_id = (data.get("department_id") or "").strip()
+    if action == "add_department":
+        if not dep_id:
+            raise HTTPException(status_code=400, detail="حدد القسم المراد إضافته")
+        if not await db.departments.find_one({"_id": ObjectId(dep_id)}):
+            raise HTTPException(status_code=404, detail="القسم غير موجود")
+
+    done, activated_creds, failed = 0, [], []
+    for tid in ids:
+        try:
+            teacher = await db.teachers.find_one({"_id": ObjectId(tid)})
+            if not teacher:
+                failed.append("مدرس غير موجود (ربما حُذف)")
+                continue
+            name = teacher.get("full_name", "")
+            if action == "activate":
+                if teacher.get("user_id"):
+                    failed.append(f"{name}: لديه حساب مفعل مسبقاً")
+                    continue
+                if await db.users.find_one({"username": teacher["teacher_id"]}):
+                    failed.append(f"{name}: يوجد مستخدم بهذا الرقم الوظيفي")
+                    continue
+                res = await db.users.insert_one({
+                    "username": teacher["teacher_id"],
+                    "password": get_password_hash(teacher["teacher_id"]),
+                    "full_name": name,
+                    "role": UserRole.TEACHER,
+                    "email": teacher.get("email"),
+                    "phone": teacher.get("phone"),
+                    "teacher_record_id": str(teacher["_id"]),
+                    "must_change_password": True,
+                    "is_active": True,
+                    "created_at": get_yemen_time(),
+                })
+                await db.teachers.update_one({"_id": ObjectId(tid)}, {"$set": {"user_id": str(res.inserted_id)}})
+                activated_creds.append({"name": name, "username": teacher["teacher_id"]})
+            elif action == "deactivate":
+                if not teacher.get("user_id"):
+                    failed.append(f"{name}: ليس لديه حساب مفعل")
+                    continue
+                await db.users.delete_one({"_id": ObjectId(teacher["user_id"])})
+                await db.teachers.update_one({"_id": ObjectId(tid)}, {"$unset": {"user_id": ""}})
+            elif action == "reset_password":
+                if not teacher.get("user_id"):
+                    failed.append(f"{name}: ليس لديه حساب مفعل")
+                    continue
+                await db.users.update_one({"_id": ObjectId(teacher["user_id"])}, {"$set": {
+                    "password": get_password_hash(teacher["teacher_id"]),
+                    "must_change_password": True,
+                }})
+            elif action == "add_department":
+                deps = teacher.get("department_ids") or ([teacher["department_id"]] if teacher.get("department_id") else [])
+                if dep_id in deps:
+                    failed.append(f"{name}: منتمٍ للقسم مسبقاً")
+                    continue
+                deps.append(dep_id)
+                upd = {"department_ids": deps}
+                if not teacher.get("department_id"):
+                    upd["department_id"] = dep_id
+                await db.teachers.update_one({"_id": ObjectId(tid)}, {"$set": upd})
+            elif action == "safe_delete":
+                await _do_safe_delete_teacher(teacher, current_user)
+            done += 1
+        except Exception as e:
+            failed.append(f"{tid}: {str(e)[:80]}")
+
+    await log_activity(current_user, f"bulk_{action}_teachers", "teacher", "", f"{done} مدرس", {"failed": len(failed)})
+    msg = f"تم تنفيذ '{labels[action]}' على {done} مدرس"
+    if failed:
+        msg += f" — تعذر على {len(failed)}"
+    return {"message": msg, "done": done, "failed": failed, "activated": activated_creds}
+
+
+@api_router.post("/teachers/export-selected")
+async def export_selected_teachers(request: Request, current_user: dict = Depends(get_current_user)):
+    """تصدير المدرسين المحددين إلى Excel"""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_teachers"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    data = await request.json()
+    ids = [i for i in (data.get("teacher_ids") or []) if i]
+    if not ids:
+        raise HTTPException(status_code=400, detail="لم يتم تحديد أي مدرس")
+    teachers = await db.teachers.find({"_id": {"$in": [ObjectId(i) for i in ids]}}).to_list(2000)
+
+    dep_ids = set()
+    for t in teachers:
+        dep_ids.update(t.get("department_ids") or ([t["department_id"]] if t.get("department_id") else []))
+        if t.get("faculty_id"):
+            dep_ids.add(t["faculty_id"])
+    deps = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({"_id": {"$in": [ObjectId(x) for x in dep_ids if x]}}).to_list(200)}
+    facs = {str(f["_id"]): f.get("name", "") for f in await db.faculties.find({}).to_list(100)}
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "المدرسون"
+    ws.sheet_view.rightToLeft = True
+    heads = ["الرقم الوظيفي", "الاسم الكامل", "البريد", "الهاتف", "الكلية", "الأقسام", "حالة الحساب"]
+    for ci, h in enumerate(heads, 1):
+        c = ws.cell(row=1, column=ci, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="1565C0")
+        c.alignment = Alignment(horizontal="center")
+    for ri, t in enumerate(sorted(teachers, key=lambda x: x.get("full_name", "")), 2):
+        t_deps = t.get("department_ids") or ([t["department_id"]] if t.get("department_id") else [])
+        ws.cell(row=ri, column=1, value=t.get("teacher_id", ""))
+        ws.cell(row=ri, column=2, value=t.get("full_name", ""))
+        ws.cell(row=ri, column=3, value=t.get("email", "") or "")
+        ws.cell(row=ri, column=4, value=t.get("phone", "") or "")
+        ws.cell(row=ri, column=5, value=facs.get(t.get("faculty_id", ""), ""))
+        ws.cell(row=ri, column=6, value="، ".join(deps.get(d, "") for d in t_deps if deps.get(d)))
+        ws.cell(row=ri, column=7, value="مفعل" if t.get("user_id") else "غير مفعل")
+    for ci, w in enumerate([15, 28, 26, 15, 22, 32, 12], 1):
+        from openpyxl.utils import get_column_letter
+        ws.column_dimensions[get_column_letter(ci)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"teachers_selected_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 @api_router.post("/auth/change-password")
 async def change_password(data: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
