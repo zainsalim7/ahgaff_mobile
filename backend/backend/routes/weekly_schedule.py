@@ -2668,7 +2668,7 @@ async def _cascade_slot_teacher_to_course(db, slot: dict, slot_id: str, new_tid:
     if new_tid and not await db.teaching_loads.find_one({"course_id": cid, "teacher_id": new_tid}):
         load = {
             "teacher_id": new_tid, "course_id": cid,
-            "weekly_hours": course.get("credit_hours", 3),
+            "weekly_hours": float(course.get("weekly_hours") or course.get("credit_hours") or 3),
             "created_by": current_user.get("id", ""),
             "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
         }

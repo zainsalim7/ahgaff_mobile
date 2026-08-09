@@ -1209,3 +1209,12 @@ See `/app/memory/test_credentials.md`
 - `POST /api/admin/backfill-lecture-semesters/resolve`: إسناد يدوي لفصل محدد (action=assign) أو حذف نهائي (action=delete).
 - الواجهة (backfill-lecture-semesters.tsx): زر "عرض المحاضرات اليتيمة" + قائمة تفصيلية + أزرار "إسناد الكل إلى: {فصل}" و"حذف الكل نهائياً" مع تأكيد.
 **الاختبار:** testing_agent (iteration_61) — Backend 100% (10 pytest)، Frontend كامل التدفق ناجح. أُصلح خلل مسح رسالة النجاح (setResultMsg بعد fetchPreview).
+
+## 2026-08-09 (3) — إصلاح: تقرير العبء الأكاديمي لا يحسب ساعات المقررات
+**جذر المشكلة:** صفوف التقرير تُقرأ من `teaching_loads.weekly_hours`. مسارات إنشاء العبء (weekly_schedule cascade + schedule_import) كانت تستخدم `course.get("credit_hours", 3)` فتُنشئ سجلات بساعات 0/None عندما تكون ساعات المقرر صفرية أو مفقودة، والمزامنة التلقائية كانت تنشئ السجلات الناقصة فقط دون إصلاح الصفرية الموجودة.
+**الإصلاحات:**
+1. `_sync_teaching_loads_for_teachers` (تعمل تلقائياً قبل كل تقرير): أُضيفت معالجة ذاتية — أي سجل بساعات 0/None يُعاد حسابه من المقرر (weekly_hours → credit_hours → 3) ويُوسم `auto_healed`.
+2. مسارات الإنشاء في weekly_schedule.py وschedule_import.py: `weekly_hours or credit_hours or 3`.
+3. server.py (توليد مقررات عند تفعيل الفصل): `credit_hours or 3` + نسخ `weekly_hours` من الخطة.
+**الاختبار:** curl — سجلات 0 ساعة عولجت تلقائياً عند فتح التقرير (5 ساعات، 41.7%).
+**ملاحظة:** الإصلاح ذاتي في الإنتاج بمجرد فتح التقرير بعد النشر (لا يعمل على الفصول المؤرشفة). إن كانت ساعات المقرر نفسه غير معرفة تُستخدم 3 افتراضياً.

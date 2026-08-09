@@ -900,7 +900,8 @@ async def _get_export_data(
 
 async def _sync_teaching_loads_for_teachers(db, teacher_ids: list, semester_id: Optional[str] = None) -> int:
     """مزامنة تلقائية: لكل مقرر له `teacher_id` وليس له entry في `teaching_loads`،
-    يُنشَأ entry بساعات أسبوعية = `credit_hours` من المقرر (افتراضي 3 إذا غير محدد).
+    يُنشَأ entry بساعات أسبوعية = `weekly_hours` أو `credit_hours` من المقرر (افتراضي 3).
+    كما تُصلح السجلات الموجودة ذات الساعات الصفرية/المفقودة من ساعات المقرر.
 
     تُستخدم قبل توليد التقارير لضمان دقة الحساب. آمنة لإعادة الاستدعاء (idempotent).
 
@@ -920,26 +921,54 @@ async def _sync_teaching_loads_for_teachers(db, teacher_ids: list, semester_id: 
     if not courses:
         return 0
 
-    # جلب الـ teaching_loads الموجودة
+    def _course_hours(c: dict) -> float:
+        return float(c.get("weekly_hours") or c.get("credit_hours") or 3)
+
+    courses_by_id = {str(c["_id"]): c for c in courses}
+
+    # جلب الـ teaching_loads الموجودة (مع الساعات لإصلاح الصفرية)
     load_query: dict = {"teacher_id": {"$in": teacher_ids}}
     if semester_id:
         load_query["semester_id"] = semester_id
-    existing_loads = await db.teaching_loads.find(load_query, {"teacher_id": 1, "course_id": 1}).to_list(5000)
+    existing_loads = await db.teaching_loads.find(
+        load_query, {"teacher_id": 1, "course_id": 1, "weekly_hours": 1}
+    ).to_list(5000)
     existing_keys = {(l["teacher_id"], l["course_id"]) for l in existing_loads}
+
+    now = datetime.now(timezone.utc)
+
+    # 🔧 إصلاح ذاتي: السجلات الموجودة بساعات 0 أو مفقودة → إعادة الحساب من المقرر
+    for l in existing_loads:
+        if l.get("weekly_hours"):
+            continue
+        course = courses_by_id.get(l["course_id"])
+        if not course:
+            try:
+                course = await db.courses.find_one({"_id": ObjectId(l["course_id"])})
+            except Exception:
+                course = None
+        if not course:
+            continue
+        await db.teaching_loads.update_one(
+            {"_id": l["_id"]},
+            {"$set": {
+                "weekly_hours": _course_hours(course),
+                "updated_at": now,
+                "auto_healed": True,
+            }},
+        )
 
     # تحديد السجلات المفقودة
     to_insert = []
-    now = datetime.now(timezone.utc)
     for c in courses:
         tid = c.get("teacher_id")
         cid = str(c["_id"])
         if not tid or (tid, cid) in existing_keys:
             continue
-        weekly = c.get("credit_hours") or 3
         doc = {
             "teacher_id": tid,
             "course_id": cid,
-            "weekly_hours": float(weekly),
+            "weekly_hours": _course_hours(c),
             "notes": "تم إنشاؤه تلقائياً بمزامنة المقررات",
             "created_at": now,
             "updated_at": now,

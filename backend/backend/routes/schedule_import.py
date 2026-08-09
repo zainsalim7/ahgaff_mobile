@@ -774,7 +774,7 @@ async def import_master_schedule(
             course_doc = await db.courses.find_one({"_id": ObjectId(cid)})
             load = {
                 "teacher_id": info["new_id"], "course_id": cid,
-                "weekly_hours": (course_doc or {}).get("credit_hours", 3),
+                "weekly_hours": float((course_doc or {}).get("weekly_hours") or (course_doc or {}).get("credit_hours") or 3),
                 "created_by": current_user.get("id", ""),
                 "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
             }
