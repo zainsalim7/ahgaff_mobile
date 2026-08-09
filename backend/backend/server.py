@@ -14792,6 +14792,13 @@ async def archive_semester(semester_id: str, current_user: dict = Depends(get_cu
     del_enrollments = await db.enrollments.delete_many({"course_id": {"$in": course_ids}})
     del_plans = await db.study_plans.delete_many({"course_id": {"$in": course_ids}})
 
+    # 🛟 إعادة ربط خلايا الجدول الأسبوعي بمقررات الفصل النشط (بدل بقائها يتيمة)
+    try:
+        from routes._schedule_repair import relink_weekly_schedule_courses
+        await relink_weekly_schedule_courses(db)
+    except Exception as _re:
+        logger.warning(f"weekly_schedule relink after archive failed: {_re}")
+
     # ============== تحديث حالة الفصل ==============
     await db.semesters.update_one(
         {"_id": ObjectId(semester_id)},

@@ -721,6 +721,14 @@ async def get_weekly_schedule(
         for d in docs:
             courses_map[str(d["_id"])] = d
 
+    # 🛟 fallback: أسماء المقررات المؤرشفة (المحذوفة بعد أرشفة الفصل)
+    _missing_cids = {x for x in course_ids if x not in courses_map}
+    if _missing_cids:
+        from ._schedule_repair import archived_courses_info
+        for cid, info in (await archived_courses_info(db, _missing_cids)).items():
+            courses_map[cid] = {"name": info.get("name", ""), "code": info.get("code", ""),
+                                "teacher_id": info.get("teacher_id"), "_archived": True}
+
     teachers_map = {}
     if teacher_ids:
         docs = await db.teachers.find({"_id": {"$in": [ObjectId(x) for x in teacher_ids]}}).to_list(500)
@@ -2972,6 +2980,14 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
     if course_ids:
         docs = await db.courses.find({"_id": {"$in": [ObjectId(x) for x in course_ids if x]}}).to_list(2000)
         courses_map = {str(d["_id"]): d for d in docs}
+
+    # 🛟 fallback: أسماء المقررات المؤرشفة (المحذوفة بعد أرشفة الفصل)
+    _missing_cids = {x for x in course_ids if x and x not in courses_map}
+    if _missing_cids:
+        from ._schedule_repair import archived_courses_info
+        for cid, info in (await archived_courses_info(db, _missing_cids)).items():
+            courses_map[cid] = {"name": info.get("name", ""), "code": info.get("code", ""),
+                                "teacher_id": info.get("teacher_id"), "_archived": True}
     teacher_ids = list(
         {s["teacher_id"] for s in slots if s.get("teacher_id")}
         | {c.get("teacher_id", "") for c in courses if c.get("teacher_id")}

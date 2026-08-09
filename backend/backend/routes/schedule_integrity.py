@@ -11,6 +11,8 @@ router = APIRouter()
 
 ISSUE_LABELS = {
     "orphan_course": "خلايا بمقرر محذوف",
+    "archived_course_relink": "خلايا بمقرر مؤرشف (تُعاد وصلها بمقرر الفصل النشط)",
+    "archived_course_unmatched": "خلايا بمقرر مؤرشف بلا مكافئ في الفصل النشط",
     "inactive_course": "خلايا بمقرر غير نشط",
     "teacher_mismatch": "خلايا بأستاذ مختلف عن الإسناد الحالي",
     "group_mismatch": "خلايا بمستوى/شعبة لا تطابق المقرر",
@@ -32,14 +34,37 @@ async def _scan(db, faculty_id: str, department_id: Optional[str]):
     teachers = {str(t["_id"]): t.get("full_name", "") for t in await db.teachers.find({}, {"full_name": 1}).to_list(5000)}
     rooms = {str(r["_id"]): r for r in await db.rooms.find({}, {"name": 1, "is_active": 1}).to_list(2000)}
 
+    # 🛟 خطة إعادة الربط للمقررات المؤرشفة (بدل حذف الخلايا)
+    from ._schedule_repair import relink_weekly_schedule_courses
+    relink_plan = await relink_weekly_schedule_courses(db, dry_run=True)
+    relink_mapping = relink_plan.get("mapping", {})
+    arch_info = relink_plan.get("arch_info", {})
+    active_course_names = {}
+    if relink_mapping:
+        for new_cid in set(relink_mapping.values()):
+            c = courses.get(new_cid)
+            if c:
+                active_course_names[new_cid] = c.get("name", "")
+
     issues = []
     for s in slots:
         sid = str(s["_id"])
         loc = f"{dept_names.get(s.get('department_id', ''), '؟')} — م{s.get('level')}{' شعبة ' + s.get('section') if s.get('section') else ''} — {s.get('day')} فترة {s.get('slot_number')}"
         course = courses.get(s.get("course_id", ""))
         if not course:
-            issues.append({"slot_id": sid, "type": "orphan_course", "fixable": True, "fix_action": "delete_slot",
-                           "desc": f"{loc}: الخلية تشير إلى مقرر محذوف من النظام — ستُحذف الخلية"})
+            old_cid = s.get("course_id", "")
+            arch = arch_info.get(old_cid)
+            new_cid = relink_mapping.get(old_cid)
+            if new_cid:
+                issues.append({"slot_id": sid, "type": "archived_course_relink", "fixable": True,
+                               "fix_action": "relink_course", "new_course_id": new_cid,
+                               "desc": f"{loc}: المقرر '{(arch or {}).get('name', '؟')}' مؤرشف — ستُربط الخلية بمقرر الفصل النشط '{active_course_names.get(new_cid, '')}'"})
+            elif arch:
+                issues.append({"slot_id": sid, "type": "archived_course_unmatched", "fixable": False,
+                               "desc": f"{loc}: المقرر '{arch.get('name', '؟')}' مؤرشف ولا يوجد مقرر مكافئ في الفصل النشط — رحّل المقررات للفصل الجديد (أداة ترحيل المقررات) ثم أعد الفحص"})
+            else:
+                issues.append({"slot_id": sid, "type": "orphan_course", "fixable": True, "fix_action": "delete_slot",
+                               "desc": f"{loc}: الخلية تشير إلى مقرر محذوف من النظام (غير موجود حتى في الأرشيف) — ستُحذف الخلية"})
             continue
         cname = course.get("name", "")
         if course.get("is_active") is False:
@@ -119,6 +144,12 @@ async def integrity_fix(
         try:
             if it["fix_action"] == "delete_slot":
                 await db.weekly_schedule.delete_one({"_id": oid})
+            elif it["fix_action"] == "relink_course":
+                new_course = await db.courses.find_one({"_id": ObjectId(it["new_course_id"])}, {"teacher_id": 1})
+                upd = {"course_id": it["new_course_id"]}
+                if new_course and new_course.get("teacher_id"):
+                    upd["teacher_id"] = new_course["teacher_id"]
+                await db.weekly_schedule.update_one({"_id": oid}, {"$set": upd})
             elif it["fix_action"] == "sync_teacher":
                 if it["new_teacher_id"]:
                     await db.weekly_schedule.update_one({"_id": oid}, {"$set": {"teacher_id": it["new_teacher_id"]}})
