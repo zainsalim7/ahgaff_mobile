@@ -125,11 +125,12 @@ export default function ManageTeachersScreen() {
     }
   };
 
-  const exportSelected = async () => {
+  const exportSelected = async (format: 'excel' | 'pdf' = 'excel') => {
     setBulkBusy(true);
     try {
       const token = await AsyncStorage.getItem('token');
-      const res = await fetch(`${API_URL}/api/teachers/export-selected`, {
+      const endpoint = format === 'pdf' ? '/api/teachers/export-selected/pdf' : '/api/teachers/export-selected';
+      const res = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacher_ids: selectedIds }),
@@ -139,7 +140,7 @@ export default function ManageTeachersScreen() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `teachers_selected_${Date.now()}.xlsx`;
+      a.download = `teachers_selected_${Date.now()}.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
