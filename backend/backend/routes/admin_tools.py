@@ -277,6 +277,93 @@ async def execute_backfill(
     }
 
 
+@router.get("/admin/backfill-lecture-semesters/unmatched")
+async def list_unmatched_lectures(current_user: dict = Depends(get_current_user)):
+    """تفاصيل المحاضرات اليتيمة: بلا فصل، مقررها بلا فصل، وتاريخها خارج نطاق كل الفصول."""
+    _ensure_admin(current_user)
+    db = get_db()
+
+    course_sem = await _course_semester_map(db)
+    semesters = await _build_semesters_index(db)
+
+    course_cache: dict = {}
+    items = []
+    async for l in db.lectures.find(_WITHOUT_SEM_QUERY):
+        cid = str(l.get("course_id") or "")
+        if course_sem.get(cid):
+            continue
+        d = l.get("date")
+        d_str = d if isinstance(d, str) else (d.strftime("%Y-%m-%d") if d else None)
+        if d_str and any(s["start_date"] <= d_str <= s["end_date"] for s in semesters):
+            continue
+        if cid and cid not in course_cache:
+            c = None
+            try:
+                c = await db.courses.find_one({"_id": ObjectId(cid)}, {"name": 1, "code": 1})
+            except Exception:
+                pass
+            course_cache[cid] = c or {}
+        course = course_cache.get(cid, {})
+        items.append({
+            "id": str(l["_id"]),
+            "course_id": cid or None,
+            "course_name": course.get("name", "مقرر محذوف/غير معروف"),
+            "course_code": course.get("code", ""),
+            "date": d_str,
+            "start_time": l.get("start_time"),
+            "end_time": l.get("end_time"),
+            "room": l.get("room", ""),
+            "status": l.get("status", ""),
+        })
+
+    all_sems = []
+    async for s in db.semesters.find({}, {"name": 1, "status": 1}):
+        all_sems.append({"id": str(s["_id"]), "name": s.get("name", ""), "status": s.get("status", "")})
+
+    return {"count": len(items), "lectures": items, "semesters": all_sems}
+
+
+@router.post("/admin/backfill-lecture-semesters/resolve")
+async def resolve_unmatched_lectures(payload: dict, current_user: dict = Depends(get_current_user)):
+    """معالجة المحاضرات اليتيمة يدوياً.
+
+    body: {"lecture_ids": [...], "action": "assign", "semester_id": "..."}
+       أو {"lecture_ids": [...], "action": "delete"}
+    """
+    _ensure_admin(current_user)
+    db = get_db()
+
+    lecture_ids = payload.get("lecture_ids") or []
+    action = payload.get("action")
+    if not lecture_ids or action not in ("assign", "delete"):
+        raise HTTPException(status_code=400, detail="يجب تحديد lecture_ids و action (assign أو delete)")
+
+    oids = []
+    for lid in lecture_ids:
+        try:
+            oids.append(ObjectId(lid))
+        except Exception:
+            pass
+    if not oids:
+        raise HTTPException(status_code=400, detail="معرّفات المحاضرات غير صالحة")
+
+    if action == "delete":
+        res = await db.lectures.delete_many({"_id": {"$in": oids}})
+        return {"message": f"تم حذف {res.deleted_count} محاضرة يتيمة", "affected": res.deleted_count}
+
+    semester_id = payload.get("semester_id")
+    if not semester_id:
+        raise HTTPException(status_code=400, detail="يجب تحديد semester_id للإسناد")
+    sem = await db.semesters.find_one({"_id": ObjectId(semester_id)})
+    if not sem:
+        raise HTTPException(status_code=404, detail="الفصل غير موجود")
+    res = await db.lectures.update_many(
+        {"_id": {"$in": oids}},
+        {"$set": {"semester_id": semester_id, "semester_name": sem.get("name", "")}},
+    )
+    return {"message": f"تم إسناد {res.modified_count} محاضرة إلى فصل '{sem.get('name', '')}'", "affected": res.modified_count}
+
+
 # ==================== Student Reference Number Generator ====================
 VALID_PROGRAM_CODES = {"B", "M", "D", "E", "P"}
 PROGRAM_LABELS = {

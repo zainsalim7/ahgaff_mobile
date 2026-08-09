@@ -1,0 +1,31 @@
+{
+  "summary": "Tested the new 'orphan lectures' feature in /backfill-lecture-semesters end-to-end. Backend: 10 pytest cases (preview structure, execute dry_run, unmatched structure/auth/consistency-with-preview, resolve validation: empty ids 400, assign w/o semester_id 400, bad action 400, invalid ObjectId 400, unknown semester 404) — all passed. Frontend (RN Web, real admin login admin/admin123): preview-btn -> stats card with all 4 metrics; show-orphans-btn appears with count (2); orphans-list renders course name+code, date, time, room, status; 2 assign-to-{semester_id} buttons + delete-orphans-btn render; assign-to-698e5cc524745fb79482e099 flow: window.confirm shown, after accept POST /resolve 200, preview auto-reloads and 'خارج نطاق أي فصل' = 0 and orphan section disappears; delete-orphans-btn flow: confirm shown, resolve 200, total lectures 24 -> 22. Seeded 1 extra TEST_ORPHAN lecture and removed all test data (0 lectures without semester_id at end).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "backfill-lecture-semesters.tsx", "issue": "Success message is never shown: resolveOrphans/handleExecute call setResultMsg(msg) then await fetchPreview(), and fetchPreview starts with setResultMsg('') which wipes it. Verified in UI — after assigning and after deleting, no 'تم إسناد ...'/'تم حذف ...' text appears (data changed correctly). Fix: don't clear resultMsg inside fetchPreview (or pass a flag / set the message after fetchPreview resolves).", "selector": "text 'تم إسناد' / 'تم حذف'", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "backfill-lecture-semesters", "issues": ["Assign list includes 'الفصل الصيفي 2024-2025' which has start_date/end_date = null; assigning orphans to a semester without a date range is allowed with no warning (that semester is also absent from 'التوزيع حسب الفصل' because _build_semesters_index skips it). Consider labelling/warning such semesters.", "Assign buttons do not warn that 'الفصل الثاني' is closed (status=closed) — assigned lectures land in a closed semester."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_orphan_lectures_admin_tools.py", "/app/test_reports/pytest/pytest_results_orphans.xml"],
+  "action_items": ["Fix resultMsg being cleared by fetchPreview so success messages for assign/delete/execute are visible to the admin (only real defect found)."],
+  "critical_code_review_comments": [
+    "resolve endpoint silently drops invalid ObjectIds (only 400 when ALL are invalid); a partially invalid payload would be applied to the valid subset without reporting the skipped ids.",
+    "resolve does not re-verify that the targeted lectures are actually orphans — any lecture id can be assigned/deleted through this admin endpoint.",
+    "preview 'unmatched' is derived arithmetically (without_count - matched_total) while /unmatched recomputes the same set with different logic; they agreed in this run, but keeping the single source of truth (the unmatched query) would avoid drift."
+  ],
+  "updated_files": ["/app/backend/tests/test_orphan_lectures_admin_tools.py"],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "seed_data_creation": "Inserted 1 TEST_ORPHAN lecture (course الفقه الإسلامي, 2026-05-26) in addition to the existing one; both were consumed/removed by the delete test. DB now has 0 lectures without semester_id.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123",
+  "context_for_next_testing_agent": "No orphan lectures remain in DB — re-seed before retesting the orphan UI (insert lecture with course_id=69cd1f0b12f04e7c1d6a4991 (الفقه الإسلامي, no semester_id), date outside 2025-12-20..2026-05-07, notes=TEST_ORPHAN; unique index uniq_course_date_start on course_id+date+start_time). IMPORTANT Playwright note: login page has no testIDs (use input[placeholder*='اسم المستخدم'] and click text 'تسجيل الدخول'; Enter does not submit). window.confirm/alert are used, and the dialog handler MUST await d.accept() (use asyncio.create_task(async handler)) otherwise the page blocks and clicks appear to do nothing.",
+  "rca_of_the_issue": "Missing success message: fetchPreview() unconditionally executes setResultMsg('') at its start, and it is awaited right after setResultMsg(res.data.message) in resolveOrphans/handleExecute, so React renders the cleared value."
+}

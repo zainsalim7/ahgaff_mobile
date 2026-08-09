@@ -26,9 +26,28 @@ interface Preview {
   total_lectures: number;
   without_semester: number;
   matched_by_semester: SemesterMatch[];
+  matched_by_course?: { semester_id: string; semester_name: string; lectures_to_update: number }[];
   matched_total: number;
   unmatched: number;
   warning?: string;
+}
+
+interface OrphanLecture {
+  id: string;
+  course_id: string | null;
+  course_name: string;
+  course_code: string;
+  date: string | null;
+  start_time: string;
+  end_time: string;
+  room: string;
+  status: string;
+}
+
+interface SemesterOption {
+  id: string;
+  name: string;
+  status: string;
 }
 
 const showAlert = (title: string, msg: string) => {
@@ -51,11 +70,16 @@ export default function BackfillSemestersScreen() {
   const [executing, setExecuting] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [resultMsg, setResultMsg] = useState<string>('');
+  const [orphans, setOrphans] = useState<OrphanLecture[] | null>(null);
+  const [orphanSems, setOrphanSems] = useState<SemesterOption[]>([]);
+  const [orphansLoading, setOrphansLoading] = useState(false);
+  const [resolving, setResolving] = useState(false);
 
   const fetchPreview = useCallback(async () => {
     try {
       setLoading(true);
       setResultMsg('');
+      setOrphans(null);
       const res = await api.get('/admin/backfill-lecture-semesters/preview');
       setPreview(res.data);
     } catch (e: any) {
@@ -64,6 +88,44 @@ export default function BackfillSemestersScreen() {
       setLoading(false);
     }
   }, []);
+
+  const fetchOrphans = useCallback(async () => {
+    try {
+      setOrphansLoading(true);
+      const res = await api.get('/admin/backfill-lecture-semesters/unmatched');
+      setOrphans(res.data?.lectures || []);
+      setOrphanSems(res.data?.semesters || []);
+    } catch (e: any) {
+      showAlert('خطأ', e?.response?.data?.detail || 'فشل تحميل المحاضرات اليتيمة');
+    } finally {
+      setOrphansLoading(false);
+    }
+  }, []);
+
+  const resolveOrphans = async (action: 'assign' | 'delete', semesterId?: string, semesterName?: string) => {
+    if (!orphans || orphans.length === 0) return;
+    const msg =
+      action === 'delete'
+        ? `سيتم حذف ${orphans.length} محاضرة يتيمة نهائياً من قاعدة البيانات.\n\nهل أنت متأكد؟`
+        : `سيتم إسناد ${orphans.length} محاضرة إلى فصل "${semesterName}".\n\nهل تريد المتابعة؟`;
+    const ok = await askConfirm('تأكيد المعالجة', msg);
+    if (!ok) return;
+    try {
+      setResolving(true);
+      const res = await api.post('/admin/backfill-lecture-semesters/resolve', {
+        lecture_ids: orphans.map((l) => l.id),
+        action,
+        semester_id: semesterId,
+      });
+      setResultMsg(res.data?.message || 'تمت المعالجة');
+      setOrphans(null);
+      await fetchPreview();
+    } catch (e: any) {
+      showAlert('خطأ', e?.response?.data?.detail || 'فشلت المعالجة');
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const handleExecute = async () => {
     if (!preview || preview.matched_total === 0) {
@@ -189,6 +251,73 @@ export default function BackfillSemestersScreen() {
                 )}
               </TouchableOpacity>
 
+              {preview.unmatched > 0 && (
+                <TouchableOpacity
+                  style={[styles.btn, styles.orphanBtn, orphansLoading && { opacity: 0.6 }]}
+                  onPress={fetchOrphans}
+                  disabled={orphansLoading}
+                  testID="show-orphans-btn"
+                >
+                  {orphansLoading ? <ActivityIndicator color="#fff" /> : (
+                    <>
+                      <Ionicons name="alert-circle" size={18} color="#fff" />
+                      <Text style={styles.btnText}>عرض المحاضرات اليتيمة ({preview.unmatched})</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {orphans && orphans.length > 0 && (
+                <View style={styles.semCard} testID="orphans-list">
+                  <Text style={styles.cardTitle}>
+                    محاضرات يتيمة — بلا فصل ومقررها بلا فصل وتاريخها خارج كل النطاقات
+                  </Text>
+                  {orphans.map((l) => (
+                    <View key={l.id} style={styles.semRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.semName}>
+                          {l.course_name}{l.course_code ? ` (${l.course_code})` : ''}
+                        </Text>
+                        <Text style={styles.semDates}>
+                          {l.date || 'بدون تاريخ'} • {l.start_time}-{l.end_time}
+                          {l.room ? ` • قاعة ${l.room}` : ''} • {l.status}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+
+                  <Text style={[styles.cardTitle, { marginTop: 14 }]}>معالجة الكل:</Text>
+                  {orphanSems.map((s) => (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.btn, styles.assignBtn, resolving && { opacity: 0.5 }]}
+                      onPress={() => resolveOrphans('assign', s.id, s.name)}
+                      disabled={resolving}
+                      testID={`assign-to-${s.id}`}
+                    >
+                      <Ionicons name="link" size={16} color="#fff" />
+                      <Text style={styles.btnText}>إسناد الكل إلى: {s.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={[styles.btn, styles.deleteBtn, resolving && { opacity: 0.5 }]}
+                    onPress={() => resolveOrphans('delete')}
+                    disabled={resolving}
+                    testID="delete-orphans-btn"
+                  >
+                    <Ionicons name="trash" size={16} color="#fff" />
+                    <Text style={styles.btnText}>حذف الكل نهائياً</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {orphans && orphans.length === 0 && (
+                <View style={styles.successBox}>
+                  <Ionicons name="checkmark-circle" size={20} color="#2e7d32" />
+                  <Text style={styles.successText}>لا توجد محاضرات يتيمة 🎉</Text>
+                </View>
+              )}
+
               {resultMsg ? (
                 <View style={styles.successBox}>
                   <Ionicons name="checkmark-circle" size={20} color="#2e7d32" />
@@ -240,6 +369,9 @@ const styles = StyleSheet.create({
   },
   previewBtn: { backgroundColor: '#1565c0' },
   executeBtn: { backgroundColor: '#2e7d32' },
+  orphanBtn: { backgroundColor: '#ef6c00' },
+  assignBtn: { backgroundColor: '#1565c0', paddingVertical: 10, marginBottom: 8 },
+  deleteBtn: { backgroundColor: '#c62828', paddingVertical: 10, marginBottom: 0 },
   btnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   statsCard: {
     backgroundColor: '#fff',
