@@ -7873,8 +7873,8 @@ async def get_course_lectures(
                 target_sem = {
                     "id": str(_s["_id"]),
                     "name": _s.get("name", ""),
-                    "start_date": _s.get("start_date"),
-                    "end_date": _s.get("end_date"),
+                    "start_date": normalize_semester_date(_s.get("start_date")),
+                    "end_date": normalize_semester_date(_s.get("end_date")),
                 }
         except Exception:
             pass
@@ -14424,7 +14424,13 @@ async def activate_semester(semester_id: str, auto_generate_from_curriculum: boo
     if semester.get("status") == SemesterStatus.ARCHIVED:
         raise HTTPException(status_code=400, detail="لا يمكن تفعيل فصل مؤرشف")
     
-    # إلغاء تفعيل الفصل الحالي
+    # إلغاء تفعيل الفصل الحالي (مع ختم محاضراته بـ semester_id لمنع تسربها)
+    from routes._active_semester import stamp_lectures_with_semester
+    prev_active = await db.semesters.find({"status": SemesterStatus.ACTIVE}, {"_id": 1}).to_list(10)
+    for _prev in prev_active:
+        _prev_id = str(_prev["_id"])
+        if _prev_id != semester_id:
+            await stamp_lectures_with_semester(db, _prev_id)
     await db.semesters.update_many(
         {"status": SemesterStatus.ACTIVE},
         {"$set": {"status": SemesterStatus.CLOSED, "closed_at": get_yemen_time()}}
@@ -14549,7 +14555,11 @@ async def close_semester(semester_id: str, current_user: dict = Depends(get_curr
         {"$set": {"status": SemesterStatus.CLOSED, "closed_at": get_yemen_time()}}
     )
     
-    return {"message": "تم إغلاق الفصل الدراسي بنجاح"}
+    # ختم محاضرات هذا الفصل بـ semester_id لمنع تسربها للفصول اللاحقة
+    from routes._active_semester import stamp_lectures_with_semester
+    stamped = await stamp_lectures_with_semester(db, semester_id)
+    
+    return {"message": "تم إغلاق الفصل الدراسي بنجاح", "lectures_stamped": stamped}
 
 @api_router.post("/semesters/{semester_id}/archive")
 async def archive_semester(semester_id: str, current_user: dict = Depends(get_current_user)):

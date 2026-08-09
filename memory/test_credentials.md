@@ -25,7 +25,11 @@
 
 ## Teacher
 - Username: teacher180156
-- Password: teacher123
+- Password: teacher123  (أُعيد تعيينها 2026-08-09)
+
+## Teacher 2 (حسن صالح — لديه مقررات في فصول متعددة، مثالي لاختبار فلترة الفصول)
+- Username: 9999
+- Password: teacher123  (أُعيد تعيينها 2026-08-09)
 
 ## Student (يدخل بأي من الخيارين)
 - Username: 234   (رقم القيد)

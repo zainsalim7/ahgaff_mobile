@@ -1190,3 +1190,14 @@ See `/app/memory/test_credentials.md`
 - الإصلاحات: تطبيق `apply_lecture_active_sem` من `routes/_active_semester.py` على النقاط الثلاث + dashboard المعلم. تحويل today إلى توقيت اليمن (+3) بدل utcnow. إصلاح خلل قائم: all-schedule كان يستدعي get_user_scope_filter بالنوع الافتراضي "students" بدل "courses" فيُفرغ نتائج المعلم. تحصين created_at بـ .get.
 - اختبار E2E: محاضرتان بتاريخ اليوم (واحدة بفصل قديم وواحدة بالفصل النشط) → المعلم والأدمن يريان محاضرة الفصل النشط فقط في today/all-schedule/month ✔️ (نُظفت البيانات)
 - ⚠️ يتطلب إعادة نشر الباك اند.
+
+## 2026-08-09 — إصلاح جذري: تسرب محاضرات الفصول المغلقة/المؤرشفة
+**جذر المشكلة:** دالة `get_active_semester` في `routes/_active_semester.py` كانت ترجع تواريخ الفصل بصيغتها الخام (D-M-YYYY مثل "20-12-2025") بينما تواريخ المحاضرات نصوص YYYY-MM-DD، فكانت المقارنة النصية في شرط الـ fallback (للمحاضرات القديمة بدون semester_id) تطابق **كل** المحاضرات بغض النظر عن تاريخها.
+**الإصلاحات:**
+1. `_active_semester.py`: إضافة `normalize_sem_date` وتطبيع تواريخ الفصل النشط دائماً → يصلح كل النقاط المستخدمة لـ `apply_lecture_active_sem` (lectures/today, month, all-schedule, dashboard, entity_details).
+2. `server.py /lectures/{course_id}`: تطبيع تواريخ فصل المقرر بـ `normalize_semester_date`.
+3. `close_semester` + `activate_semester`: ختم محاضرات الفصل المُغلق بـ `semester_id` تلقائياً (دالة `stamp_lectures_with_semester`) لمنع أي تسرب مستقبلي.
+4. `routes/dashboard.py /dashboard/teacher`: كان معطلاً كلياً (يستعلم بـ teacher_id غير موجود في المحاضرات + تواريخ datetime مقابل نصوص) — أُصلح ليجلب عبر مقررات المعلم وبتواريخ نصية + توقيت اليمن، مع إثراء أسماء المقررات.
+5. أداة `backfill-lecture-semesters` (preview + execute): أُضيفت مرحلة إسناد عبر مقرر المحاضرة (الأدق) قبل الإسناد بنطاق التاريخ.
+**الاختبار:** سيناريو محاكٍ للإنتاج (معلم 9999 لديه مقررات بفصول متعددة + محاضرات قديمة بدون semester_id) — قبل/بعد عبر curl على /lectures/today و/lectures/month و/dashboard/teacher — كله ناجح، وقاعدة البيانات المحلية نُظفت (0 محاضرات بدون semester_id).
+**ملاحظة للإنتاج:** يجب تنفيذ أداة الترحيل مرة واحدة من شاشة الأدمن (backfill-lecture-semesters) بعد نشر التحديث لختم المحاضرات القديمة.

@@ -130,6 +130,21 @@ def _ensure_admin(current_user: dict):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
 
 
+_WITHOUT_SEM_QUERY = {"$or": [
+    {"semester_id": {"$exists": False}},
+    {"semester_id": None},
+    {"semester_id": ""},
+]}
+
+
+async def _course_semester_map(db):
+    """خريطة course_id → semester_id للمقررات التي لها فصل."""
+    mapping = {}
+    async for c in db.courses.find({"semester_id": {"$nin": [None, ""]}}, {"semester_id": 1}):
+        mapping[str(c["_id"])] = c["semester_id"]
+    return mapping
+
+
 @router.get("/admin/backfill-lecture-semesters/preview")
 async def preview_backfill(current_user: dict = Depends(get_current_user)):
     """معاينة عدد المحاضرات التي ستُحدَّث وتوزيعها على الفصول.
@@ -138,32 +153,35 @@ async def preview_backfill(current_user: dict = Depends(get_current_user)):
     _ensure_admin(current_user)
     db = get_db()
 
-    semesters = await _build_semesters_index(db)
-    if not semesters:
-        return {
-            "total_lectures": await db.lectures.count_documents({}),
-            "without_semester": 0,
-            "matched_by_semester": [],
-            "unmatched": 0,
-            "warning": "لا توجد فصول دراسية بتواريخ صالحة في النظام",
-        }
-
     total = await db.lectures.count_documents({})
-    without_query = {"$or": [
-        {"semester_id": {"$exists": False}},
-        {"semester_id": None},
-        {"semester_id": ""},
-    ]}
-    without_count = await db.lectures.count_documents(without_query)
+    without_count = await db.lectures.count_documents(_WITHOUT_SEM_QUERY)
 
-    # لكل فصل: عدد المحاضرات التي تواريخها داخل نطاقه ولا تحوي semester_id
+    # المرحلة 1: الإسناد عبر مقرر المحاضرة (الأدق)
+    course_sem = await _course_semester_map(db)
+    by_course_per_sem: dict = {}
+    matched_course_lecture_ids = set()
+    async for l in db.lectures.find(_WITHOUT_SEM_QUERY, {"course_id": 1}):
+        sem_id = course_sem.get(str(l.get("course_id")))
+        if sem_id:
+            matched_course_lecture_ids.add(l["_id"])
+            by_course_per_sem[sem_id] = by_course_per_sem.get(sem_id, 0) + 1
+
+    # المرحلة 2: الإسناد عبر نطاق التاريخ (للمتبقي فقط)
+    semesters = await _build_semesters_index(db)
+    sem_names = {}
+    async for s in db.semesters.find({}, {"name": 1}):
+        sem_names[str(s["_id"])] = s.get("name", "")
+
     matched = []
-    matched_total = 0
+    matched_total = len(matched_course_lecture_ids)
     for sem in semesters:
-        cnt = await db.lectures.count_documents({
-            **without_query,
+        cnt = 0
+        async for l in db.lectures.find({
+            **_WITHOUT_SEM_QUERY,
             "date": {"$gte": sem["start_date"], "$lte": sem["end_date"]},
-        })
+        }, {"_id": 1}):
+            if l["_id"] not in matched_course_lecture_ids:
+                cnt += 1
         matched.append({
             "id": sem["id"],
             "name": sem["name"],
@@ -173,13 +191,15 @@ async def preview_backfill(current_user: dict = Depends(get_current_user)):
         })
         matched_total += cnt
 
-    unmatched = without_count - matched_total
-    if unmatched < 0:
-        unmatched = 0
+    unmatched = max(without_count - matched_total, 0)
 
     return {
         "total_lectures": total,
         "without_semester": without_count,
+        "matched_by_course": [
+            {"semester_id": k, "semester_name": sem_names.get(k, ""), "lectures_to_update": v}
+            for k, v in by_course_per_sem.items()
+        ],
         "matched_by_semester": matched,
         "matched_total": matched_total,
         "unmatched": unmatched,
@@ -191,25 +211,38 @@ async def execute_backfill(
     dry_run: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
-    """تنفيذ تحديث المحاضرات القديمة بإسناد semester_id لها بناءً على نطاق التاريخ."""
+    """تنفيذ تحديث المحاضرات القديمة بإسناد semester_id لها.
+    المرحلة 1: من مقرر المحاضرة (الأدق). المرحلة 2: من نطاق تاريخ الفصل.
+    """
     _ensure_admin(current_user)
     db = get_db()
 
+    sem_names = {}
+    async for s in db.semesters.find({}, {"name": 1}):
+        sem_names[str(s["_id"])] = s.get("name", "")
+
+    # المرحلة 1: عبر المقرر
+    course_sem = await _course_semester_map(db)
+    by_course_updated: dict = {}
+    async for l in db.lectures.find(_WITHOUT_SEM_QUERY, {"course_id": 1}):
+        sem_id = course_sem.get(str(l.get("course_id")))
+        if not sem_id:
+            continue
+        if not dry_run:
+            await db.lectures.update_one(
+                {"_id": l["_id"]},
+                {"$set": {"semester_id": sem_id, "semester_name": sem_names.get(sem_id, "")}},
+            )
+        by_course_updated[sem_id] = by_course_updated.get(sem_id, 0) + 1
+    course_total = sum(by_course_updated.values())
+
+    # المرحلة 2: عبر نطاق التاريخ (للمتبقي)
     semesters = await _build_semesters_index(db)
-    if not semesters:
-        raise HTTPException(status_code=400, detail="لا توجد فصول بتواريخ صالحة")
-
-    without_query = {"$or": [
-        {"semester_id": {"$exists": False}},
-        {"semester_id": None},
-        {"semester_id": ""},
-    ]}
-
     updates_per_semester = []
-    grand_total = 0
+    date_total = 0
     for sem in semesters:
         match_query = {
-            **without_query,
+            **_WITHOUT_SEM_QUERY,
             "date": {"$gte": sem["start_date"], "$lte": sem["end_date"]},
         }
         if dry_run:
@@ -225,16 +258,21 @@ async def execute_backfill(
             "semester_name": sem["name"],
             "updated": cnt,
         })
-        grand_total += cnt
+        date_total += cnt
 
+    grand_total = course_total + date_total
     return {
         "dry_run": dry_run,
         "total_updated": grand_total,
+        "by_course": [
+            {"semester_id": k, "semester_name": sem_names.get(k, ""), "updated": v}
+            for k, v in by_course_updated.items()
+        ],
         "details": updates_per_semester,
         "message": (
             "محاكاة فقط - لم يتم التعديل"
             if dry_run
-            else f"تم تحديث {grand_total} محاضرة"
+            else f"تم تحديث {grand_total} محاضرة ({course_total} عبر المقرر، {date_total} عبر التاريخ)"
         ),
     }
 

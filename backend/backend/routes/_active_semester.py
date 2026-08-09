@@ -13,10 +13,30 @@ from typing import Optional
 from bson import ObjectId
 
 
+def normalize_sem_date(d) -> Optional[str]:
+    """تحويل تاريخ فصل (D-M-YYYY أو YYYY-MM-DD) إلى YYYY-MM-DD للمقارنة النصية الصحيحة."""
+    if not d or not isinstance(d, str):
+        return None
+    s = d.strip().replace("/", "-")
+    parts = s.split("-")
+    if len(parts) != 3:
+        return None
+    try:
+        if len(parts[0]) == 4:
+            year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+        else:
+            day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    except Exception:
+        return None
+
+
 async def get_active_semester(db) -> Optional[dict]:
     """Return active semester dict or None.
 
     Returns: {"id", "name", "start_date", "end_date"} or None
+    Dates are ALWAYS normalized to YYYY-MM-DD (or None) so string
+    comparisons against lecture dates are safe.
     """
     sem = await db.semesters.find_one({
         "$or": [{"status": "active"}, {"is_active": True}]
@@ -26,9 +46,35 @@ async def get_active_semester(db) -> Optional[dict]:
     return {
         "id": str(sem["_id"]),
         "name": sem.get("name", ""),
-        "start_date": sem.get("start_date"),
-        "end_date": sem.get("end_date"),
+        "start_date": normalize_sem_date(sem.get("start_date")),
+        "end_date": normalize_sem_date(sem.get("end_date")),
     }
+
+
+async def stamp_lectures_with_semester(db, semester_id: str) -> int:
+    """ختم محاضرات فصل معيّن بـ semester_id (للمحاضرات القديمة التي تفتقده).
+
+    يعتمد على مقررات الفصل (courses.semester_id) — الطريقة الأدق.
+    يُستدعى عند إغلاق/أرشفة الفصل لمنع تسرب محاضراته للفصول اللاحقة.
+    """
+    course_ids = [
+        str(c["_id"])
+        async for c in db.courses.find({"semester_id": semester_id}, {"_id": 1})
+    ]
+    if not course_ids:
+        return 0
+    res = await db.lectures.update_many(
+        {
+            "course_id": {"$in": course_ids},
+            "$or": [
+                {"semester_id": {"$exists": False}},
+                {"semester_id": None},
+                {"semester_id": ""},
+            ],
+        },
+        {"$set": {"semester_id": semester_id}},
+    )
+    return res.modified_count
 
 
 def lecture_active_semester_clauses(active_sem: Optional[dict]) -> list:

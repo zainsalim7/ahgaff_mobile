@@ -185,25 +185,31 @@ async def get_teacher_dashboard(
 
     db = get_db()
     user_id = current_user["id"]
-    now = datetime.utcnow()
+    from datetime import timezone
+    now = datetime.now(timezone(timedelta(hours=3)))
     y = year or now.year
     m = month or now.month
 
-    # تحديد بداية ونهاية الشهر
-    month_start = datetime(y, m, 1)
+    # تحديد بداية ونهاية الشهر (نصوص YYYY-MM-DD لأن تواريخ المحاضرات مخزنة كنصوص)
+    month_start = f"{y:04d}-{m:02d}-01"
     if m == 12:
-        month_end = datetime(y + 1, 1, 1)
+        month_end = f"{y + 1:04d}-01-01"
     else:
-        month_end = datetime(y, m + 1, 1)
+        month_end = f"{y:04d}-{m + 1:02d}-01"
 
-    today_start = datetime(now.year, now.month, now.day)
-    today_end = today_start + timedelta(days=1)
+    today_str = now.strftime("%Y-%m-%d")
 
-    # جلب teacher_id
-    teacher = await db.teachers.find_one({"user_id": user_id}, {"_id": 1})
-    teacher_id = str(teacher["_id"]) if teacher else None
+    # جلب مقررات المعلم (المحاضرات لا تحمل teacher_id — تُربط عبر course_id)
+    user_doc = await db.users.find_one({"_id": ObjectId(user_id)}, {"teacher_record_id": 1})
+    teacher_id = (user_doc or {}).get("teacher_record_id")
+    if not teacher_id:
+        teacher = await db.teachers.find_one({"user_id": user_id}, {"_id": 1})
+        teacher_id = str(teacher["_id"]) if teacher else user_id
 
-    lecture_filter_base = {"teacher_id": teacher_id} if teacher_id else {"teacher_user_id": user_id}
+    course_map = {}
+    async for c in db.courses.find({"teacher_id": teacher_id, "is_active": True}, {"name": 1, "code": 1}):
+        course_map[str(c["_id"])] = {"name": c.get("name", ""), "code": c.get("code", "")}
+    lecture_filter_base = {"course_id": {"$in": list(course_map.keys())}}
 
     settings_task = _get_settings(db)
     notif_task = _count_unread_notifications(db, user_id)
@@ -214,15 +220,13 @@ async def get_teacher_dashboard(
 
     today_q = _alas({
         **lecture_filter_base,
-        "date": {"$gte": today_start, "$lt": today_end},
-        "$or": [{"is_cancelled": {"$ne": True}}, {"is_cancelled": {"$exists": False}}],
+        "date": today_str,
     }, active_sem)
     today_lectures_task = db.lectures.find(today_q).sort("start_time", 1).to_list(50)
 
     month_q = _alas({
         **lecture_filter_base,
         "date": {"$gte": month_start, "$lt": month_end},
-        "$or": [{"is_cancelled": {"$ne": True}}, {"is_cancelled": {"$exists": False}}],
     }, active_sem)
     month_lectures_task = db.lectures.find(month_q, {
         "_id": 1, "course_id": 1, "course_name": 1, "course_code": 1,
@@ -240,15 +244,16 @@ async def get_teacher_dashboard(
         d = lec.get("date")
         if not d:
             continue
-        key = d.strftime("%Y-%m-%d")
+        key = d if isinstance(d, str) else d.strftime("%Y-%m-%d")
         if key not in lectures_by_date:
             lectures_by_date[key] = []
             dates.append(key)
+        _c = course_map.get(lec.get("course_id"), {})
         lectures_by_date[key].append({
             "id": str(lec["_id"]),
             "course_id": lec.get("course_id"),
-            "course_name": lec.get("course_name", ""),
-            "course_code": lec.get("course_code", ""),
+            "course_name": lec.get("course_name") or _c.get("name", ""),
+            "course_code": lec.get("course_code") or _c.get("code", ""),
             "start_time": lec.get("start_time"),
             "end_time": lec.get("end_time"),
             "room": lec.get("room", ""),
@@ -258,8 +263,8 @@ async def get_teacher_dashboard(
     today_payload = [{
         "id": str(lec["_id"]),
         "course_id": lec.get("course_id"),
-        "course_name": lec.get("course_name", ""),
-        "course_code": lec.get("course_code", ""),
+        "course_name": lec.get("course_name") or course_map.get(lec.get("course_id"), {}).get("name", ""),
+        "course_code": lec.get("course_code") or course_map.get(lec.get("course_id"), {}).get("code", ""),
         "start_time": lec.get("start_time"),
         "end_time": lec.get("end_time"),
         "room": lec.get("room", ""),
