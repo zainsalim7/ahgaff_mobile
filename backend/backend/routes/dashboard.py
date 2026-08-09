@@ -208,17 +208,23 @@ async def get_teacher_dashboard(
     settings_task = _get_settings(db)
     notif_task = _count_unread_notifications(db, user_id)
 
-    today_lectures_task = db.lectures.find({
+    # فلترة الفصل النشط فقط
+    from ._active_semester import get_active_semester as _gas, apply_lecture_active_sem as _alas
+    active_sem = await _gas(db)
+
+    today_q = _alas({
         **lecture_filter_base,
         "date": {"$gte": today_start, "$lt": today_end},
         "$or": [{"is_cancelled": {"$ne": True}}, {"is_cancelled": {"$exists": False}}],
-    }).sort("start_time", 1).to_list(50)
+    }, active_sem)
+    today_lectures_task = db.lectures.find(today_q).sort("start_time", 1).to_list(50)
 
-    month_lectures_task = db.lectures.find({
+    month_q = _alas({
         **lecture_filter_base,
         "date": {"$gte": month_start, "$lt": month_end},
         "$or": [{"is_cancelled": {"$ne": True}}, {"is_cancelled": {"$exists": False}}],
-    }, {
+    }, active_sem)
+    month_lectures_task = db.lectures.find(month_q, {
         "_id": 1, "course_id": 1, "course_name": 1, "course_code": 1,
         "date": 1, "start_time": 1, "end_time": 1, "room": 1, "status": 1
     }).to_list(500)

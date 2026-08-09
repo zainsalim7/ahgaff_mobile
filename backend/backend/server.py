@@ -7507,11 +7507,11 @@ async def get_today_lectures(
     if not course_ids:
         return []
     
-    # جلب محاضرات اليوم لهذه المقررات
-    lectures = await db.lectures.find({
-        "course_id": {"$in": course_ids},
-        "date": today
-    }).sort("start_time", 1).to_list(100)
+    # جلب محاضرات اليوم لهذه المقررات (ضمن الفصل النشط فقط)
+    from routes._active_semester import get_active_semester as _gas, apply_lecture_active_sem as _alas
+    _today_q = {"course_id": {"$in": course_ids}, "date": today}
+    _alas(_today_q, await _gas(db))
+    lectures = await db.lectures.find(_today_q).sort("start_time", 1).to_list(100)
     
     # تحديث تلقائي: المحاضرات المجدولة التي انتهى وقتها بدون تحضير → غائب
     now = get_yemen_time()
@@ -7595,7 +7595,7 @@ async def get_today_lectures(
             "notes": lecture.get("notes", ""),
             "attendance_count": attendance_count,
             "total_enrolled": total_enrolled,
-            "created_at": lecture["created_at"]
+            "created_at": lecture.get("created_at")
         })
 
     return apply_fields(result, allowed)
@@ -7614,7 +7614,7 @@ async def get_all_schedule_lectures(
         date = now.strftime("%Y-%m-%d")
     
     course_query = {"is_active": True}
-    scope_filter = await get_user_scope_filter(current_user)
+    scope_filter = await get_user_scope_filter(current_user, "courses")
     if scope_filter:
         course_query.update(scope_filter)
     
@@ -7632,11 +7632,11 @@ async def get_all_schedule_lectures(
     if not course_ids:
         return {"lectures": [], "date": date}
     
-    # جلب محاضرات اليوم المحدد فقط
-    lectures = await db.lectures.find({
-        "course_id": {"$in": course_ids},
-        "date": date
-    }).sort("start_time", 1).to_list(200)
+    # جلب محاضرات اليوم المحدد فقط (ضمن الفصل النشط)
+    from routes._active_semester import get_active_semester as _gas, apply_lecture_active_sem as _alas
+    _day_q = {"course_id": {"$in": course_ids}, "date": date}
+    _alas(_day_q, await _gas(db))
+    lectures = await db.lectures.find(_day_q).sort("start_time", 1).to_list(200)
 
     # تحديث تلقائي: المحاضرات المجدولة التي انتهى وقتها بدون تحضير → غائب (تحديث فعلي في القاعدة)
     now = get_yemen_time()
@@ -7751,11 +7751,11 @@ async def get_month_lectures(
     else:
         end_date = f"{year:04d}-{month+1:02d}-01"
     
-    # جلب محاضرات الشهر
-    lectures = await db.lectures.find({
-        "course_id": {"$in": course_ids},
-        "date": {"$gte": start_date, "$lt": end_date}
-    }).sort("date", 1).to_list(500)
+    # جلب محاضرات الشهر (ضمن الفصل النشط فقط)
+    from routes._active_semester import get_active_semester as _gas, apply_lecture_active_sem as _alas
+    _month_q = {"course_id": {"$in": course_ids}, "date": {"$gte": start_date, "$lt": end_date}}
+    _alas(_month_q, await _gas(db))
+    lectures = await db.lectures.find(_month_q).sort("date", 1).to_list(500)
     
     # تحديث تلقائي: المحاضرات المجدولة التي انتهى وقتها بدون تحضير → غائب
     now = get_yemen_time()
@@ -7971,7 +7971,7 @@ async def get_course_lectures(
             "room": lecture.get("room", ""),
             "status": lecture.get("status", LectureStatus.SCHEDULED),
             "notes": lecture.get("notes", ""),
-            "created_at": lecture["created_at"],
+            "created_at": lecture.get("created_at"),
             # ملاحظات الإلغاء وإعادة الجدولة
             "original_date": lecture.get("original_date"),
             "last_rescheduled_from": lecture.get("last_rescheduled_from"),

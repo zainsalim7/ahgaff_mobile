@@ -19,8 +19,9 @@ def set_db(database):
 
 @router.get("/lectures/today")
 async def get_today_lectures(current_user: dict = Depends(get_current_user)):
-    """الحصول على محاضرات اليوم للمعلم"""
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    """الحصول على محاضرات اليوم للمعلم (الفصل النشط فقط)"""
+    from datetime import timezone, timedelta
+    today = datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d")
     
     # جلب مقررات المعلم
     course_query = {"is_active": True}
@@ -43,11 +44,12 @@ async def get_today_lectures(current_user: dict = Depends(get_current_user)):
     if not course_ids:
         return []
     
-    # جلب محاضرات اليوم لهذه المقررات
-    lectures = await db.lectures.find({
-        "course_id": {"$in": course_ids},
-        "date": today
-    }).sort("start_time", 1).to_list(100)
+    # جلب محاضرات اليوم لهذه المقررات (ضمن الفصل النشط فقط)
+    from ._active_semester import get_active_semester as _gas, apply_lecture_active_sem as _alas
+    active_sem = await _gas(db)
+    today_match = {"course_id": {"$in": course_ids}, "date": today}
+    _alas(today_match, active_sem)
+    lectures = await db.lectures.find(today_match).sort("start_time", 1).to_list(100)
     
     result = []
     for lecture in lectures:
@@ -107,11 +109,12 @@ async def get_month_lectures(year: int, month: int, current_user: dict = Depends
     else:
         end_date = f"{year:04d}-{month+1:02d}-01"
     
-    # جلب محاضرات الشهر
-    lectures = await db.lectures.find({
-        "course_id": {"$in": course_ids},
-        "date": {"$gte": start_date, "$lt": end_date}
-    }).sort("date", 1).to_list(500)
+    # جلب محاضرات الشهر (ضمن الفصل النشط فقط)
+    from ._active_semester import get_active_semester as _gas, apply_lecture_active_sem as _alas
+    active_sem = await _gas(db)
+    month_match = {"course_id": {"$in": course_ids}, "date": {"$gte": start_date, "$lt": end_date}}
+    _alas(month_match, active_sem)
+    lectures = await db.lectures.find(month_match).sort("date", 1).to_list(500)
     
     # تجميع التواريخ والمحاضرات
     dates_with_lectures = {}
