@@ -5340,6 +5340,84 @@ async def export_selected_teachers(request: Request, current_user: dict = Depend
         headers={"Content-Disposition": f"attachment; filename={fname}"},
     )
 
+@api_router.post("/teachers/export-selected/pdf")
+async def export_selected_teachers_pdf(request: Request, current_user: dict = Depends(get_current_user)):
+    """تصدير المدرسين المحددين إلى PDF"""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_teachers"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    data = await request.json()
+    ids = [i for i in (data.get("teacher_ids") or []) if i]
+    if not ids:
+        raise HTTPException(status_code=400, detail="لم يتم تحديد أي مدرس")
+    teachers = await db.teachers.find({"_id": {"$in": [ObjectId(i) for i in ids]}}).to_list(2000)
+
+    dep_ids = set()
+    for t in teachers:
+        dep_ids.update(t.get("department_ids") or ([t["department_id"]] if t.get("department_id") else []))
+    deps = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({"_id": {"$in": [ObjectId(x) for x in dep_ids if x]}}).to_list(200)}
+    facs = {str(f["_id"]): f.get("name", "") for f in await db.faculties.find({}).to_list(100)}
+
+    from reportlab.lib.pagesizes import landscape
+    font_path = Path(__file__).parent / "fonts" / "Amiri-Regular.ttf"
+    arabic_font = "Helvetica"
+    try:
+        pdfmetrics.registerFont(TTFont('Amiri', str(font_path)))
+        arabic_font = 'Amiri'
+    except Exception:
+        pass
+
+    def _ar(txt):
+        try:
+            return get_display(arabic_reshaper.reshape(str(txt or "")))
+        except Exception:
+            return str(txt or "")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=25, bottomMargin=25)
+    styles_title = ParagraphStyle("t", fontName=arabic_font, fontSize=15, alignment=TA_CENTER, textColor=colors.HexColor("#1a2540"))
+    elements = [
+        Paragraph(_ar(f"قائمة المدرسين المحددين ({len(teachers)})"), styles_title),
+        Paragraph(_ar(f"تاريخ التصدير: {get_yemen_time().strftime('%Y-%m-%d %H:%M')}"),
+                  ParagraphStyle("d", fontName=arabic_font, fontSize=9, alignment=TA_CENTER, textColor=colors.HexColor("#5b6678"), spaceBefore=4, spaceAfter=10)),
+    ]
+    heads = ["حالة الحساب", "الأقسام", "الكلية", "الهاتف", "البريد", "الاسم الكامل", "الرقم الوظيفي", "#"]
+    rows = [[_ar(h) for h in heads]]
+    for i, t in enumerate(sorted(teachers, key=lambda x: x.get("full_name", "")), 1):
+        t_deps = t.get("department_ids") or ([t["department_id"]] if t.get("department_id") else [])
+        rows.append([
+            _ar("مفعل" if t.get("user_id") else "غير مفعل"),
+            _ar("، ".join(deps.get(d, "") for d in t_deps if deps.get(d))),
+            _ar(facs.get(t.get("faculty_id", ""), "")),
+            _ar(t.get("phone", "") or "-"),
+            _ar(t.get("email", "") or "-"),
+            _ar(t.get("full_name", "")),
+            _ar(t.get("teacher_id", "")),
+            str(i),
+        ])
+    table = Table(rows, colWidths=[65, 160, 110, 85, 140, 150, 70, 25], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), arabic_font),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565C0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f6fc")]),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d4e4")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(table)
+    doc.build(elements)
+    buf.seek(0)
+    fname = f"teachers_selected_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
 @api_router.post("/auth/change-password")
 async def change_password(data: ChangePasswordRequest, current_user: dict = Depends(get_current_user)):
     """تغيير كلمة المرور"""

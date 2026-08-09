@@ -1,0 +1,25 @@
+{
+  "summary": "Tested manage-teachers bulk actions bar position + new PDF export (frontend Playwright on public URL) and backend /api/teachers/export-selected/pdf (pytest, 5/5 passed). Backend PDF endpoint is fully correct. Frontend: bar is correctly pinned to viewport bottom (position:fixed, gap=0px, all bulk buttons visible incl. new PDF button), BUT the 'تصدير PDF' button downloads an .xlsx from the Excel endpoint — exportSelected() ignores the passed format argument.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Bulk export PDF from /manage-teachers", "issue": "Clicking 'تصدير PDF' sends POST /api/teachers/export-selected (Excel) and downloads teachers_selected_<ts>.xlsx. Root cause: in /app/frontend/app/manage-teachers.tsx line 128 the function is declared `const exportSelected = async () => {` (no params) while callers use exportSelected('excel') / exportSelected('pdf') (lines 1026, 1035). Fix: accept `format: 'excel'|'pdf' = 'excel'`, hit `/api/teachers/export-selected${format==='pdf' ? '/pdf' : ''}`, and set a.download extension to .pdf for pdf.", "affected_selectors": ["[data-testid=bulk-export-pdf-btn]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_teachers_export_selected_pdf.py", "/app/test_reports/pytest/teachers_export_pdf.xml"],
+  "action_items": ["Fix exportSelected() in manage-teachers.tsx to accept the format param and call /api/teachers/export-selected/pdf with .pdf filename for the PDF button"],
+  "critical_code_review_comments": [
+    "exportSelected() signature/call-site mismatch (silent TS/JS bug): callers pass a format string that is discarded — PDF button behaves identically to Excel.",
+    "PDF export path duplicates blob-download logic; extract a shared downloadBlob(url, filename) helper."
+  ],
+  "updated_files": ["/app/backend/tests/test_teachers_export_selected_pdf.py"],
+  "success_rate": {"backend": "100%", "frontend": "66%"},
+  "seed_data_creation": "none",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123",
+  "context_for_next_testing_agent": "manage-teachers does NOT hang on LoadingScreen; it intentionally shows 'اختر فلتراً لعرض المعلمين' until a department is chosen or search text entered + 'تطبيق الفلتر' clicked. For automation: login via fetch /api/auth/login then localStorage token/user, goto /manage-teachers, fill input[placeholder*='ابحث'] with a teacher name (DB has زين سالم, Saeed, حسن صالح), click 'تطبيق الفلتر', then click [data-testid^=teacher-select-]. Bulk bar verified position:fixed at viewport bottom.",
+  "rca_of_the_issue": "Frontend exportSelected() was never updated to a parameterized version, so both bulk export buttons call the Excel endpoint. Backend PDF endpoint returns 200 with %PDF, 400 for empty ids, 403 without token — verified by pytest."
+}

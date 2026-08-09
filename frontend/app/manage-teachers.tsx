@@ -1000,7 +1000,7 @@ export default function ManageTeachersScreen() {
       {/* ✅ شريط الإجراءات الجماعية */}
       {selectedIds.length > 0 && !showForm && (
         <View style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#1a2540',
+          position: (Platform.OS === 'web' ? 'fixed' : 'absolute') as any, bottom: 0, left: 0, right: 0, backgroundColor: '#1a2540',
           flexDirection: 'row-reverse', alignItems: 'center', flexWrap: 'wrap', gap: 8,
           paddingHorizontal: 14, paddingVertical: 10, zIndex: 50,
         }} testID="bulk-actions-bar">
@@ -1023,13 +1023,22 @@ export default function ManageTeachersScreen() {
             </TouchableOpacity>
           ))}
           <TouchableOpacity
-            onPress={exportSelected}
+            onPress={() => exportSelected('excel')}
             disabled={bulkBusy}
             style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, backgroundColor: '#1565c0', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
             testID="bulk-export-btn"
           >
             <Ionicons name="download" size={13} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{bulkBusy ? '...' : 'تصدير Excel'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => exportSelected('pdf')}
+            disabled={bulkBusy}
+            style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, backgroundColor: '#8e24aa', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+            testID="bulk-export-pdf-btn"
+          >
+            <Ionicons name="document-text" size={13} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{bulkBusy ? '...' : 'تصدير PDF'}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setSelectedIds([])} style={{ marginRight: 'auto' as any }} testID="bulk-clear-btn">
             <Text style={{ color: '#b8c4d6', fontSize: 12, fontWeight: '700' }}>✕ إلغاء التحديد</Text>
