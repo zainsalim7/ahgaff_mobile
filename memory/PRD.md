@@ -1201,3 +1201,11 @@ See `/app/memory/test_credentials.md`
 5. أداة `backfill-lecture-semesters` (preview + execute): أُضيفت مرحلة إسناد عبر مقرر المحاضرة (الأدق) قبل الإسناد بنطاق التاريخ.
 **الاختبار:** سيناريو محاكٍ للإنتاج (معلم 9999 لديه مقررات بفصول متعددة + محاضرات قديمة بدون semester_id) — قبل/بعد عبر curl على /lectures/today و/lectures/month و/dashboard/teacher — كله ناجح، وقاعدة البيانات المحلية نُظفت (0 محاضرات بدون semester_id).
 **ملاحظة للإنتاج:** يجب تنفيذ أداة الترحيل مرة واحدة من شاشة الأدمن (backfill-lecture-semesters) بعد نشر التحديث لختم المحاضرات القديمة.
+
+## 2026-08-09 (تكملة) — ميزة معالجة المحاضرات اليتيمة
+بعد تنفيذ المستخدم للترحيل في الإنتاج بقيت 6 محاضرات "خارج نطاق أي فصل" (بلا فصل + مقررها بلا فصل + تاريخها خارج كل النطاقات).
+**أُضيف:**
+- `GET /api/admin/backfill-lecture-semesters/unmatched`: تفاصيل المحاضرات اليتيمة (المقرر، التاريخ، الوقت، القاعة) + قائمة الفصول.
+- `POST /api/admin/backfill-lecture-semesters/resolve`: إسناد يدوي لفصل محدد (action=assign) أو حذف نهائي (action=delete).
+- الواجهة (backfill-lecture-semesters.tsx): زر "عرض المحاضرات اليتيمة" + قائمة تفصيلية + أزرار "إسناد الكل إلى: {فصل}" و"حذف الكل نهائياً" مع تأكيد.
+**الاختبار:** testing_agent (iteration_61) — Backend 100% (10 pytest)، Frontend كامل التدفق ناجح. أُصلح خلل مسح رسالة النجاح (setResultMsg بعد fetchPreview).

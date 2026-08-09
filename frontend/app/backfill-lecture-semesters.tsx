@@ -117,9 +117,10 @@ export default function BackfillSemestersScreen() {
         action,
         semester_id: semesterId,
       });
-      setResultMsg(res.data?.message || 'تمت المعالجة');
+      const msg = res.data?.message || 'تمت المعالجة';
       setOrphans(null);
       await fetchPreview();
+      setResultMsg(msg);
     } catch (e: any) {
       showAlert('خطأ', e?.response?.data?.detail || 'فشلت المعالجة');
     } finally {
@@ -140,8 +141,9 @@ export default function BackfillSemestersScreen() {
     try {
       setExecuting(true);
       const res = await api.post('/admin/backfill-lecture-semesters/execute');
-      setResultMsg(res.data?.message || 'تم التنفيذ');
+      const msg = res.data?.message || 'تم التنفيذ';
       await fetchPreview();
+      setResultMsg(msg);
     } catch (e: any) {
       showAlert('خطأ', e?.response?.data?.detail || 'فشل التنفيذ');
     } finally {
