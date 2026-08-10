@@ -32,6 +32,7 @@ def _can_issue(user: dict, faculty_id: str) -> bool:
 class StatementSettings(BaseModel):
     registrar_name: str = ""
     signatory_title: str = "مسجل الكلية"
+    signature_base64: str = ""
     phones: str = ""
     fax: str = ""
     po_box: str = ""
@@ -465,10 +466,21 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     # ===== التوقيع =====
     sig_title = (s.get("signatory_title") or settings.get("signatory_title") or "مسجل الكلية").strip()
     sig_name = (s.get("signatory_name") or settings.get("registrar_name") or "").strip()
+    sig_img = None
+    sig_b64 = settings.get("signature_base64") or ""
+    if sig_b64:
+        try:
+            sig_img = ImageReader(io.BytesIO(base64.b64decode(sig_b64.split(",")[-1])))
+        except Exception:
+            sig_img = None
     c.setFont("Amiri", 14)
     c.drawString(30 * mm, yy - 24 * mm, ar(sig_title))
+    name_y = yy - 33 * mm
+    if sig_img:
+        c.drawImage(sig_img, 20 * mm, yy - 42 * mm, 38 * mm, 15 * mm, mask="auto", preserveAspectRatio=True)
+        name_y = yy - 47 * mm
     c.setFont("Amiri", 13)
-    c.drawString(24 * mm, yy - 33 * mm, ar(sig_name))
+    c.drawString(24 * mm, name_y, ar(sig_name))
 
     # ===== QR للتحقق =====
     verify_url = s.get("verify_url") or s.get("verify_token", "")

@@ -15,6 +15,7 @@ interface Faculty { id: string; name: string; }
 const EMPTY = {
   registrar_name: '',
   signatory_title: 'مسجل الكلية',
+  signature_base64: '',
   phones: '',
   fax: '',
   po_box: '',
@@ -83,7 +84,7 @@ export default function StatementSettingsScreen() {
 
   useEffect(() => { loadSettings(facultyId); }, [facultyId, loadSettings]);
 
-  const pickLogo = () => {
+  const pickImage = (field: 'logo_base64' | 'signature_base64', label: string) => {
     if (Platform.OS !== 'web') return;
     const input = document.createElement('input');
     input.type = 'file';
@@ -92,15 +93,17 @@ export default function StatementSettingsScreen() {
       const file = e.target.files[0];
       if (!file) return;
       if (file.size > 2 * 1024 * 1024) {
-        setMsg({ type: 'err', text: 'حجم الشعار يتجاوز 2MB — الرجاء اختيار صورة أصغر' });
+        setMsg({ type: 'err', text: `حجم ${label} يتجاوز 2MB — الرجاء اختيار صورة أصغر` });
         return;
       }
       const reader = new FileReader();
-      reader.onload = () => setForm((p) => ({ ...p, logo_base64: String(reader.result || '') }));
+      reader.onload = () => setForm((p) => ({ ...p, [field]: String(reader.result || '') }));
       reader.readAsDataURL(file);
     };
     input.click();
   };
+
+  const pickLogo = () => pickImage('logo_base64', 'الشعار');
 
   const save = async () => {
     if (!facultyId) return;
@@ -185,6 +188,35 @@ export default function StatementSettingsScreen() {
               </View>
             )}
           </View>
+
+          {/* صورة التوقيع/الختم */}
+          <Text style={[styles.sectionTitle, { marginTop: 14 }]}>صورة التوقيع / ختم الكلية (تظهر فوق اسم الموقّع)</Text>
+          <View style={styles.logoRow}>
+            <TouchableOpacity onPress={() => pickImage('signature_base64', 'صورة التوقيع')} style={styles.uploadBtn} testID="statement-signature-upload-btn">
+              <Ionicons name="cloud-upload-outline" size={16} color="#00796b" />
+              <Text style={styles.uploadBtnText}>{form.signature_base64 ? 'تغيير الصورة' : 'رفع صورة توقيع/ختم'}</Text>
+            </TouchableOpacity>
+            {!!form.signature_base64 && (
+              <TouchableOpacity
+                onPress={() => setForm((p) => ({ ...p, signature_base64: '' }))}
+                style={styles.removeBtn}
+                testID="statement-signature-remove-btn"
+              >
+                <Ionicons name="trash-outline" size={15} color="#c62828" />
+                <Text style={styles.removeBtnText}>إزالة</Text>
+              </TouchableOpacity>
+            )}
+            {form.signature_base64 ? (
+              <Image source={{ uri: form.signature_base64 }} style={styles.logoPreview} resizeMode="contain" />
+            ) : (
+              <View style={styles.logoPlaceholder}>
+                <Text style={styles.logoPlaceholderText}>بدون صورة — يظهر الاسم فقط</Text>
+              </View>
+            )}
+          </View>
+          <Text style={{ fontSize: 11, color: '#8a94a6', textAlign: 'right', marginBottom: 10, lineHeight: 18 }}>
+            💡 يُفضل صورة PNG بخلفية شفافة ليظهر التوقيع نظيفاً فوق الورقة
+          </Text>
 
           {/* المسجل والترويسة */}
           <Text style={styles.sectionTitle}>بيانات الكليشة</Text>
