@@ -2798,6 +2798,10 @@ async def generate_lectures_from_schedule(
             "to_create": len(to_create),
             "already_exist": already,
             "skipped_no_time": skipped_no_time,
+            "slot_times_used": [
+                {"slot_number": k, "start_time": v[0], "end_time": v[1]}
+                for k, v in sorted(slot_times.items())
+            ],
             "courses_count": len(course_ids),
             "schedule_slots": len(slots),
             "date_range": f"{data.start_date} → {data.end_date}",
@@ -2806,6 +2810,11 @@ async def generate_lectures_from_schedule(
         }
 
     # التنفيذ الفعلي — الفهرس الفريد uniq_course_date_start شبكة أمان إضافية
+    course_sem = {}
+    _valid_cids = [ObjectId(x) for x in course_ids if x and ObjectId.is_valid(x)]
+    if _valid_cids:
+        async for _c in db.courses.find({"_id": {"$in": _valid_cids}}, {"semester_id": 1}):
+            course_sem[str(_c["_id"])] = _c.get("semester_id")
     created = 0
     dup_skipped = 0
     now = datetime.now(timezone.utc)
@@ -2819,6 +2828,7 @@ async def generate_lectures_from_schedule(
                 "room": c["room"],
                 "status": "scheduled",
                 "notes": "",
+                "semester_id": course_sem.get(c["course_id"]),
                 "created_at": now,
                 "created_by": current_user.get("id", ""),
                 "generated_from_schedule": True,
@@ -2837,6 +2847,117 @@ async def generate_lectures_from_schedule(
         "already_exist": already + dup_skipped,
         "courses_count": len(course_ids),
         "message": f"تم إنشاء {created} محاضرة لـ{len(course_ids)} مقرراً (تخطي {already + dup_skipped} موجودة مسبقاً)",
+    }
+
+
+class ResyncLectureTimesRequest(BaseModel):
+    faculty_id: str
+    department_id: Optional[str] = None
+    dry_run: bool = True
+
+
+@router.post("/weekly-schedule/resync-lecture-times")
+async def resync_lecture_times(
+    data: ResyncLectureTimesRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """🕑 إعادة مزامنة أوقات المحاضرات المولدة من الجدول مع أوقات الفترات الحالية.
+
+    الاستخدام: عند توليد محاضرات بأوقات خاطئة (مثلاً 23:30 بدل 11:30 بسبب ص/م)،
+    يصحح الأدمن أوقات الفترات في الإعدادات ثم ينفذ هذه المزامنة — تُحدَّث أوقات
+    كل المحاضرات المولدة (generated_from_schedule) وفق فترة كل خانة في الجدول.
+    """
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+
+    settings = await db.schedule_settings.find_one({"_id": f"faculty_{data.faculty_id}"})
+    if not settings:
+        settings = await db.schedule_settings.find_one({"_id": "global"})
+    time_slots = (settings or {}).get("time_slots", [])
+    slot_times = {s["slot_number"]: (s.get("start_time", ""), s.get("end_time", "")) for s in time_slots}
+    if not slot_times:
+        raise HTTPException(status_code=400, detail="لا توجد فترات زمنية معرفة — اضبط إعدادات الفترات أولاً")
+
+    sched_query: dict = {"faculty_id": data.faculty_id}
+    if data.department_id:
+        sched_query["department_id"] = data.department_id
+    slots = await db.weekly_schedule.find(sched_query).to_list(5000)
+    if not slots:
+        raise HTTPException(status_code=400, detail="لا يوجد جدول أسبوعي في هذا النطاق")
+
+    # (course_id, weekday) → قائمة أوقات مرتبة برقم الفترة
+    from collections import defaultdict
+    per_key: dict = defaultdict(list)
+    for s in slots:
+        wd = _ARABIC_DAY_TO_WEEKDAY.get(s.get("day", ""))
+        st, en = slot_times.get(s.get("slot_number"), ("", ""))
+        if wd is None or not st or not en:
+            continue
+        per_key[(s.get("course_id", ""), wd)].append((s.get("slot_number"), st, en))
+    for k in per_key:
+        per_key[k].sort()
+
+    course_ids = list({s.get("course_id") for s in slots if s.get("course_id")})
+    lecs = await db.lectures.find({
+        "course_id": {"$in": course_ids},
+        "generated_from_schedule": True,
+        "status": {"$ne": "cancelled"},
+    }).to_list(50000)
+
+    by_course_date: dict = defaultdict(list)
+    for l in lecs:
+        by_course_date[(l.get("course_id"), l.get("date", ""))].append(l)
+
+    changes = []
+    for (cid, date_str), group in by_course_date.items():
+        try:
+            wd = datetime.strptime(date_str, "%Y-%m-%d").date().weekday()
+        except Exception:
+            continue
+        expected = per_key.get((cid, wd))
+        if not expected:
+            continue
+        group.sort(key=lambda x: x.get("start_time", ""))
+        for i, lec in enumerate(group):
+            if i >= len(expected):
+                break
+            _, st, en = expected[i]
+            if lec.get("start_time") != st or lec.get("end_time") != en:
+                changes.append({
+                    "_id": lec["_id"], "date": date_str,
+                    "old": f"{lec.get('start_time', '')} - {lec.get('end_time', '')}",
+                    "new": f"{st} - {en}", "st": st, "en": en,
+                })
+
+    if not data.dry_run and changes:
+        for ch in changes:
+            try:
+                await db.lectures.update_one(
+                    {"_id": ch["_id"]},
+                    {"$set": {"start_time": ch["st"], "end_time": ch["en"]}},
+                )
+            except DuplicateKeyError:
+                pass
+        await log_activity(
+            current_user, "resync_lecture_times", "weekly_schedule", data.faculty_id, None,
+            {"department_id": data.department_id, "updated": len(changes)},
+        )
+
+    # عينة تغييرات فريدة (نمط الوقت القديم → الجديد)
+    patterns: dict = {}
+    for ch in changes:
+        patterns[f"{ch['old']} ← {ch['new']}"] = patterns.get(f"{ch['old']} ← {ch['new']}", 0) + 1
+
+    return {
+        "dry_run": data.dry_run,
+        "lectures_checked": len(lecs),
+        ("to_update" if data.dry_run else "updated"): len(changes),
+        "patterns": [{"change": k, "count": v} for k, v in sorted(patterns.items(), key=lambda x: -x[1])[:10]],
+        "message": (
+            f"سيتم تحديث {len(changes)} محاضرة من أصل {len(lecs)}" if data.dry_run
+            else f"تم تحديث أوقات {len(changes)} محاضرة بنجاح"
+        ),
     }
 
 

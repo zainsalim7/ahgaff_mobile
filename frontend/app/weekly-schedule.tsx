@@ -314,6 +314,38 @@ export default function WeeklySchedulePage() {
   const [genLecHolidayInput, setGenLecHolidayInput] = useState('');
   const [genLecPreview, setGenLecPreview] = useState<any>(null);
   const [genLecLoading, setGenLecLoading] = useState(false);
+  const [resyncLoading, setResyncLoading] = useState(false);
+  const [resyncMsg, setResyncMsg] = useState('');
+
+  const runResyncTimes = async () => {
+    setResyncLoading(true);
+    setResyncMsg('');
+    try {
+      const preview = await api.post('/weekly-schedule/resync-lecture-times', {
+        faculty_id: selectedFaculty,
+        department_id: selectedDept || null,
+        dry_run: true,
+      });
+      const cnt = preview.data?.to_update || 0;
+      if (cnt === 0) {
+        setResyncMsg('✅ كل أوقات المحاضرات المولدة مطابقة للفترات الحالية — لا شيء يحتاج تصحيحاً');
+        return;
+      }
+      const patterns = (preview.data?.patterns || []).map((p: any) => `• ${p.change} (${p.count} محاضرة)`).join('\n');
+      const ok = Platform.OS === 'web'
+        ? window.confirm(`سيتم تصحيح أوقات ${cnt} محاضرة وفق أوقات الفترات الحالية:\n\n${patterns}\n\nهل تريد المتابعة؟`)
+        : true;
+      if (!ok) return;
+      const res = await api.post('/weekly-schedule/resync-lecture-times', {
+        faculty_id: selectedFaculty,
+        department_id: selectedDept || null,
+        dry_run: false,
+      });
+      setResyncMsg(`✅ ${res.data?.message || 'تمت المزامنة'}`);
+    } catch (e: any) {
+      setResyncMsg(`❌ ${e?.response?.data?.detail || 'فشلت المزامنة'}`);
+    } finally { setResyncLoading(false); }
+  };
 
   const openGenLecturesModal = async () => {
     setGenLecPreview(null);
@@ -1697,6 +1729,21 @@ export default function WeeklySchedulePage() {
                   <br />⏭️ موجودة مسبقاً (تُتخطى): <strong>{genLecPreview.already_exist}</strong>
                   {genLecPreview.holidays_count > 0 ? <><br />🏖️ عطلات مستثناة: <strong>{genLecPreview.holidays_count}</strong> يوم</> : null}
                 </div>
+                {(genLecPreview.slot_times_used || []).length > 0 && (
+                  <div style={{ marginTop: 8, borderTop: '1px dashed #80cbc4', paddingTop: 6 }} data-testid="gen-lec-slot-times">
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#00695c', marginBottom: 4 }}>🕑 أوقات الفترات التي ستُستخدم:</div>
+                    {genLecPreview.slot_times_used.map((s: any) => {
+                      const h = parseInt(String(s.start_time).split(':')[0], 10);
+                      const suspicious = !isNaN(h) && (h >= 19 || h < 6);
+                      return (
+                        <div key={s.slot_number} style={{ fontSize: 11, lineHeight: 1.8, color: suspicious ? '#c62828' : '#004d40', fontWeight: suspicious ? 800 : 500 }}>
+                          فترة {s.slot_number}: {s.start_time} - {s.end_time}
+                          {suspicious ? ' ⚠️ توقيت ليلي — راجع إعدادات الفترات (ص/م) قبل التوليد!' : ''}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
@@ -1713,6 +1760,16 @@ export default function WeeklySchedulePage() {
             </div>
             <div style={{ fontSize: 10, color: '#999', marginTop: 8, textAlign: 'center' }}>
               التأكيد متاح بعد المعاينة فقط — لضمان مراجعتك للأرقام قبل الإنشاء
+            </div>
+            <div style={{ borderTop: '1px dashed #ddd', marginTop: 12, paddingTop: 10 }}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 6, lineHeight: 1.7 }}>
+                🔧 ولّدت محاضرات بأوقات خاطئة (مثل 11:30 مساءً بدل صباحاً)؟ صحّح أوقات الفترات من «إعدادات الفترات الزمنية» ثم اضغط:
+              </div>
+              <button onClick={runResyncTimes} disabled={resyncLoading} data-testid="resync-lecture-times-btn"
+                style={{ width: '100%', padding: '9px', borderRadius: 8, border: '1px solid #ef6c00', backgroundColor: '#fff3e0', color: '#e65100', cursor: 'pointer', fontWeight: 800, fontSize: 12 }}>
+                {resyncLoading ? 'جاري الفحص...' : '🕑 مزامنة أوقات المحاضرات المولدة مع الفترات الحالية'}
+              </button>
+              {resyncMsg ? <div style={{ fontSize: 12, fontWeight: 700, marginTop: 8, color: resyncMsg.startsWith('❌') ? '#c62828' : '#2e7d32', whiteSpace: 'pre-line' }} data-testid="resync-result">{resyncMsg}</div> : null}
             </div>
           </div>
         </div>
