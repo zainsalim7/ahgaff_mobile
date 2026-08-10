@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend-only retest of the /statement-settings focus-loss bug fix (Field moved to module level). Logged in through real UI as admin/admin123, opened /statement-settings, typed full Arabic strings character-by-character (press_sequentially with delay) into 'صفة الموقّع الافتراضية', 'اسم الموقّع الافتراضي' and 'أرقام الهاتف'. All fields kept focus and accepted the complete text. Save succeeded (success toast) and values persisted after a full page reload (GET/PUT /api/statements/settings/{faculty_id}).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Field inputs in statement-settings.tsx have no testID/data-testid; tests must rely on Arabic placeholders. Consider passing a testID prop per field for stable selectors.",
+    "Direct navigation to /statement-settings before auth hydration briefly renders the 'no-permission' screen (403 on API). Non-blocking after real login, but consider waiting for auth hydration before the permission gate."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested", "frontend": "100% (4/4 scenarios)"},
+  "seed_data_creation": "Updated statement settings for the first faculty (كلية الشريعة والقانون): signatory_title='عميد الكلية', registrar_name='أ. محمد سالم بن يحيى', phones='417506 - 417599'",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin/admin123",
+  "context_for_next_testing_agent": "Login must be done via the real UI: fill the two placeholders then click text 'تسجيل الدخول' (pressing Enter does NOT submit). Token stored in localStorage under 'token'. Fields on /statement-settings are addressed by Arabic placeholders (e.g. input[placeholder=\"مسجل الكلية\"]).",
+  "rca_of_the_issue": "Original bug: Field component was declared inside StatementSettingsScreen, so each state update created a new component type and React unmounted/remounted the TextInput, dropping focus after one keystroke. Fix (Field hoisted to module scope) verified working — continuous typing now retains focus."
+}

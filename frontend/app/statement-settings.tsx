@@ -25,6 +25,19 @@ const EMPTY = {
   logo_base64: '',
 };
 
+const Field = ({ label, value, onChange, placeholder, ltr }: any) => (
+  <View style={styles.fieldWrap}>
+    <Text style={styles.label}>{label}</Text>
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder}
+      placeholderTextColor="#9aa4b2"
+      style={[styles.input, ltr && { textAlign: 'left', direction: 'ltr' as any }]}
+    />
+  </View>
+);
+
 export default function StatementSettingsScreen() {
   const params = useLocalSearchParams<{ facultyId?: string }>();
   const { user } = useAuth();
@@ -118,19 +131,6 @@ export default function StatementSettingsScreen() {
       setSaving(false);
     }
   };
-
-  const Field = ({ label, value, onChange, placeholder, ltr }: any) => (
-    <View style={styles.fieldWrap}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor="#9aa4b2"
-        style={[styles.input, ltr && { textAlign: 'left', direction: 'ltr' as any }]}
-      />
-    </View>
-  );
 
   if (loading) {
     return (
