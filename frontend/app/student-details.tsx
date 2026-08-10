@@ -184,6 +184,8 @@ export default function StudentDetailsScreen() {
   const [statementNationality, setStatementNationality] = useState('');
   const [statementPurpose, setStatementPurpose] = useState('');
   const [statementValidDays, setStatementValidDays] = useState('');
+  const [statementSignatoryName, setStatementSignatoryName] = useState('');
+  const [statementSignatoryTitle, setStatementSignatoryTitle] = useState('');
   const [issuingStatement, setIssuingStatement] = useState(false);
   const [lastStatement, setLastStatement] = useState<any>(null);
 
@@ -640,6 +642,8 @@ export default function StudentDetailsScreen() {
         purpose: statementPurpose || undefined,
         base_url: baseUrl,
         valid_days: statementValidDays && parseInt(statementValidDays, 10) > 0 ? parseInt(statementValidDays, 10) : undefined,
+        signatory_name: statementSignatoryName.trim() || undefined,
+        signatory_title: statementSignatoryTitle.trim() || undefined,
       });
       setLastStatement(res.data);
       const pdfRes = await api.get(`/statements/${res.data.id}/pdf`, { responseType: 'blob' });

@@ -201,6 +201,8 @@ export default function StudentsScreen() {
   const [showStatementBulkModal, setShowStatementBulkModal] = useState(false);
   const [stBulkPurpose, setStBulkPurpose] = useState('');
   const [stBulkValidDays, setStBulkValidDays] = useState('90');
+  const [stBulkSignatoryName, setStBulkSignatoryName] = useState('');
+  const [stBulkSignatoryTitle, setStBulkSignatoryTitle] = useState('');
   const [stBulkIssuing, setStBulkIssuing] = useState(false);
   // سجل التاريخ لطالب
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -435,6 +437,8 @@ export default function StudentsScreen() {
         student_ids: Array.from(selectedIds),
         purpose: stBulkPurpose.trim() || undefined,
         valid_days: stBulkValidDays && parseInt(stBulkValidDays, 10) > 0 ? parseInt(stBulkValidDays, 10) : undefined,
+        signatory_name: stBulkSignatoryName.trim() || undefined,
+        signatory_title: stBulkSignatoryTitle.trim() || undefined,
         base_url: baseUrl,
       }, { responseType: 'blob', timeout: 300000 });
       if (Platform.OS === 'web') {
@@ -2347,6 +2351,22 @@ export default function StudentsScreen() {
               keyboardType="numeric"
               style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 16, fontSize: 13 }}
               testID="bulk-statement-valid-days-input"
+            />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>صفة الموقّع (اختياري — الافتراضي من إعدادات الكليشة)</Text>
+            <TextInput
+              value={stBulkSignatoryTitle}
+              onChangeText={setStBulkSignatoryTitle}
+              placeholder="مثال: مسجل الكلية أو عميد الكلية"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 12, fontSize: 13 }}
+              testID="bulk-statement-signatory-title-input"
+            />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>اسم الموقّع (اختياري — الافتراضي من إعدادات الكليشة)</Text>
+            <TextInput
+              value={stBulkSignatoryName}
+              onChangeText={setStBulkSignatoryName}
+              placeholder="مثال: د. عبدالله عوض بافقيه"
+              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 16, fontSize: 13 }}
+              testID="bulk-statement-signatory-name-input"
             />
             <TouchableOpacity
               style={{ backgroundColor: '#00695c', padding: 13, borderRadius: 10, alignItems: 'center', opacity: stBulkIssuing ? 0.6 : 1 }}

@@ -31,6 +31,7 @@ def _can_issue(user: dict, faculty_id: str) -> bool:
 
 class StatementSettings(BaseModel):
     registrar_name: str = ""
+    signatory_title: str = "مسجل الكلية"
     phones: str = ""
     fax: str = ""
     po_box: str = ""
@@ -46,6 +47,8 @@ class IssueRequest(BaseModel):
     purpose: Optional[str] = None
     base_url: Optional[str] = None
     valid_days: Optional[int] = None
+    signatory_name: Optional[str] = None
+    signatory_title: Optional[str] = None
 
 
 class RevokeRequest(BaseModel):
@@ -124,7 +127,8 @@ async def _safe_dept(db, student: dict):
         return None
 
 
-async def _issue_core(db, student: dict, current_user: dict, nationality, purpose, valid_days, base_url) -> dict:
+async def _issue_core(db, student: dict, current_user: dict, nationality, purpose, valid_days, base_url,
+                      signatory_name=None, signatory_title=None) -> dict:
     dept = await _safe_dept(db, student)
     faculty_id = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
     if not _can_issue(current_user, faculty_id):
@@ -176,6 +180,8 @@ async def _issue_core(db, student: dict, current_user: dict, nationality, purpos
         "academic_year": academic_year_display,
         "student_status": student.get("status", "active"),
         "purpose": (purpose or "").strip(),
+        "signatory_name": (signatory_name or "").strip(),
+        "signatory_title": (signatory_title or "").strip(),
         "verify_token": token,
         "verify_url": verify_url,
         "issued_by": current_user.get("id", ""),
@@ -197,7 +203,8 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
     student = await db.students.find_one({"_id": ObjectId(data.student_id)})
     if not student:
         raise HTTPException(status_code=404, detail="الطالب غير موجود")
-    doc = await _issue_core(db, student, current_user, data.nationality, data.purpose, data.valid_days, data.base_url)
+    doc = await _issue_core(db, student, current_user, data.nationality, data.purpose, data.valid_days, data.base_url,
+                            signatory_name=data.signatory_name, signatory_title=data.signatory_title)
     return {"id": doc["inserted_id"], "number": doc["number_display"], "verify_url": doc["verify_url"], "token": doc["verify_token"]}
 
 
@@ -206,6 +213,8 @@ class BulkIssueRequest(BaseModel):
     purpose: Optional[str] = None
     valid_days: Optional[int] = None
     base_url: Optional[str] = None
+    signatory_name: Optional[str] = None
+    signatory_title: Optional[str] = None
 
 
 @router.post("/statements/bulk-issue")
@@ -239,7 +248,8 @@ async def bulk_issue_statements(data: BulkIssueRequest, current_user: dict = Dep
     settings_cache = {}
     for s in students:
         try:
-            doc = await _issue_core(db, s, current_user, None, data.purpose, data.valid_days, data.base_url)
+            doc = await _issue_core(db, s, current_user, None, data.purpose, data.valid_days, data.base_url,
+                                    signatory_name=data.signatory_name, signatory_title=data.signatory_title)
             fid = doc.get("faculty_id", "")
             if fid not in settings_cache:
                 settings_cache[fid] = await db.statement_settings.find_one({"_id": f"faculty_{fid}"}) or {}
@@ -453,10 +463,12 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
         c.drawCentredString(W / 2, yy, ar(f"وذلك لغرض: {s['purpose']}"))
 
     # ===== التوقيع =====
+    sig_title = (s.get("signatory_title") or settings.get("signatory_title") or "مسجل الكلية").strip()
+    sig_name = (s.get("signatory_name") or settings.get("registrar_name") or "").strip()
     c.setFont("Amiri", 14)
-    c.drawString(30 * mm, yy - 24 * mm, ar("مسجل الكلية"))
+    c.drawString(30 * mm, yy - 24 * mm, ar(sig_title))
     c.setFont("Amiri", 13)
-    c.drawString(24 * mm, yy - 33 * mm, ar(settings.get("registrar_name", "")))
+    c.drawString(24 * mm, yy - 33 * mm, ar(sig_name))
 
     # ===== QR للتحقق =====
     verify_url = s.get("verify_url") or s.get("verify_token", "")

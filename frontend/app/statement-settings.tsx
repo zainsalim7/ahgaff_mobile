@@ -14,6 +14,7 @@ interface Faculty { id: string; name: string; }
 
 const EMPTY = {
   registrar_name: '',
+  signatory_title: 'مسجل الكلية',
   phones: '',
   fax: '',
   po_box: '',
@@ -188,7 +189,13 @@ export default function StatementSettingsScreen() {
           {/* المسجل والترويسة */}
           <Text style={styles.sectionTitle}>بيانات الكليشة</Text>
           <Field
-            label="اسم مسجل الكلية (يظهر تحت التوقيع)"
+            label="صفة الموقّع الافتراضية (مثل: مسجل الكلية أو عميد الكلية)"
+            value={form.signatory_title}
+            onChange={(t: string) => setForm((p) => ({ ...p, signatory_title: t }))}
+            placeholder="مسجل الكلية"
+          />
+          <Field
+            label="اسم الموقّع الافتراضي (يظهر تحت التوقيع)"
             value={form.registrar_name}
             onChange={(t: string) => setForm((p) => ({ ...p, registrar_name: t }))}
             placeholder="مثال: أ. محمد سالم بن يحيى"
