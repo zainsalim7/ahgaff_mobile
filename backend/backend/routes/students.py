@@ -285,6 +285,12 @@ async def update_student(student_id: str, data: StudentUpdate, current_user: dic
         update_data["updated_at"] = datetime.utcnow()
         await db.students.update_one({"_id": ObjectId(student_id)}, {"$set": update_data})
         
+        # 🔄 تغيّر القسم أو المستوى → نظّف تسجيلات مقررات الفصل النشط القديمة
+        if (data.department_id and data.department_id != student.get("department_id")) or \
+           (data.level is not None and data.level != student.get("level")):
+            from .student_transfer import cleanup_active_enrollments
+            await cleanup_active_enrollments(db, student_id)
+        
         # تحديث حساب المستخدم المرتبط
         user_update = {}
         if data.name:

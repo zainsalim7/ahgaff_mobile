@@ -153,6 +153,37 @@ async def _build_snapshot(db, student: dict) -> dict:
     }
 
 
+async def cleanup_active_enrollments(db, student_id: str) -> int:
+    """حذف تسجيلات الفصل النشط للطالب عند تغيير قسمه/نقله.
+
+    يشمل التسجيلات القديمة بلا semester_id إذا كان مقررها في الفصل النشط
+    أو كان المقرر محذوفاً، مع الحفاظ على سجلات الفصول المغلقة (تاريخ أكاديمي).
+    """
+    active_sem = await db.semesters.find_one({"$or": [{"status": "active"}, {"is_active": True}]})
+    active_id = str(active_sem["_id"]) if active_sem else None
+    deleted = 0
+    if active_id:
+        res = await db.enrollments.delete_many({"student_id": student_id, "semester_id": active_id})
+        deleted += res.deleted_count
+    legacy = await db.enrollments.find({
+        "student_id": student_id,
+        "$or": [
+            {"semester_id": None},
+            {"semester_id": ""},
+            {"semester_id": {"$exists": False}},
+        ],
+    }).to_list(1000)
+    for e in legacy:
+        cid = str(e.get("course_id") or "")
+        course = None
+        if cid and ObjectId.is_valid(cid):
+            course = await db.courses.find_one({"_id": ObjectId(cid)}, {"semester_id": 1})
+        if course is None or (active_id and str(course.get("semester_id") or "") == active_id):
+            await db.enrollments.delete_one({"_id": e["_id"]})
+            deleted += 1
+    return deleted
+
+
 async def _perform_transfer(db, student: dict, target: dict, target_level: int, target_section: str,
                              current_user: dict, reason: Optional[str]) -> dict:
     """
@@ -198,14 +229,9 @@ async def _perform_transfer(db, student: dict, target: dict, target_level: int, 
         }}
     )
 
-    # 3) ألغِ enrollments للفصل النشط (خطته الجديدة تختلف)
+    # 3) ألغِ enrollments للفصل النشط (بما فيها القديمة بلا semester_id — خطته الجديدة تختلف)
     try:
-        active_sem = await db.semesters.find_one({"status": "active"})
-        if active_sem:
-            await db.enrollments.delete_many({
-                "student_id": str(student["_id"]),
-                "semester_id": str(active_sem["_id"]),
-            })
+        await cleanup_active_enrollments(db, str(student["_id"]))
     except Exception:
         pass
 

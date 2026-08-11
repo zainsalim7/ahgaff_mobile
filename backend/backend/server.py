@@ -4216,6 +4216,23 @@ async def update_student(student_id: str, data: StudentUpdate, current_user: dic
             {"_id": ObjectId(student_id)},
             {"$set": update_data}
         )
+        # 🔄 تغيّر القسم أو المستوى → نظّف تسجيلات مقررات الفصل النشط القديمة
+        _dept_changed = "department_id" in update_data and update_data["department_id"] != student.get("department_id")
+        _level_changed = "level" in update_data and update_data["level"] != student.get("level")
+        if _dept_changed or _level_changed:
+            from routes.student_transfer import cleanup_active_enrollments
+            removed = await cleanup_active_enrollments(db, student_id)
+            if removed:
+                update_data["_enrollments_cleaned"] = removed
+        # مزامنة قسم حساب المستخدم المرتبط
+        if _dept_changed and student.get("user_id"):
+            try:
+                await db.users.update_one(
+                    {"_id": ObjectId(student["user_id"])},
+                    {"$set": {"department_id": update_data["department_id"]}}
+                )
+            except Exception:
+                pass
         await log_activity(current_user, "update_student", "student", student_id, student.get("full_name", ""), update_data)
     
     updated = await db.students.find_one({"_id": ObjectId(student_id)})
