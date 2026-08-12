@@ -325,11 +325,9 @@ export default function WeeklySchedulePage() {
   const [genLecPreview, setGenLecPreview] = useState<any>(null);
   const [genLecLoading, setGenLecLoading] = useState(false);
   const [resyncLoading, setResyncLoading] = useState(false);
-  const [resyncMsg, setResyncMsg] = useState('');
 
   const runResyncTimes = async () => {
     setResyncLoading(true);
-    setResyncMsg('');
     try {
       const preview = await api.post('/weekly-schedule/resync-lecture-times', {
         faculty_id: selectedFaculty,
@@ -338,7 +336,7 @@ export default function WeeklySchedulePage() {
       });
       const cnt = preview.data?.to_update || 0;
       if (cnt === 0) {
-        setResyncMsg('✅ كل أوقات المحاضرات المولدة مطابقة للفترات الحالية — لا شيء يحتاج تصحيحاً');
+        window.alert('✅ كل أوقات المحاضرات المولدة مطابقة للفترات الحالية — لا شيء يحتاج تصحيحاً');
         return;
       }
       const patterns = (preview.data?.patterns || []).map((p: any) => `• ${p.change} (${p.count} محاضرة)`).join('\n');
@@ -351,9 +349,9 @@ export default function WeeklySchedulePage() {
         department_id: selectedDept || null,
         dry_run: false,
       });
-      setResyncMsg(`✅ ${res.data?.message || 'تمت المزامنة'}`);
+      window.alert(`✅ ${res.data?.message || 'تمت المزامنة'}`);
     } catch (e: any) {
-      setResyncMsg(`❌ ${e?.response?.data?.detail || 'فشلت المزامنة'}`);
+      window.alert(`❌ ${e?.response?.data?.detail || 'فشلت المزامنة'}`);
     } finally { setResyncLoading(false); }
   };
 
@@ -912,6 +910,17 @@ export default function WeeklySchedulePage() {
                     >
                       <Ionicons name="calendar" size={16} color="#fff" />
                       <Text style={st.btnText}>توليد المحاضرات</Text>
+                    </TouchableOpacity>
+                  )}
+                  {Platform.OS === 'web' && !!selectedFaculty && (
+                    <TouchableOpacity
+                      style={[st.btn, { backgroundColor: '#ef6c00' }]}
+                      onPress={runResyncTimes}
+                      disabled={resyncLoading}
+                      testID="resync-lecture-times-btn"
+                    >
+                      <Ionicons name="time" size={16} color="#fff" />
+                      <Text style={st.btnText}>{resyncLoading ? 'جاري الفحص...' : 'مزامنة الأوقات'}</Text>
                     </TouchableOpacity>
                   )}
                   {viewMode === 'section' && schedule.length > 0 && (
@@ -1779,16 +1788,6 @@ export default function WeeklySchedulePage() {
             </div>
             <div style={{ fontSize: 10, color: '#999', marginTop: 8, textAlign: 'center' }}>
               التأكيد متاح بعد المعاينة فقط — لضمان مراجعتك للأرقام قبل الإنشاء
-            </div>
-            <div style={{ borderTop: '1px dashed #ddd', marginTop: 12, paddingTop: 10 }}>
-              <div style={{ fontSize: 11, color: '#666', marginBottom: 6, lineHeight: 1.7 }}>
-                🔧 ولّدت محاضرات بأوقات خاطئة (مثل 11:30 مساءً بدل صباحاً)؟ صحّح أوقات الفترات من «إعدادات الفترات الزمنية» ثم اضغط:
-              </div>
-              <button onClick={runResyncTimes} disabled={resyncLoading} data-testid="resync-lecture-times-btn"
-                style={{ width: '100%', padding: '9px', borderRadius: 8, border: '1px solid #ef6c00', backgroundColor: '#fff3e0', color: '#e65100', cursor: 'pointer', fontWeight: 800, fontSize: 12 }}>
-                {resyncLoading ? 'جاري الفحص...' : '🕑 مزامنة أوقات المحاضرات المولدة مع الفترات الحالية'}
-              </button>
-              {resyncMsg ? <div style={{ fontSize: 12, fontWeight: 700, marginTop: 8, color: resyncMsg.startsWith('❌') ? '#c62828' : '#2e7d32', whiteSpace: 'pre-line' }} data-testid="resync-result">{resyncMsg}</div> : null}
             </div>
           </div>
         </div>

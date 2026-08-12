@@ -49,7 +49,29 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [roomModal, setRoomModal] = useState<any>(null);          // 🏠 نافذة تغيير قاعة خانة موجودة
   const [roomModalRooms, setRoomModalRooms] = useState<any[] | null>(null);
   const [newRoomId, setNewRoomId] = useState('');
+  const [durationModal, setDurationModal] = useState<any>(null);   // ⏱ نافذة المدة المستقلة
   const [newDuration, setNewDuration] = useState('');
+
+  const openDurationModal = () => {
+    if (!selected) return;
+    setNewDuration(selected.duration_minutes ? String(selected.duration_minutes) : '');
+    setDurationModal(selected);
+  };
+
+  const confirmDurationChange = async () => {
+    if (!durationModal) return;
+    setBusy(true);
+    try {
+      const res = await api.put(`/weekly-schedule/${durationModal.id}`, {
+        duration_minutes: newDuration ? parseInt(newDuration, 10) : 0,
+      });
+      showMsg('success', `✅ ${res.data?.message || 'تم تحديث المدة'}`);
+      setDurationModal(null);
+      setSelected(null);
+      await load();
+    } catch (e: any) { handleConflictError(e); }
+    finally { setBusy(false); }
+  };
   const [validMap, setValidMap] = useState<Record<string, { valid: boolean; reasons: string[] }> | null>(null);
   const [placing, setPlacing] = useState<any>(null); // مقرر غير مدرج قيد الإدراج
   const [mergePrompt, setMergePrompt] = useState<{ a: any; b: any } | null>(null); // 🔗 تأكيد دمج محاضرتين مشتركتين
@@ -402,7 +424,6 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const openRoomModal = () => {
     if (!selected) return;
     setNewRoomId(selected.room_id || '');
-    setNewDuration(selected.duration_minutes ? String(selected.duration_minutes) : '');
     setRoomModalRooms(null);
     setRoomModal(selected);
     api.get('/weekly-schedule/free-rooms', { params: { faculty_id: facultyId, day: selected.day, slot_number: selected.slot_number } })
@@ -414,10 +435,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
     if (!roomModal) return;
     setBusy(true);
     try {
-      const payload: any = { room_id: newRoomId };
-      const oldDur = roomModal.duration_minutes ? String(roomModal.duration_minutes) : '';
-      if (newDuration !== oldDur) payload.duration_minutes = newDuration ? parseInt(newDuration, 10) : 0;
-      const res = await api.put(`/weekly-schedule/${roomModal.id}`, payload);
+      const res = await api.put(`/weekly-schedule/${roomModal.id}`, { room_id: newRoomId });
       showMsg('success', `✅ ${res.data?.message || 'تم تغيير القاعة'}`);
       setRoomModal(null);
       setSelected(null);
@@ -528,6 +546,17 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           >
             <Ionicons name={editMode ? 'close-circle' : 'move'} size={15} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{editMode ? 'إنهاء وضع التحرير' : 'وضع التحرير (نقل/تبديل)'}</Text>
+          </TouchableOpacity>
+        )}
+        {editMode && selected && (
+          <TouchableOpacity
+            onPress={openDurationModal}
+            disabled={busy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#ef6c00' }}
+            testID="master-change-duration-btn"
+          >
+            <Ionicons name="time" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>المدة</Text>
           </TouchableOpacity>
         )}
         {editMode && selected && (
@@ -826,7 +855,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
             backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 420, maxWidth: '92%', maxHeight: '80vh', overflowY: 'auto',
             boxShadow: '0 8px 32px rgba(0,0,0,0.25)', direction: 'rtl',
           }} data-testid="master-room-modal">
-            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>🏠 تغيير القاعة والمدة</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>🏠 تغيير القاعة</div>
             <div style={{ fontSize: 12.5, color: '#5b6678', marginBottom: 4, textAlign: 'right' }}>
               <b>{roomModal.course_name}</b> — {roomModal.day} · الفترة {roomModal.slot_number}
             </div>
@@ -860,28 +889,58 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 )}
               </>
             )}
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginTop: 12, marginBottom: 6, textAlign: 'right' }}>
-              ⏱ مدة المحاضرة عند التوليد:
-            </div>
-            <select value={newDuration} onChange={(ev: any) => setNewDuration(ev.target.value)} style={{
-              width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, direction: 'rtl', backgroundColor: '#f7f9fc',
-            }} data-testid="master-duration-select">
-              <option value="">حسب الفترة (افتراضي)</option>
-              <option value="60">ساعة (60 دقيقة)</option>
-              <option value="90">ساعة ونصف (90 دقيقة)</option>
-              <option value="120">ساعتان (120 دقيقة)</option>
-              <option value="45">45 دقيقة</option>
-              <option value="180">3 ساعات (180 دقيقة)</option>
-            </select>
-            <div style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginTop: 4 }}>
-              تؤثر على وقت نهاية المحاضرات عند التوليد — البداية تبقى بداية الفترة
-            </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={confirmRoomChange} disabled={busy} style={{
                 flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
                 backgroundColor: '#6a1b9a', color: '#fff', fontSize: 13.5, fontWeight: 700,
-              }} data-testid="confirm-room-change-btn">{busy ? 'جاري الحفظ...' : 'حفظ التغييرات'}</button>
+              }} data-testid="confirm-room-change-btn">{busy ? 'جاري الحفظ...' : 'تغيير القاعة'}</button>
               <button onClick={() => setRoomModal(null)} style={{
+                flex: 0.5, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
+                backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
+              }}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⏱ نافذة تعديل مدة المحاضرة */}
+      {durationModal && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 99999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setDurationModal(null)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 400, maxWidth: '92%',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25)', direction: 'rtl',
+          }} data-testid="master-duration-modal">
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>⏱ مدة المحاضرة</div>
+            <div style={{ fontSize: 12.5, color: '#5b6678', marginBottom: 10, textAlign: 'right' }}>
+              <b>{durationModal.course_name}</b> — {durationModal.day} · الفترة {durationModal.slot_number}
+            </div>
+            {durationModal.merge_group_id && (
+              <div style={{ fontSize: 11.5, color: '#e65100', backgroundColor: '#fff3e0', borderRadius: 8, padding: '6px 10px', marginBottom: 10, textAlign: 'right' }}>
+                🔗 محاضرة مشتركة — المدة ستسري على كل الشُعب المشتركة
+              </div>
+            )}
+            <select value={newDuration} onChange={(ev: any) => setNewDuration(ev.target.value)} style={{
+              width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, direction: 'rtl', backgroundColor: '#f7f9fc',
+            }} data-testid="master-duration-select">
+              <option value="">حسب الفترة (افتراضي)</option>
+              <option value="45">45 دقيقة</option>
+              <option value="60">ساعة (60 دقيقة)</option>
+              <option value="90">ساعة ونصف (90 دقيقة)</option>
+              <option value="120">ساعتان (120 دقيقة)</option>
+              <option value="180">3 ساعات (180 دقيقة)</option>
+            </select>
+            <div style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginTop: 5 }}>
+              تؤثر على وقت نهاية المحاضرات عند التوليد — البداية تبقى بداية الفترة
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button onClick={confirmDurationChange} disabled={busy} style={{
+                flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                backgroundColor: '#ef6c00', color: '#fff', fontSize: 13.5, fontWeight: 700,
+              }} data-testid="confirm-duration-change-btn">{busy ? 'جاري الحفظ...' : 'حفظ المدة'}</button>
+              <button onClick={() => setDurationModal(null)} style={{
                 flex: 0.5, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
                 backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
               }}>إلغاء</button>

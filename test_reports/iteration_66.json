@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend-only verification of two refactors: (1) standalone 'مزامنة الأوقات' toolbar button on /weekly-schedule, (2) separated 'المدة' button/modal from 'تغيير القاعة' modal in العرض الشامل. Logged in via real UI (admin/admin123), faculty كلية الشريعة والقانون. All 7 requested scenarios PASS. Found 1 real state-leak bug: stale newDuration from the duration modal is still sent by confirmRoomChange, so changing a room afterwards silently applies the previously chosen duration to a different lecture (reproduced).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MasterScheduleView.confirmRoomChange", "issue": "Shared state `newDuration` is no longer reset when opening the room modal. Repro: set duration 120 on lecture A via master-duration-modal → select another lecture B (no duration) → open master-room-modal → change room → B gets ⏱120د applied silently (payload includes duration_minutes because newDuration='120' != oldDur=''). Fix: remove the duration_minutes logic from confirmRoomChange (line ~438-440) now that duration has its own modal, or reset setNewDuration('') in openRoomModal.", "selector": "[data-testid=\"confirm-room-change-btn\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "weekly-schedule toolbar / master view", "issues": ["Success banner text after saving duration is generic '✅ تم التحديث' (backend message) rather than something duration-specific; acceptable but less informative.", "Toolbar in master view is dense (10+ colored buttons in two rows); minor visual noise only."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix duration leak in MasterScheduleView.confirmRoomChange (drop duration_minutes from the room payload or reset newDuration in openRoomModal)."
+  ],
+  "critical_code_review_comments": [
+    "MasterScheduleView.tsx: `newDuration` is shared between the (now separate) duration modal and the legacy room-change payload — leads to cross-lecture data mutation. Separate the state (e.g. roomModalDuration removed entirely).",
+    "weekly-schedule.tsx is still >2200 lines; consider extracting modals/toolbar.",
+    "runResyncTimes relies on window.confirm/alert (web-only); the button is correctly gated with Platform.OS === 'web'."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "not tested (skipped per request)", "frontend": "100% of requested scenarios (7/7)" },
+  "seed_data_creation": "none new. Test mutations reverted: duration badges removed from both touched lectures; room of الفقه الإسلامي (السبت ف1 and ف2) now ق305 instead of ق202 (regression test side-effect, functionally valid).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123",
+  "context_for_next_testing_agent": "Verified: resync-lecture-times-btn exists once in toolbar (orange rgb(239,108,0)), standalone (no modal ancestor), visible for any selected faculty; clicking it produced alert '✅ كل أوقات المحاضرات المولدة مطابقة للفترات الحالية — لا شيء يحتاج تصحيحاً' (dialog handler required). Generate-lectures modal (generate-lectures-btn, needs section view + dept selected) no longer contains 'ولّدت محاضرات بأوقات خاطئة'. Master view: click text 'العرض الشامل' → master-edit-mode-btn → click master-entry-<id> (e.g. 6a7ceda7b288b439ac26922a = الفقه الإسلامي السبت ف1) → both master-change-duration-btn (orange) and master-change-room-btn (purple) render. Duration modal options: حسب الفترة/45/60/90/120/180; save 90 → cell shows '⏱90د'; reopen shows 90 preselected; select '' → badge removed. Room modal contains no duration select and room change works (ق202→ق305). Only defect: duration leak via confirmRoomChange (see ui_bugs).",
+  "rca_of_the_issue": "openRoomModal does not reset the shared `newDuration` state, and confirmRoomChange still compares newDuration to the selected slot's duration and appends duration_minutes to the PUT payload. After using the new standalone duration modal, this stale value is applied to the next room change on a different lecture."
+}
