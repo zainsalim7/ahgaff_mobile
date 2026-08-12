@@ -815,6 +815,7 @@ async def get_weekly_schedule(
             "teacher_name": teacher.get("full_name", ""),
             "room_id": s.get("room_id", ""),
             "room_name": room.get("name", ""),
+            "duration_minutes": s.get("duration_minutes"),
             "merge_group_id": s.get("merge_group_id", ""),
             "merged_with": _merge_labels(s),
         })
@@ -1982,6 +1983,8 @@ async def export_visual_pdf(
                             line += f"\n{teacher.get('full_name','')}"
                         if room.get("name") and not room_id:
                             line += f"\n[{room.get('name','')}]"
+                        if s.get("duration_minutes") and ts.get("start_time"):
+                            line += f"\n({ts.get('start_time')} - {_add_minutes(ts.get('start_time'), s['duration_minutes'])})"
                         sec = s.get("section")
                         if sec and not section and not hide_section:
                             line += f" - شعبة {sec}"
@@ -2207,6 +2210,8 @@ async def export_visual_excel(
                             line += f"\n{teacher.get('full_name','')}"
                         if room.get("name") and not room_id:
                             line += f"\n[{room.get('name','')}]"
+                        if s.get("duration_minutes") and ts.get("start_time"):
+                            line += f"\n⏱ {ts.get('start_time')} - {_add_minutes(ts.get('start_time'), s['duration_minutes'])}"
                         sec = s.get("section")
                         if sec and not section and not hide_section:
                             line += f" - ش/{sec}"
@@ -3575,6 +3580,8 @@ async def export_master_pdf(
                     extra = _short_teacher(it["teacher_name"])
                     if it.get("room_name"):
                         extra += f" · {it['room_name']}"
+                    if it.get("duration_minutes") and ts.get("start_time"):
+                        extra += f"\n({ts.get('start_time')}-{_add_minutes(ts.get('start_time'), it['duration_minutes'])})"
                     row[col] = ar(f"{txt}\n{extra}")
                     bg = _master_course_color(it["course_id"])
                     fg = _master_text_color(bg)
@@ -3773,6 +3780,8 @@ async def export_master_excel(
                     extra = _short_teacher(it["teacher_name"])
                     if it.get("room_name"):
                         extra += f" · {it['room_name']}"
+                    if it.get("duration_minutes") and ts.get("start_time"):
+                        extra += f"\n⏱ {ts.get('start_time')} - {_add_minutes(ts.get('start_time'), it['duration_minutes'])}"
                     cell.value = f"{it['course_name']}\n{extra}"
                     bg = _master_course_color(it["course_id"])[1:].upper()
                     fg = _master_text_color("#" + bg)[1:].upper()

@@ -1,0 +1,25 @@
+{
+  "summary": "Backend-only verification of the custom lecture duration (duration_minutes) export fix in /app/backend/backend/routes/weekly_schedule.py. Created pytest suite /app/backend/tests/test_export_custom_duration.py (14 tests, 13 pass). All 4 export endpoints (export-visual/pdf, export-visual/excel, master-view/export/pdf, master-view/export/excel) return 200 with valid PDF/XLSX binaries and correctly show the computed range for the seeded slot (عقيدة, السبت, slot 4, 75 mins, start 13:15 -> 13:15 - 14:30). Verified unit math of _add_minutes (incl. midnight wrap and invalid input fallback). Regression confirmed: exactly ONE cell carries the time marker (the seeded slot); all other slots show no extra time line. PUT /api/weekly-schedule/{slot_id} round-trip works: duration_minutes=45 persists (2 marked cells in export), duration_minutes=0 clears it (back to 1 marked cell). Filtered exports (department_id + level) and dept-filtered master PDF render fine; unauthenticated export returns 403; unknown faculty returns 400 with Arabic message (no ReportLab crash). No 500s and no ReportLab tracebacks in backend logs. Seeded عقيدة slot left intact at duration_minutes=75 and no schedule data deleted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/weekly-schedule", "issue": "List endpoint response does NOT include duration_minutes (weekly_schedule.py ~line 802 result dict omits it), while /master-view entries do include it. Any client reading slots from this endpoint cannot display or round-trip the custom duration; risk of overwriting it on edit. Recommend adding 'duration_minutes': s.get('duration_minutes') to the serialized slot."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_export_custom_duration.py", "/app/test_reports/pytest/pytest_results_dur.xml"],
+  "action_items": ["Add duration_minutes to the GET /api/weekly-schedule slot serialization for consistency with master-view (only remaining failing test)."],
+  "critical_code_review_comments": [
+    "The 4 export sites duplicate the same 'if duration_minutes and start_time -> append range' logic with 3 slightly different formats ('(a - b)', '⏱ a - b', '(a-b)'); extract a single helper to avoid future drift.",
+    "Master exports render only items[0] per cell (it = items[0]); if two slots share a cell, a second slot's custom duration is silently dropped in the export.",
+    "weekly_schedule.py is ~4000 lines — should be split into modules (crud / master-view / exports)."
+  ],
+  "updated_files": ["/app/backend/tests/test_export_custom_duration.py"],
+  "success_rate": {"backend": "93% (13/14)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "No new data created. Temporarily set duration_minutes=45 on slot 6a4f4e6a45ac758c5d717a88 then cleared to 0 (verified None in DB). Seeded slot 6a21981ee6cc2d7205c6c1bd kept at 75.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123",
+  "context_for_next_testing_agent": "Reusable suite: /app/backend/tests/test_export_custom_duration.py (constants FACULTY_ID=698e4f9297fef774e66e93a4, SEEDED_SLOT_ID=6a21981ee6cc2d7205c6c1bd expecting 13:15-14:30). PDF Arabic text extraction may reverse the range order; tests accept both. Excel marker '⏱' count is used to assert regression on non-duration slots (currently exactly 1).",
+  "rca_of_the_issue": "Original bug: exports ignored per-slot duration_minutes. Fix now appends the computed range using _add_minutes(start_time, duration_minutes) in all 4 export builders; verified correct for the 75-min case and for wrap-around/invalid inputs. Remaining gap is only the list endpoint not surfacing duration_minutes."
+}

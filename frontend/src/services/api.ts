@@ -27,6 +27,11 @@ const getApiUrl = () => {
     if (origin.includes('preview.emergentagent.com')) {
       return origin;
     }
+
+    // إذا كنا على Emergent production (emergent.host)
+    if (origin.includes('emergent.host')) {
+      return origin;
+    }
     
     // إذا كنا على Railway (ahgaffweb)، استخدم Backend URL الثابت
     if (origin.includes('railway.app')) {
