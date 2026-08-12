@@ -45,6 +45,9 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [addCourseId, setAddCourseId] = useState('');
   const [addRoomId, setAddRoomId] = useState('');
   const [slotRooms, setSlotRooms] = useState<any[] | null>(null); // قاعات (يوم/فترة) مع حالة الانشغال
+  const [roomModal, setRoomModal] = useState<any>(null);          // 🏠 نافذة تغيير قاعة خانة موجودة
+  const [roomModalRooms, setRoomModalRooms] = useState<any[] | null>(null);
+  const [newRoomId, setNewRoomId] = useState('');
   const [validMap, setValidMap] = useState<Record<string, { valid: boolean; reasons: string[] }> | null>(null);
   const [placing, setPlacing] = useState<any>(null); // مقرر غير مدرج قيد الإدراج
   const [mergePrompt, setMergePrompt] = useState<{ a: any; b: any } | null>(null); // 🔗 تأكيد دمج محاضرتين مشتركتين
@@ -390,6 +393,30 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
     finally { setBusy(false); }
   };
 
+  // 🏠 تغيير قاعة المحاضرة المحددة
+  const openRoomModal = () => {
+    if (!selected) return;
+    setNewRoomId(selected.room_id || '');
+    setRoomModalRooms(null);
+    setRoomModal(selected);
+    api.get('/weekly-schedule/free-rooms', { params: { faculty_id: facultyId, day: selected.day, slot_number: selected.slot_number } })
+      .then(res => setRoomModalRooms(res.data || []))
+      .catch(() => setRoomModalRooms([]));
+  };
+
+  const confirmRoomChange = async () => {
+    if (!roomModal) return;
+    setBusy(true);
+    try {
+      const res = await api.put(`/weekly-schedule/${roomModal.id}`, { room_id: newRoomId });
+      showMsg('success', `✅ ${res.data?.message || 'تم تغيير القاعة'}`);
+      setRoomModal(null);
+      setSelected(null);
+      await load();
+    } catch (e: any) { handleConflictError(e); }
+    finally { setBusy(false); }
+  };
+
   // حذف المحاضرة المحددة من الجدول (تُحرر الفترة والقاعة والمعلم ويعود المقرر لغير المدرجة)
   const deleteSelected = async () => {
     if (!selected) return;
@@ -496,6 +523,17 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
         )}
         {editMode && selected && (
           <TouchableOpacity
+            onPress={openRoomModal}
+            disabled={busy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#6a1b9a' }}
+            testID="master-change-room-btn"
+          >
+            <Ionicons name="home" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>تغيير القاعة</Text>
+          </TouchableOpacity>
+        )}
+        {editMode && selected && (
+          <TouchableOpacity
             onPress={deleteSelected}
             disabled={busy}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#b71c1c' }}
@@ -509,7 +547,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           <View style={{ backgroundColor: '#fff8e1', borderWidth: 1, borderColor: '#ffe082', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}>
             <Text style={{ fontSize: 11, color: '#e65100', fontWeight: '600' }}>
               {selected
-                ? `♟️ محدد: ${selected.course_name} — انقر خلية فارغة للنقل أو محاضرة أخرى للتبديل أو زر الحذف`
+                ? `♟️ محدد: ${selected.course_name} — انقر خلية فارغة للنقل أو محاضرة أخرى للتبديل • أو زر تغيير القاعة/الحذف`
                 : '♟️ انقر محاضرة لتحديدها (نقل/تبديل/حذف) • أو انقر خلية فارغة لإضافة مقرر غير مدرج'}
             </Text>
           </View>
@@ -748,6 +786,64 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 backgroundColor: addCourseId ? '#2e7d32' : '#c8d2c9', color: '#fff', fontSize: 13.5, fontWeight: 700,
               }} data-testid="confirm-add-slot-btn">{busy ? 'جاري الإضافة...' : 'إضافة المحاضرة'}</button>
               <button onClick={() => setAddModal(null)} style={{
+                flex: 0.5, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
+                backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
+              }}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🏠 نافذة تغيير قاعة خانة موجودة */}
+      {roomModal && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 1300,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setRoomModal(null)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 420, maxWidth: '92%', maxHeight: '80vh', overflowY: 'auto',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25)', direction: 'rtl',
+          }} data-testid="master-room-modal">
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>🏠 تغيير القاعة</div>
+            <div style={{ fontSize: 12.5, color: '#5b6678', marginBottom: 4, textAlign: 'right' }}>
+              <b>{roomModal.course_name}</b> — {roomModal.day} · الفترة {roomModal.slot_number}
+            </div>
+            <div style={{ fontSize: 12, color: '#5b6678', marginBottom: 10, textAlign: 'right' }}>
+              القاعة الحالية: <b>{roomModal.room_name || 'بدون قاعة'}</b>
+            </div>
+            {roomModal.merge_group_id && (
+              <div style={{ fontSize: 11.5, color: '#e65100', backgroundColor: '#fff3e0', borderRadius: 8, padding: '6px 10px', marginBottom: 10, textAlign: 'right' }}>
+                🔗 محاضرة مشتركة — القاعة الجديدة ستسري على كل الشُعب المشتركة معها
+              </div>
+            )}
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6, textAlign: 'right' }}>
+              القاعة الجديدة (الفارغة في هذا الوقت فقط):
+            </div>
+            {roomModalRooms === null ? (
+              <div style={{ fontSize: 11.5, color: '#888', textAlign: 'right', padding: '6px 0' }}>جاري فحص توفر القاعات...</div>
+            ) : (
+              <>
+                <select value={newRoomId} onChange={(ev: any) => setNewRoomId(ev.target.value)} style={{
+                  width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, direction: 'rtl', backgroundColor: '#f7f9fc',
+                }} data-testid="master-room-select">
+                  <option value="">-- بدون قاعة --</option>
+                  {roomModalRooms.filter((r: any) => !r.busy || r.id === roomModal.room_id).map((r: any) => (
+                    <option key={r.id} value={r.id}>{r.name}{r.building ? ` (${r.building})` : ''}{r.capacity ? ` — سعة ${r.capacity}` : ''}</option>
+                  ))}
+                </select>
+                {roomModalRooms.filter((r: any) => r.busy && r.id !== roomModal.room_id).length > 0 && (
+                  <div style={{ fontSize: 10.5, color: '#e65100', textAlign: 'right', marginTop: 5 }}>
+                    🔒 استُثنيت {roomModalRooms.filter((r: any) => r.busy && r.id !== roomModal.room_id).length} قاعة مشغولة في هذا الوقت
+                  </div>
+                )}
+              </>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button onClick={confirmRoomChange} disabled={busy} style={{
+                flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                backgroundColor: '#6a1b9a', color: '#fff', fontSize: 13.5, fontWeight: 700,
+              }} data-testid="confirm-room-change-btn">{busy ? 'جاري الحفظ...' : 'تغيير القاعة'}</button>
+              <button onClick={() => setRoomModal(null)} style={{
                 flex: 0.5, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
                 backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
               }}>إلغاء</button>

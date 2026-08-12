@@ -1,0 +1,25 @@
+{
+  "summary": "Frontend-only test of the new 'تغيير القاعة' (change room) feature in MasterScheduleView. Real UI login as admin/admin123, opened /weekly-schedule → العرض الشامل (view-mode-master) → selected faculty كلية الشريعة والقانون (12 lectures / 3 sections). Verified: edit-mode toggle, lecture selection, purple master-change-room-btn appearance, room modal content (course/day/slot + current room + free-rooms-only dropdown with 'بدون قاعة' + '🔒 استُثنيت 1 قاعة مشغولة' note), successful change ق202→ق305 with success banner '✅ تم التحديث' and immediate cell update, revert back to ق202, persistence verified after page reload, and move regression (drag-by-click to empty cell in same section row + move back). All state restored to original.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "MasterScheduleView room modal (master-room-modal)", "issues": ["Dropdown (master-room-select) defaults to '-- بدون قاعة --' instead of preselecting the current room; if the admin clicks 'تغيير القاعة' without touching the select, the room is silently removed. Suggest defaulting newRoomId to selected.room_id (or disabling confirm until a change is made)."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": ["Optional UX: preselect the current room in master-room-select so confirming without a selection cannot accidentally clear the room."],
+  "critical_code_review_comments": [
+    "confirmRoomChange sends room_id: '' for 'بدون قاعة' — backend accepted it; ensure PUT treats empty string as clearing the room (verified indirectly, not exercised in UI test).",
+    "Repeated console error on this screen: 'Unexpected text node: . A text node cannot be a child of a <View>' (react-native-web) — harmless but noisy; a stray whitespace/string child exists in one of the weekly-schedule views."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (per request)", "frontend": "100% (6/6 requested scenarios passed)"},
+  "seed_data_creation": "None. Modified and reverted room of entry 6a627a481379f325e1576e41 (الفقه الإسلامي, السبت ف1) and moved/moved-back the same lecture; final state identical to initial (ق202, السبت ف1).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123",
+  "context_for_next_testing_agent": "Login must be via real UI (click the 'تسجيل الدخول' text button; Enter does not submit). Master view requires selecting faculty in the FIRST native <select> (label 'كلية الشريعة والقانون ' with trailing space, no data-testid on that Picker). Cells: master-cell-{groupIndex}-{arabicDay}-{slot}; entries: master-entry-{id}. Room change flow testids: master-edit-mode-btn → master-entry-* → master-change-room-btn → master-room-modal → master-room-select → confirm-room-change-btn. Success banner: master-msg-banner.",
+  "rca_of_the_issue": "N/A — feature works end to end; only a minor default-selection UX nit in the room dropdown."
+}
