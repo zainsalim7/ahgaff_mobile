@@ -503,8 +503,9 @@ export default function WeeklySchedulePage() {
   // ============= Visual Export =============
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel'>('pdf');
-  const [exportScope, setExportScope] = useState<'all' | 'teacher' | 'room' | 'section' | 'department'>('all');
+  const [exportScope, setExportScope] = useState<'all' | 'teacher' | 'all_teachers' | 'room' | 'section' | 'department'>('all');
   const [exportTeacherId, setExportTeacherId] = useState('');
+  const [exportTeacherSearch, setExportTeacherSearch] = useState('');
   const [exportRoomId, setExportRoomId] = useState('');
 
   const handleExport = async () => {
@@ -514,6 +515,8 @@ export default function WeeklySchedulePage() {
 
     if (exportScope === 'teacher' && exportTeacherId) {
       params.teacher_id = exportTeacherId;
+    } else if (exportScope === 'all_teachers') {
+      params.per_teacher = true;
     } else if (exportScope === 'room' && exportRoomId) {
       params.room_id = exportRoomId;
     } else if (exportScope === 'section') {
@@ -2065,9 +2068,10 @@ export default function WeeklySchedulePage() {
                 { v: 'department', l: '🏛 حسب القسم' },
                 { v: 'section', l: '👨‍🎓 شعبة/مستوى' },
                 { v: 'teacher', l: '👨‍🏫 معلم محدد' },
+                { v: 'all_teachers', l: '👥 كل الأساتذة (جدول لكل أستاذ)' },
                 { v: 'room', l: '🏠 قاعة محددة' },
               ].map(o => (
-                <button key={o.v} onClick={() => setExportScope(o.v as any)}
+                <button key={o.v} onClick={() => setExportScope(o.v as any)} data-testid={`export-scope-${o.v}`}
                   style={{ padding: 8, borderRadius: 6, border: `1.5px solid ${exportScope === o.v ? '#00838f' : '#e0e0e0'}`, backgroundColor: exportScope === o.v ? '#e0f2f1' : '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
                   {o.l}
                 </button>
@@ -2077,10 +2081,21 @@ export default function WeeklySchedulePage() {
             {exportScope === 'teacher' && (
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 12, fontWeight: 700, color: '#444' }}>اختر المعلم</label>
+                <input
+                  value={exportTeacherSearch}
+                  onChange={(e: any) => setExportTeacherSearch(e.target.value)}
+                  placeholder="🔍 ابحث باسم المعلم..."
+                  data-testid="export-teacher-search"
+                  style={{ width: '100%', padding: 9, borderRadius: 8, border: '1px solid #ddd', fontSize: 13, marginTop: 4, marginBottom: 6, boxSizing: 'border-box', direction: 'rtl' }}
+                />
                 <select value={exportTeacherId} onChange={(e: any) => setExportTeacherId(e.target.value)}
-                  style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid #ddd', fontSize: 13, marginTop: 4 }}>
+                  size={exportTeacherSearch ? Math.min(6, Math.max(2, allTeachers.filter((t: any) => (t.full_name || '').includes(exportTeacherSearch.trim())).length + 1)) : undefined}
+                  data-testid="export-teacher-select"
+                  style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid #ddd', fontSize: 13 }}>
                   <option value="">-- اختر --</option>
-                  {allTeachers.map((t: any) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                  {allTeachers
+                    .filter((t: any) => !exportTeacherSearch.trim() || (t.full_name || '').includes(exportTeacherSearch.trim()))
+                    .map((t: any) => <option key={t.id} value={t.id}>{t.full_name}</option>)}
                 </select>
               </div>
             )}
@@ -2101,6 +2116,7 @@ export default function WeeklySchedulePage() {
                   exportScope === 'department' ? 'سيتم التصدير حسب القسم المحدد في الفلتر' :
                   exportScope === 'section' ? `سيتم التصدير لـ م${selectedLevel || '?'} شعبة ${selectedSection || '?'}` :
                   exportScope === 'teacher' ? 'تصدير الجدول الأسبوعي لمعلم محدد فقط' :
+                  exportScope === 'all_teachers' ? (selectedDept ? 'جدول مستقل لكل أستاذ في القسم المحدد (صفحة/ورقة لكل أستاذ)' : 'جدول مستقل لكل أستاذ في الكلية (صفحة/ورقة لكل أستاذ) — اختر قسماً من الفلتر لتضييق النطاق') :
                   'تصدير الجدول الأسبوعي لقاعة محددة فقط'}
             </div>
 

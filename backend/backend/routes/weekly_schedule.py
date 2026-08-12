@@ -1823,6 +1823,7 @@ async def export_visual_pdf(
     teacher_id: Optional[str] = None,
     room_id: Optional[str] = None,
     semester_id: Optional[str] = None,
+    per_teacher: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
     """تصدير PDF بتصميم بصري احترافي حسب الفلاتر"""
@@ -1934,7 +1935,7 @@ async def export_visual_pdf(
             m.setdefault((s.get("day") or s.get("day_of_week"), s.get("slot_number")), []).append(s)
         return m
 
-    def make_table(cell_map, hide_section=False):
+    def make_table(cell_map, hide_section=False, suppress_teacher=False):
         # 🔄 الأيام صفوف (عمود "اليوم" في أقصى اليمين) والفترات أعمدة في الأعلى — اتجاه يمين→يسار
         period_headers = [
             ar(f"الفترة {ts.get('slot_number')}\n{ts.get('start_time','')}\n{ts.get('end_time','')}")
@@ -1957,7 +1958,7 @@ async def export_visual_pdf(
                         teacher = teachers_map.get(s.get("teacher_id", ""), {})
                         room = rooms_map.get(s.get("room_id", ""), {})
                         line = course.get("name", "") or course.get("code", "")
-                        if teacher.get("full_name") and not teacher_id:
+                        if teacher.get("full_name") and not teacher_id and not suppress_teacher:
                             line += f"\n{teacher.get('full_name','')}"
                         if room.get("name") and not room_id:
                             line += f"\n[{room.get('name','')}]"
@@ -2001,7 +2002,24 @@ async def export_visual_pdf(
     # 📄 تصدير واسع (كلية/قسم كامل) → صفحة مستقلة لكل شعبة حتى لا تتكدس الخلايا وينهار البناء
     wide = not teacher_id and not room_id and not (level is not None and section)
 
-    if wide and slots:
+    if per_teacher and not teacher_id and slots:
+        # 👨‍🏫 جدول مستقل لكل أستاذ (صفحة لكل أستاذ)
+        tgroups = {}
+        for s in slots:
+            tid = s.get("teacher_id") or ""
+            tgroups.setdefault(tid, []).append(s)
+        def _tname(tid):
+            return teachers_map.get(tid, {}).get("full_name", "") or "بدون أستاذ"
+        tkeys = sorted(tgroups.keys(), key=lambda k: _tname(k))
+        for i, tid in enumerate(tkeys):
+            story.append(Paragraph(ar(f"الأستاذ: {_tname(tid)}"), group_style))
+            story.append(Spacer(1, 0.2*cm))
+            story.append(make_table(build_cell_map(tgroups[tid]), suppress_teacher=True))
+            story.append(Spacer(1, 0.25*cm))
+            story.append(Paragraph(ar(f"عدد المحاضرات الأسبوعية: {len(tgroups[tid])}"), legend_style))
+            if i < len(tkeys) - 1:
+                story.append(PageBreak())
+    elif wide and slots:
         dept_names = {}
         dept_ids = {s.get("department_id") for s in slots if s.get("department_id")}
         if dept_ids:
@@ -2059,6 +2077,7 @@ async def export_visual_excel(
     teacher_id: Optional[str] = None,
     room_id: Optional[str] = None,
     semester_id: Optional[str] = None,
+    per_teacher: bool = False,
     current_user: dict = Depends(get_current_user),
 ):
     """تصدير Excel بنفس فلاتر PDF"""
@@ -2129,7 +2148,7 @@ async def export_visual_excel(
             m.setdefault((s.get("day") or s.get("day_of_week"), s.get("slot_number")), []).append(s)
         return m
 
-    def write_grid(ws, cell_map, sheet_title, hide_section=False):
+    def write_grid(ws, cell_map, sheet_title, hide_section=False, suppress_teacher=False):
         ws.sheet_view.rightToLeft = True
         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
         cell = ws.cell(row=1, column=1, value=sheet_title)
@@ -2164,7 +2183,7 @@ async def export_visual_excel(
                         teacher = teachers_map.get(s.get("teacher_id", ""), {})
                         room = rooms_map.get(s.get("room_id", ""), {})
                         line = course.get("name", "") or course.get("code", "")
-                        if teacher.get("full_name") and not teacher_id:
+                        if teacher.get("full_name") and not teacher_id and not suppress_teacher:
                             line += f"\n{teacher.get('full_name','')}"
                         if room.get("name") and not room_id:
                             line += f"\n[{room.get('name','')}]"
@@ -2200,7 +2219,22 @@ async def export_visual_excel(
     # 📄 تصدير واسع (كلية/قسم) → ورقة مستقلة لكل شعبة
     wide = not teacher_id and not room_id and not (level is not None and section)
 
-    if wide and slots:
+    if per_teacher and not teacher_id and slots:
+        # 👨‍🏫 ورقة مستقلة لكل أستاذ
+        tgroups = {}
+        for s in slots:
+            tid = s.get("teacher_id") or ""
+            tgroups.setdefault(tid, []).append(s)
+        def _tname(tid):
+            return teachers_map.get(tid, {}).get("full_name", "") or "بدون أستاذ"
+        tkeys = sorted(tgroups.keys(), key=lambda k: _tname(k))
+        used_names = set()
+        wb.remove(wb.active)
+        for tid in tkeys:
+            ws = wb.create_sheet(title=safe_sheet_name(_tname(tid), used_names))
+            write_grid(ws, build_cell_map(tgroups[tid]),
+                       f"الجدول الأسبوعي - الأستاذ: {_tname(tid)}", suppress_teacher=True)
+    elif wide and slots:
         dept_names = {}
         dept_ids = {s.get("department_id") for s in slots if s.get("department_id")}
         if dept_ids:

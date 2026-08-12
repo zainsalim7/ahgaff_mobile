@@ -1287,3 +1287,8 @@ See `/app/memory/test_credentials.md`
 - Backend: أعيد استخدام GET /weekly-schedule?room_id=X الموجود (لا endpoints جديدة).
 **الاختبار:** testing_agent (iteration_65) — 5/5. أُصلحت ملاحظة overlay z-index (99999).
 **Backlog من الوكيل:** تقسيم weekly-schedule.tsx (2221 سطراً) لمكونات + data-testid للتبويبات + حالة خطأ في openRoomSchedule بدل catch الصامت.
+
+## 2026-08-12 (2) — ميزة: تصدير جداول كل الأساتذة (PDF/Excel) + بحث المعلم في التصدير
+1. Backend: باراميتر `per_teacher=true` في export-visual/pdf وexport-visual/excel — يجمع الخانات حسب الأستاذ: PDF صفحة لكل أستاذ (عنوان باسمه + جدول بنمط التصدير الفردي، اسم الأستاذ محذوف من الخلايا suppress_teacher)، Excel ورقة لكل أستاذ. يحترم فلتر faculty_id/department_id. الخانات بلا أستاذ تظهر تحت "بدون أستاذ".
+2. Frontend (weekly-schedule.tsx): نطاق جديد "👥 كل الأساتذة (جدول لكل أستاذ)" (export-scope-all_teachers) + حقل بحث فوري للمعلم في نطاق "معلم محدد" (export-teacher-search يفلتر export-teacher-select).
+**الاختبار:** curl — PDF (3 صفحات، صفحة لكل أستاذ، تحقق محتوى عبر extract_file) + Excel (ورقة لكل أستاذ) + regression للتصدير العادي 200. ملاحظة: أثناء التعديل انعكس تعديل توقيع make_table (نفس ظاهرة manage-teachers) — أعيد تطبيقه؛ انتبه لهذه الظاهرة عند التعديلات المتوازية على نفس الملف.
