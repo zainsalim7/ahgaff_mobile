@@ -1280,3 +1280,10 @@ See `/app/memory/test_credentials.md`
 **التنفيذ (MasterScheduleView.tsx):** في وضع التحرير، تحديد محاضرة يُظهر زر "تغيير القاعة" (master-change-room-btn) → نافذة (master-room-modal) تعرض القاعات الفارغة فقط في ذلك الوقت (GET /weekly-schedule/free-rooms) + خيار بدون قاعة + تنبيه للمحاضرات المشتركة (القاعة تسري على المجموعة عبر PUT /weekly-schedule/{slot_id} الموجود مسبقاً بكشف التعارض).
 **الاختبار:** testing_agent (iteration_64) — 6/6 بما فيها الاستمرارية بعد إعادة التحميل وregression للنقل. أُصلحت ملاحظة UX: القائمة تبدأ الآن بالقاعة الحالية بدل "بدون قاعة".
 **ملاحظة مسجلة من الوكيل:** تحذير console "Unexpected text node" في شاشة weekly-schedule (غير مؤثر — backlog).
+
+## 2026-08-12 — ميزة: جدول القاعة الأسبوعي (Room Schedule View)
+- في /weekly-schedule ← تبويب القاعات ← زر "📅 جدول القاعة" لكل قاعة (room-schedule-btn-{id}).
+- نافذة (room-schedule-modal): شبكة أيام × فترات، الخلايا المشغولة برتقالية (مقرر + معلم + قسم/مستوى/شعبة، مع dedupe للمحاضرات المشتركة 🔗)، الفارغة خضراء "✓ فارغة"، وملخص مشغولة/فارغة أسبوعياً.
+- Backend: أعيد استخدام GET /weekly-schedule?room_id=X الموجود (لا endpoints جديدة).
+**الاختبار:** testing_agent (iteration_65) — 5/5. أُصلحت ملاحظة overlay z-index (99999).
+**Backlog من الوكيل:** تقسيم weekly-schedule.tsx (2221 سطراً) لمكونات + data-testid للتبويبات + حالة خطأ في openRoomSchedule بدل catch الصامت.

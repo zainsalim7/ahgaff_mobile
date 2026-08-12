@@ -87,6 +87,16 @@ export default function WeeklySchedulePage() {
   // Rooms state
   const [newRoom, setNewRoom] = useState({ name: '', capacity: '30', building: '', floor: '' });
   const [importingRooms, setImportingRooms] = useState(false);
+  const [roomSchedule, setRoomSchedule] = useState<any>(null);          // 📅 نافذة جدول القاعة
+  const [roomScheduleEntries, setRoomScheduleEntries] = useState<any[] | null>(null);
+
+  const openRoomSchedule = (room: any) => {
+    setRoomScheduleEntries(null);
+    setRoomSchedule(room);
+    api.get('/weekly-schedule', { params: { faculty_id: selectedFaculty, room_id: room.id } })
+      .then(res => setRoomScheduleEntries(res.data || []))
+      .catch(() => setRoomScheduleEntries([]));
+  };
   // Settings state
   const [editSlots, setEditSlots] = useState<any[]>([]);
   const [editWorkingDays, setEditWorkingDays] = useState<string[]>([]);
@@ -1260,7 +1270,13 @@ export default function WeeklySchedulePage() {
                   <Text style={{ fontSize: 15, fontWeight: '600', color: '#333', textAlign: 'right' }}>{r.name}</Text>
                   <Text style={{ fontSize: 12, color: '#888', textAlign: 'right' }}>سعة: {r.capacity} | {r.building} {r.floor}</Text>
                 </View>
-                <TouchableOpacity onPress={() => handleDeleteRoom(r.id)}><Ionicons name="trash-outline" size={20} color="#e53935" /></TouchableOpacity>
+                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 14 }}>
+                  <TouchableOpacity onPress={() => openRoomSchedule(r)} testID={`room-schedule-btn-${r.id}`} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4 }}>
+                    <Ionicons name="calendar-outline" size={19} color="#1565c0" />
+                    <Text style={{ fontSize: 12, color: '#1565c0', fontWeight: '700' }}>جدول القاعة</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteRoom(r.id)}><Ionicons name="trash-outline" size={20} color="#e53935" /></TouchableOpacity>
+                </View>
               </View>
             ))}
             {selectedFaculty && rooms.length === 0 && <View style={st.emptyCard}><Text style={st.emptyText}>لا توجد قاعات لهذه الكلية</Text></View>}
@@ -1946,6 +1962,81 @@ export default function WeeklySchedulePage() {
           </div>
         </div>
       )}
+
+      {/* ============= 📅 Room Schedule Modal ============= */}
+      {roomSchedule && Platform.OS === 'web' && (() => {
+        const days = ['السبت', 'الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'];
+        const extraDays = (roomScheduleEntries || []).some((e: any) => e.day === 'الجمعة') ? [...days, 'الجمعة'] : days;
+        const slots = timeSlots.length > 0 ? timeSlots : [1, 2, 3, 4].map(n => ({ slot_number: n, name: `الفترة ${n}`, start_time: '', end_time: '' }));
+        const cellOf = (day: string, sn: number) => {
+          const raw = (roomScheduleEntries || []).filter((e: any) => e.day === day && e.slot_number === sn);
+          const seen = new Set<string>(); const out: any[] = [];
+          for (const e of raw) {
+            const k = e.merge_group_id || e.id;
+            if (seen.has(k)) continue;
+            seen.add(k); out.push(e);
+          }
+          return out;
+        };
+        const totalCells = extraDays.length * slots.length;
+        const busyKeys = new Set((roomScheduleEntries || []).map((e: any) => `${e.day}|${e.slot_number}`));
+        const freeCells = totalCells - Array.from(busyKeys).filter(k => extraDays.includes(k.split('|')[0])).length;
+        return (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }} onClick={() => setRoomSchedule(null)}>
+            <div onClick={(ev: any) => ev.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: 14, padding: 20, width: 900, maxWidth: '96%', maxHeight: '88vh', overflowY: 'auto', direction: 'rtl' }} data-testid="room-schedule-modal">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <div style={{ fontSize: 17, fontWeight: 800, color: '#1a2540' }}>📅 جدول القاعة: {roomSchedule.name}</div>
+                <button onClick={() => setRoomSchedule(null)} style={{ background: '#f5f5f5', border: 'none', width: 30, height: 30, borderRadius: 15, cursor: 'pointer', fontSize: 16, fontWeight: 700 }}>×</button>
+              </div>
+              <div style={{ fontSize: 12, color: '#5b6678', marginBottom: 12 }}>
+                {roomSchedule.building ? `${roomSchedule.building} • ` : ''}سعة {roomSchedule.capacity || '—'} •
+                {roomScheduleEntries === null ? ' جاري التحميل...' : (
+                  <> مشغولة في <b style={{ color: '#c62828' }}>{busyKeys.size}</b> فترة • فارغة في <b style={{ color: '#2e7d32' }}>{freeCells}</b> فترة أسبوعياً</>
+                )}
+              </div>
+              {roomScheduleEntries === null ? (
+                <div style={{ textAlign: 'center', padding: 30, color: '#888' }}>جاري تحميل الجدول...</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }} data-testid="room-schedule-grid">
+                  <thead>
+                    <tr>
+                      <th style={{ border: '1px solid #dde3ec', padding: 8, backgroundColor: '#1a2540', color: '#fff', minWidth: 90 }}>الفترة</th>
+                      {extraDays.map(d => <th key={d} style={{ border: '1px solid #dde3ec', padding: 8, backgroundColor: '#1a2540', color: '#fff' }}>{d}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {slots.map((s: any) => (
+                      <tr key={s.slot_number}>
+                        <td style={{ border: '1px solid #dde3ec', padding: 8, backgroundColor: '#f2f6fc', fontWeight: 700, textAlign: 'center' }}>
+                          {s.name || `الفترة ${s.slot_number}`}
+                          {s.start_time ? <div style={{ fontSize: 10, color: '#777', fontWeight: 400 }}>{s.start_time} - {s.end_time}</div> : null}
+                        </td>
+                        {extraDays.map(d => {
+                          const items = cellOf(d, s.slot_number);
+                          if (items.length === 0) {
+                            return <td key={d} style={{ border: '1px solid #dde3ec', padding: 6, backgroundColor: '#e8f5e9', textAlign: 'center', color: '#2e7d32', fontWeight: 700, fontSize: 11 }}>✓ فارغة</td>;
+                          }
+                          return (
+                            <td key={d} style={{ border: '1px solid #dde3ec', padding: 6, backgroundColor: '#fff3e0', verticalAlign: 'top' }}>
+                              {items.map((it: any) => (
+                                <div key={it.id} style={{ marginBottom: items.length > 1 ? 6 : 0 }}>
+                                  <div style={{ fontWeight: 700, color: '#333', fontSize: 11.5 }}>{it.merge_group_id ? '🔗 ' : ''}{it.course_name}</div>
+                                  <div style={{ fontSize: 10.5, color: '#666' }}>{it.teacher_name}</div>
+                                  <div style={{ fontSize: 10, color: '#999' }}>{it.department_name} · م{it.level}{it.section ? ` ${it.section}` : ''}</div>
+                                </div>
+                              ))}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ============= Export Modal ============= */}
       {showExportModal && Platform.OS === 'web' && (

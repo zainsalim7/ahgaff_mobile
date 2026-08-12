@@ -1,0 +1,31 @@
+{
+  "summary": "Frontend-only test of the new 'جدول القاعة' (room weekly schedule) feature on /weekly-schedule → tab 'القاعات'. Logged in via real UI (admin/admin123), selected كلية الشريعة والقانون, verified rooms list (ق101/ق202/ق305), room-schedule buttons, modal, grid, data correctness and closing behaviour. All 5 requested scenarios pass.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RoomScheduleModal overlay", "issue": "Clicking outside the modal closes it correctly in the page body area, but clicks in the top header/app-bar strip (y<~120px) do NOT close the modal — an element with higher stacking/pointer capture sits above the overlay there. Cosmetic/minor since the × button and other outside areas work.", "selector": "[data-testid=\"room-schedule-modal\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Room schedule modal (ق101)", "issues": ["Entry 'عقيدة' renders an empty teacher line (teacher_name missing in data) and its department line shows 'عقيدة · م5' — department_name appears to equal the course name for that record. Data/seed level, not layout.", "Tab bar items ('الجدول','القاعات','المقارات','تفضيلات المعلمين') have no data-testid, making tab automation rely on text."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Optional/LOW) Raise modal overlay above the app header so an outside-click anywhere closes the room schedule modal.",
+    "(Optional) Add data-testid to the weekly-schedule tab buttons (e.g. tab-rooms) for stable automation.",
+    "(Data) Investigate lecture record 'عقيدة' with missing teacher_name and department_name == course name."
+  ],
+  "critical_code_review_comments": [
+    "weekly-schedule.tsx is 2221 lines — well above the 700-line guidance; the room-schedule modal, export modal and tabs should be split into components.",
+    "openRoomSchedule swallows errors with .catch(() => setRoomScheduleEntries([])), so an API failure is indistinguishable from an empty (fully free) room. Consider an error state in the modal."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "not tested (skipped per request)", "frontend": "100% of requested scenarios (5/5)" },
+  "seed_data_creation": "none",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123",
+  "context_for_next_testing_agent": "Login via UI works: fill placeholders 'اسم المستخدم / رقم القيد / الرقم المرجعي' and 'كلمة المرور', then click text 'تسجيل الدخول' (.last). Then goto /weekly-schedule, click text 'القاعات' (first), select faculty via page.locator('select').first.select_option('698e4f9297fef774e66e93a4'). Room buttons render in DOM order ق101/ق202/ق305 => data-testid room-schedule-btn-69e8cf9804f85810f65e6347/6348/6349. Verified: ق101 modal shows 8 busy cells / 22 free of 35 (6 days x 5 slots), includes عقيدة (السبت ف3 و ف4) and الفقه الإسلامي (الأحد ف1 و ف3); ق305 shows 0 busy / 30 free. × button closes; outside click closes except when clicking the top header strip.",
+  "rca_of_the_issue": "Outside-click failure at the top of the viewport: the RNW header/app-bar is painted above the modal overlay in that region, so the overlay's onClick never fires there. Everything else in the feature behaved as specified."
+}
