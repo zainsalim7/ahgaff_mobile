@@ -44,6 +44,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [addModal, setAddModal] = useState<{ group: any; day: string; slotNumber: number } | null>(null);
   const [addCourseId, setAddCourseId] = useState('');
   const [addDuration, setAddDuration] = useState('');
+  const [addDurationCustom, setAddDurationCustom] = useState('');
   const [addRoomId, setAddRoomId] = useState('');
   const [slotRooms, setSlotRooms] = useState<any[] | null>(null); // قاعات (يوم/فترة) مع حالة الانشغال
   const [roomModal, setRoomModal] = useState<any>(null);          // 🏠 نافذة تغيير قاعة خانة موجودة
@@ -51,19 +52,43 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [newRoomId, setNewRoomId] = useState('');
   const [durationModal, setDurationModal] = useState<any>(null);   // ⏱ نافذة المدة المستقلة
   const [newDuration, setNewDuration] = useState('');
+  const [newDurationCustom, setNewDurationCustom] = useState('');
+
+  const PRESET_DURATIONS = ['45', '60', '90', '120', '180'];
 
   const openDurationModal = () => {
     if (!selected) return;
-    setNewDuration(selected.duration_minutes ? String(selected.duration_minutes) : '');
+    const cur = selected.duration_minutes ? String(selected.duration_minutes) : '';
+    if (cur && !PRESET_DURATIONS.includes(cur)) {
+      setNewDuration('custom');
+      setNewDurationCustom(cur);
+    } else {
+      setNewDuration(cur);
+      setNewDurationCustom('');
+    }
     setDurationModal(selected);
+  };
+
+  const resolveDuration = (sel: string, custom: string): number | null => {
+    if (sel === 'custom') {
+      const d = parseInt(custom, 10);
+      if (!d || d < 30 || d > 300) return null;
+      return d;
+    }
+    return sel ? parseInt(sel, 10) : 0;
   };
 
   const confirmDurationChange = async () => {
     if (!durationModal) return;
+    const dur = resolveDuration(newDuration, newDurationCustom);
+    if (dur === null) {
+      showMsg('error', '❌ المدة المخصصة يجب أن تكون رقماً بين 30 و300 دقيقة');
+      return;
+    }
     setBusy(true);
     try {
       const res = await api.put(`/weekly-schedule/${durationModal.id}`, {
-        duration_minutes: newDuration ? parseInt(newDuration, 10) : 0,
+        duration_minutes: dur,
       });
       showMsg('success', `✅ ${res.data?.message || 'تم تحديث المدة'}`);
       setDurationModal(null);
@@ -334,6 +359,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       setAddCourseId(placing.course_id);
       setAddRoomId('');
       setAddDuration('');
+      setAddDurationCustom('');
       setSlotRooms(null);
       setAddModal({ group, day, slotNumber });
       api.get('/weekly-schedule/free-rooms', { params: { faculty_id: facultyId, day, slot_number: slotNumber } })
@@ -352,6 +378,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       setAddCourseId(candidates.length === 1 ? candidates[0].course_id : '');
       setAddRoomId('');
       setAddDuration('');
+      setAddDurationCustom('');
       setSlotRooms(null);
       setAddModal({ group, day, slotNumber });
       api.get('/weekly-schedule/free-rooms', { params: { faculty_id: facultyId, day, slot_number: slotNumber } })
@@ -395,6 +422,11 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   // تأكيد إضافة محاضرة غير مدرجة في الخلية الفارغة
   const confirmAdd = async () => {
     if (!addModal || !addCourseId) return;
+    const _addDur = resolveDuration(addDuration, addDurationCustom);
+    if (_addDur === null) {
+      showMsg('error', '❌ المدة المخصصة يجب أن تكون رقماً بين 30 و300 دقيقة');
+      return;
+    }
     const course = (data?.unscheduled || []).find((u: any) => u.course_id === addCourseId);
     if (!course) return;
     setBusy(true);
@@ -409,7 +441,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
         course_id: course.course_id,
         teacher_id: course.teacher_id,
         room_id: addRoomId,
-        duration_minutes: addDuration ? parseInt(addDuration, 10) : null,
+        duration_minutes: _addDur || null,
       });
       showMsg('success', `✅ ${res.data.message}`);
       setAddModal(null);
@@ -830,7 +862,18 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
               <option value="120">ساعتان (120 دقيقة)</option>
               <option value="45">45 دقيقة</option>
               <option value="180">3 ساعات (180 دقيقة)</option>
+              <option value="custom">✏️ مدة مخصصة (اكتبها بالدقائق)...</option>
             </select>
+            {addDuration === 'custom' && (
+              <input
+                type="number" min={30} max={300}
+                value={addDurationCustom}
+                onChange={(ev: any) => setAddDurationCustom(ev.target.value)}
+                placeholder="اكتب المدة بالدقائق (30 - 300) — مثال: 75"
+                data-testid="add-duration-custom-input"
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ef6c00', fontSize: 13, direction: 'rtl', marginTop: 8, boxSizing: 'border-box', backgroundColor: '#fff8f0' }}
+              />
+            )}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={confirmAdd} disabled={!addCourseId || busy} style={{
                 flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: addCourseId ? 'pointer' : 'not-allowed',
@@ -931,7 +974,18 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
               <option value="90">ساعة ونصف (90 دقيقة)</option>
               <option value="120">ساعتان (120 دقيقة)</option>
               <option value="180">3 ساعات (180 دقيقة)</option>
+              <option value="custom">✏️ مدة مخصصة (اكتبها بالدقائق)...</option>
             </select>
+            {newDuration === 'custom' && (
+              <input
+                type="number" min={30} max={300}
+                value={newDurationCustom}
+                onChange={(ev: any) => setNewDurationCustom(ev.target.value)}
+                placeholder="اكتب المدة بالدقائق (30 - 300) — مثال: 75"
+                data-testid="master-duration-custom-input"
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ef6c00', fontSize: 13, direction: 'rtl', marginTop: 8, boxSizing: 'border-box', backgroundColor: '#fff8f0' }}
+              />
+            )}
             <div style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginTop: 5 }}>
               تؤثر على وقت نهاية المحاضرات عند التوليد — البداية تبقى بداية الفترة
             </div>
