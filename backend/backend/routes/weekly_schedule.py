@@ -123,6 +123,7 @@ class ScheduleSlotCreate(BaseModel):
     course_id: str
     teacher_id: str
     room_id: str
+    duration_minutes: Optional[int] = None  # ⏱ مدة مخصصة (افتراضي: مدة الفترة)
     merge_with: Optional[List[MergeTarget]] = None  # 🆕 محاضرة مشتركة: مستويات/شعب إضافية
 
 
@@ -130,6 +131,17 @@ class ScheduleSlotUpdate(BaseModel):
     course_id: Optional[str] = None
     teacher_id: Optional[str] = None
     room_id: Optional[str] = None
+    duration_minutes: Optional[int] = None
+
+
+def _add_minutes(hhmm: str, minutes: int) -> str:
+    """'08:00' + 90 → '09:30'"""
+    try:
+        h, m = map(int, str(hhmm).strip().split(":")[:2])
+        total = (h * 60 + m + int(minutes)) % (24 * 60)
+        return f"{total // 60:02d}:{total % 60:02d}"
+    except Exception:
+        return hhmm
 
 
 # ===== القاعات =====
@@ -1104,7 +1116,10 @@ async def update_schedule_slot(
         raise HTTPException(status_code=404, detail="غير موجود")
 
     update = {k: v for k, v in data.dict().items() if v is not None}
-    if not update:
+    clear_duration = update.get("duration_minutes") == 0
+    if clear_duration:
+        update.pop("duration_minutes")
+    if not update and not clear_duration:
         raise HTTPException(status_code=400, detail="لا توجد بيانات")
 
     # Check conflicts for new values
@@ -1164,10 +1179,15 @@ async def update_schedule_slot(
         cascade_msg = await _cascade_slot_teacher_to_course(db, existing, slot_id, update["teacher_id"], current_user)
 
     try:
-        await db.weekly_schedule.update_one({"_id": ObjectId(slot_id)}, {"$set": update})
-        # 🆕 محاضرة مشتركة: المقرر/المعلم/القاعة تسري على كل المجموعة
+        if update:
+            await db.weekly_schedule.update_one({"_id": ObjectId(slot_id)}, {"$set": update})
+        # ⏱ إزالة المدة المخصصة (العودة لمدة الفترة)
+        if clear_duration:
+            _dq = {"merge_group_id": _mg} if _mg else {"_id": ObjectId(slot_id)}
+            await db.weekly_schedule.update_many(_dq, {"$unset": {"duration_minutes": ""}})
+        # 🆕 محاضرة مشتركة: المقرر/المعلم/القاعة/المدة تسري على كل المجموعة
         if _mg:
-            shared = {k: v for k, v in update.items() if k in ("course_id", "teacher_id", "room_id")}
+            shared = {k: v for k, v in update.items() if k in ("course_id", "teacher_id", "room_id", "duration_minutes")}
             if shared:
                 await db.weekly_schedule.update_many(
                     {"merge_group_id": _mg, "_id": {"$ne": ObjectId(slot_id)}}, {"$set": shared})
@@ -2801,6 +2821,9 @@ async def generate_lectures_from_schedule(
                 if not st_time or not en_time:
                     skipped_no_time += 1
                     continue
+                # ⏱ مدة مخصصة للخانة تتجاوز نهاية الفترة
+                if s.get("duration_minutes"):
+                    en_time = _add_minutes(st_time, s["duration_minutes"])
                 candidates.append({
                     "course_id": s.get("course_id", ""),
                     "date": date_str,
@@ -2928,6 +2951,8 @@ async def resync_lecture_times(
         st, en = slot_times.get(s.get("slot_number"), ("", ""))
         if wd is None or not st or not en:
             continue
+        if s.get("duration_minutes"):
+            en = _add_minutes(st, s["duration_minutes"])
         per_key[(s.get("course_id", ""), wd)].append((s.get("slot_number"), st, en))
     for k in per_key:
         per_key[k].sort()
@@ -3202,6 +3227,7 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
                 _labels.append(lbl)
         entries.append({
             "id": str(s["_id"]),
+            "duration_minutes": s.get("duration_minutes"),
             "department_id": s.get("department_id", ""),
             "level": s.get("level") or 1,
             "section": s.get("section", "") or "",

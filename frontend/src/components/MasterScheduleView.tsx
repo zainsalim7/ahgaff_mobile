@@ -43,11 +43,13 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [addModal, setAddModal] = useState<{ group: any; day: string; slotNumber: number } | null>(null);
   const [addCourseId, setAddCourseId] = useState('');
+  const [addDuration, setAddDuration] = useState('');
   const [addRoomId, setAddRoomId] = useState('');
   const [slotRooms, setSlotRooms] = useState<any[] | null>(null); // قاعات (يوم/فترة) مع حالة الانشغال
   const [roomModal, setRoomModal] = useState<any>(null);          // 🏠 نافذة تغيير قاعة خانة موجودة
   const [roomModalRooms, setRoomModalRooms] = useState<any[] | null>(null);
   const [newRoomId, setNewRoomId] = useState('');
+  const [newDuration, setNewDuration] = useState('');
   const [validMap, setValidMap] = useState<Record<string, { valid: boolean; reasons: string[] }> | null>(null);
   const [placing, setPlacing] = useState<any>(null); // مقرر غير مدرج قيد الإدراج
   const [mergePrompt, setMergePrompt] = useState<{ a: any; b: any } | null>(null); // 🔗 تأكيد دمج محاضرتين مشتركتين
@@ -309,6 +311,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       }
       setAddCourseId(placing.course_id);
       setAddRoomId('');
+      setAddDuration('');
       setSlotRooms(null);
       setAddModal({ group, day, slotNumber });
       api.get('/weekly-schedule/free-rooms', { params: { faculty_id: facultyId, day, slot_number: slotNumber } })
@@ -326,6 +329,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       }
       setAddCourseId(candidates.length === 1 ? candidates[0].course_id : '');
       setAddRoomId('');
+      setAddDuration('');
       setSlotRooms(null);
       setAddModal({ group, day, slotNumber });
       api.get('/weekly-schedule/free-rooms', { params: { faculty_id: facultyId, day, slot_number: slotNumber } })
@@ -383,6 +387,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
         course_id: course.course_id,
         teacher_id: course.teacher_id,
         room_id: addRoomId,
+        duration_minutes: addDuration ? parseInt(addDuration, 10) : null,
       });
       showMsg('success', `✅ ${res.data.message}`);
       setAddModal(null);
@@ -397,6 +402,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const openRoomModal = () => {
     if (!selected) return;
     setNewRoomId(selected.room_id || '');
+    setNewDuration(selected.duration_minutes ? String(selected.duration_minutes) : '');
     setRoomModalRooms(null);
     setRoomModal(selected);
     api.get('/weekly-schedule/free-rooms', { params: { faculty_id: facultyId, day: selected.day, slot_number: selected.slot_number } })
@@ -408,7 +414,10 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
     if (!roomModal) return;
     setBusy(true);
     try {
-      const res = await api.put(`/weekly-schedule/${roomModal.id}`, { room_id: newRoomId });
+      const payload: any = { room_id: newRoomId };
+      const oldDur = roomModal.duration_minutes ? String(roomModal.duration_minutes) : '';
+      if (newDuration !== oldDur) payload.duration_minutes = newDuration ? parseInt(newDuration, 10) : 0;
+      const res = await api.put(`/weekly-schedule/${roomModal.id}`, payload);
       showMsg('success', `✅ ${res.data?.message || 'تم تغيير القاعة'}`);
       setRoomModal(null);
       setSelected(null);
@@ -700,7 +709,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                             >
                               <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>{item.merge_group_id ? '🔗 ' : ''}{item.course_name}</div>
                               <div style={{ fontSize: 8.5, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
-                                {shortName(item.teacher_name)}{item.room_name ? ` · ${item.room_name}` : ''}
+                                {shortName(item.teacher_name)}{item.room_name ? ` · ${item.room_name}` : ''}{item.duration_minutes ? ` · ⏱${item.duration_minutes}د` : ''}
                               </div>
                               {item.merged_with?.length > 0 && (
                                 <div style={{ fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110, opacity: 0.95 }}>
@@ -780,6 +789,19 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 )}
               </>
             )}
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginTop: 12, marginBottom: 6, textAlign: 'right' }}>
+              ⏱ مدة المحاضرة عند التوليد:
+            </div>
+            <select value={addDuration} onChange={(ev: any) => setAddDuration(ev.target.value)} style={{
+              width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, direction: 'rtl', backgroundColor: '#f7f9fc',
+            }} data-testid="add-duration-select">
+              <option value="">حسب الفترة (افتراضي)</option>
+              <option value="60">ساعة (60 دقيقة)</option>
+              <option value="90">ساعة ونصف (90 دقيقة)</option>
+              <option value="120">ساعتان (120 دقيقة)</option>
+              <option value="45">45 دقيقة</option>
+              <option value="180">3 ساعات (180 دقيقة)</option>
+            </select>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={confirmAdd} disabled={!addCourseId || busy} style={{
                 flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: addCourseId ? 'pointer' : 'not-allowed',
@@ -804,7 +826,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
             backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 420, maxWidth: '92%', maxHeight: '80vh', overflowY: 'auto',
             boxShadow: '0 8px 32px rgba(0,0,0,0.25)', direction: 'rtl',
           }} data-testid="master-room-modal">
-            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>🏠 تغيير القاعة</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>🏠 تغيير القاعة والمدة</div>
             <div style={{ fontSize: 12.5, color: '#5b6678', marginBottom: 4, textAlign: 'right' }}>
               <b>{roomModal.course_name}</b> — {roomModal.day} · الفترة {roomModal.slot_number}
             </div>
@@ -838,11 +860,27 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 )}
               </>
             )}
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginTop: 12, marginBottom: 6, textAlign: 'right' }}>
+              ⏱ مدة المحاضرة عند التوليد:
+            </div>
+            <select value={newDuration} onChange={(ev: any) => setNewDuration(ev.target.value)} style={{
+              width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, direction: 'rtl', backgroundColor: '#f7f9fc',
+            }} data-testid="master-duration-select">
+              <option value="">حسب الفترة (افتراضي)</option>
+              <option value="60">ساعة (60 دقيقة)</option>
+              <option value="90">ساعة ونصف (90 دقيقة)</option>
+              <option value="120">ساعتان (120 دقيقة)</option>
+              <option value="45">45 دقيقة</option>
+              <option value="180">3 ساعات (180 دقيقة)</option>
+            </select>
+            <div style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginTop: 4 }}>
+              تؤثر على وقت نهاية المحاضرات عند التوليد — البداية تبقى بداية الفترة
+            </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={confirmRoomChange} disabled={busy} style={{
                 flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
                 backgroundColor: '#6a1b9a', color: '#fff', fontSize: 13.5, fontWeight: 700,
-              }} data-testid="confirm-room-change-btn">{busy ? 'جاري الحفظ...' : 'تغيير القاعة'}</button>
+              }} data-testid="confirm-room-change-btn">{busy ? 'جاري الحفظ...' : 'حفظ التغييرات'}</button>
               <button onClick={() => setRoomModal(null)} style={{
                 flex: 0.5, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
                 backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,

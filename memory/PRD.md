@@ -1292,3 +1292,10 @@ See `/app/memory/test_credentials.md`
 1. Backend: باراميتر `per_teacher=true` في export-visual/pdf وexport-visual/excel — يجمع الخانات حسب الأستاذ: PDF صفحة لكل أستاذ (عنوان باسمه + جدول بنمط التصدير الفردي، اسم الأستاذ محذوف من الخلايا suppress_teacher)، Excel ورقة لكل أستاذ. يحترم فلتر faculty_id/department_id. الخانات بلا أستاذ تظهر تحت "بدون أستاذ".
 2. Frontend (weekly-schedule.tsx): نطاق جديد "👥 كل الأساتذة (جدول لكل أستاذ)" (export-scope-all_teachers) + حقل بحث فوري للمعلم في نطاق "معلم محدد" (export-teacher-search يفلتر export-teacher-select).
 **الاختبار:** curl — PDF (3 صفحات، صفحة لكل أستاذ، تحقق محتوى عبر extract_file) + Excel (ورقة لكل أستاذ) + regression للتصدير العادي 200. ملاحظة: أثناء التعديل انعكس تعديل توقيع make_table (نفس ظاهرة manage-teachers) — أعيد تطبيقه؛ انتبه لهذه الظاهرة عند التعديلات المتوازية على نفس الملف.
+
+## 2026-08-12 (3) — ميزة: مدة مخصصة لكل خانة في الجدول (الخيار a)
+**المشكلة:** التوليد من العرض الشامل يلتزم بأوقات الفترات الثابتة بينما مدد المحاضرات تختلف (ساعة/ساعة ونصف/ساعتين).
+**التنفيذ:**
+- Backend: حقل `duration_minutes` اختياري في weekly_schedule (ScheduleSlotCreate/Update) + دالة `_add_minutes`. التوليد: end_time = بداية الفترة + المدة (إن وُجدت) وإلا نهاية الفترة. resync-lecture-times يحترم المدة أيضاً. PUT: duration_minutes=0 يزيلها ($unset)، وتسري على مجموعة المحاضرة المشتركة. master-view entries ترجع duration_minutes.
+- Frontend (MasterScheduleView): قائمة "⏱ مدة المحاضرة عند التوليد" (حسب الفترة/45/60/90/120/180) في نافذة الإضافة (add-duration-select) ونافذة "تغيير القاعة والمدة" (master-duration-select) + شارة ⏱Xد في الخلية.
+**الاختبار:** curl e2e — خانة بمدة 120: المحاضرة المولدة 08:00-10:00 بدل 09:30 ✓، PUT تعديل 60 وإزالة (0) ✓. tsc نظيف. الواجهة selects بسيطة على نفس أنماط النوافذ المختبرة سابقاً (iteration_64).
