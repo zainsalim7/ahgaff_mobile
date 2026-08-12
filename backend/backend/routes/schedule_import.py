@@ -71,6 +71,20 @@ def _parse_group_label(label: str):
 
 ROW_KINDS = [("course", "مقرر"), ("room", "قاع"), ("teacher", "استاذ"), ("teacher", "معلم")]
 
+# ⏱ مدة مخصصة في نهاية خلية المقرر: "اسم المقرر (90د)" أو "(120)" أو "[60]"
+_DURATION_RE = re.compile(r'[\(\[]\s*(\d{2,3})\s*(?:د|دقيقه|دقيقة|m|min)?\s*[\)\]]\s*$')
+
+
+def _extract_duration(course_txt: str):
+    """يرجع (اسم المقرر بدون المدة، المدة بالدقائق أو None)."""
+    m = _DURATION_RE.search(course_txt)
+    if not m:
+        return course_txt, None
+    dur = int(m.group(1))
+    if not (30 <= dur <= 300):
+        return course_txt, None
+    return course_txt[:m.start()].strip(), dur
+
 
 def _row_kind(b_label: str):
     n = _norm(b_label)
@@ -191,7 +205,8 @@ async def download_import_template(
                     cell.font = Font(size=8)
                     e = cell_map.get((g["level"], g["section"], day, ts.get("slot_number")))
                     if e:
-                        cell.value = [e["course_name"], e["room_name"], e["teacher_name"]][i]
+                        _cname = e["course_name"] + (f" ({e['duration_minutes']}د)" if e.get("duration_minutes") else "")
+                        cell.value = [_cname, e["room_name"], e["teacher_name"]][i]
                         cell.fill = PatternFill("solid", fgColor="FFF8E1")
         r += 3
 
@@ -362,6 +377,9 @@ async def import_master_schedule(
                 errors.append(f"{loc} خلية بلا اسم مقرر — تُخُطيت")
                 continue
 
+            # ⏱ مدة مخصصة اختيارية في نهاية اسم المقرر: "الفقه (90د)"
+            course_txt, duration_minutes = _extract_duration(course_txt)
+
             # مطابقة المقرر (مقارنة مستوى/شعبة مطبّعة + تمييز الأسماء المتطابقة بالأستاذ)
             candidates = courses_by_name.get(_norm(course_txt), [])
             nsec = _norm(section)
@@ -442,7 +460,8 @@ async def import_master_schedule(
             replace_course = ""
             ex = existing_cells.get((level, section_val, day, slot_number))
             if ex:
-                same = ex.get("course_id") == str(course["_id"]) and (ex.get("room_id") or "") == str(room["_id"])
+                same = (ex.get("course_id") == str(course["_id"]) and (ex.get("room_id") or "") == str(room["_id"])
+                        and (ex.get("duration_minutes") or None) == duration_minutes)
                 if same:
                     skipped_existing.append(f"{loc} مطابقة تماماً للموجود في النظام — لا تغيير")
                     continue
@@ -463,6 +482,7 @@ async def import_master_schedule(
                 "course_id": str(course["_id"]),
                 "teacher_id": effective_tid,
                 "room_id": str(room["_id"]),
+                **({"duration_minutes": duration_minutes} if duration_minutes else {}),
                 "_loc": loc,
                 "_course_name": course.get("name", ""),
                 "_teacher_name": teacher.get("full_name", ""),
