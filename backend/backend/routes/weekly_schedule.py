@@ -144,6 +144,54 @@ def _add_minutes(hhmm: str, minutes: int) -> str:
         return hhmm
 
 
+def _t2m(hhmm) -> Optional[int]:
+    """'08:00' → 480 دقيقة"""
+    try:
+        h, m = map(int, str(hhmm).strip().split(":")[:2])
+        return h * 60 + m
+    except Exception:
+        return None
+
+
+def _m2t(minutes: int) -> str:
+    """480 → '08:00'"""
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _slots_conflict(a: dict, b: dict) -> bool:
+    """هل تتشارك المحاضرتان مورداً (شعبة/معلم/قاعة)؟ أعضاء نفس المجموعة المشتركة لا يتعارضون"""
+    if a.get("merge_group_id") and a.get("merge_group_id") == b.get("merge_group_id"):
+        return False
+    if (a.get("department_id"), a.get("level"), a.get("section") or "") == \
+       (b.get("department_id"), b.get("level"), b.get("section") or ""):
+        return True
+    if a.get("teacher_id") and a.get("teacher_id") == b.get("teacher_id"):
+        return True
+    if a.get("room_id") and a.get("room_id") == b.get("room_id"):
+        return True
+    return False
+
+
+def _effective_times(s: dict, st_def: str, en_def: str):
+    """الأوقات الفعلية للخانة: (البداية، النهاية، هل تختلف عن الفترة الافتراضية)"""
+    st = s.get("computed_start_time") or st_def
+    if s.get("computed_end_time"):
+        en = s["computed_end_time"]
+    elif s.get("duration_minutes"):
+        en = _add_minutes(st, s["duration_minutes"])
+    else:
+        en = en_def
+    return st, en, (st != st_def or en != en_def)
+
+
+def _shift_summary(shifted: list) -> str:
+    if not shifted:
+        return ""
+    parts = [f"{sh.get('course_name') or 'محاضرة'} ({sh['from']} ← {sh['to']})" for sh in shifted[:5]]
+    more = f" و{len(shifted) - 5} أخرى" if len(shifted) > 5 else ""
+    return f" ⚠️ إزاحة تلقائية لـ {len(shifted)} محاضرة: " + "، ".join(parts) + more
+
+
 # ===== القاعات =====
 
 @router.get("/rooms")
@@ -816,6 +864,8 @@ async def get_weekly_schedule(
             "room_id": s.get("room_id", ""),
             "room_name": room.get("name", ""),
             "duration_minutes": s.get("duration_minutes"),
+            "computed_start_time": s.get("computed_start_time"),
+            "computed_end_time": s.get("computed_end_time"),
             "merge_group_id": s.get("merge_group_id", ""),
             "merged_with": _merge_labels(s),
         })
@@ -1100,7 +1150,10 @@ async def create_schedule_slot(
         msg = f"تم إضافة المحاضرة المشتركة في جداول {len(targets)} من المستويات/الشعب"
         if n_depts > 1:
             msg += f" عبر {n_depts} أقسام"
-    return {"id": inserted_id, "merge_group_id": merge_gid, "message": msg}
+    # ⏱ حلحلة أوقات اليوم (قد تُزاح المحاضرة الجديدة إذا سبقتها محاضرة ممتدة)
+    shifted = await _resolve_day_times(db, data.faculty_id, data.day)
+    msg += _shift_summary(shifted)
+    return {"id": inserted_id, "merge_group_id": merge_gid, "message": msg, "shifted": shifted}
 
 
 @router.put("/weekly-schedule/{slot_id}")
@@ -1218,7 +1271,19 @@ async def update_schedule_slot(
         sync = await _sync_future_lectures(db, existing, "move", **moved)
         message += _sync_summary(sync)
 
-    return {"message": message}
+    # ⏱ حلحلة أوقات الأيام المتأثرة (إزاحة متسلسلة بدون نقل أو حذف)
+    days_to_resolve = {existing.get("day")}
+    if "day" in update:
+        days_to_resolve.add(update["day"])
+    shifted = []
+    for d in days_to_resolve:
+        shifted += await _resolve_day_times(db, existing.get("faculty_id", ""), d)
+    if "duration_minutes" in update or clear_duration:
+        message += _shift_summary(shifted)
+        if clear_duration and not shifted:
+            message += " — عادت الأوقات الافتراضية"
+
+    return {"message": message, "shifted": shifted}
 
 
 @router.delete("/weekly-schedule/{slot_id}")
@@ -1244,6 +1309,8 @@ async def delete_schedule_slot(
         # 🔄 (جدول ← نظام) حذف المحاضرات اليومية المستقبلية المولّدة من هذه الخلية
         sync = await _sync_future_lectures(db, slot, "delete")
         message += _sync_summary(sync)
+        # ⏱ إعادة حساب أوقات اليوم (فك الإزاحات المرتبطة بالمحاضرة المحذوفة)
+        await _resolve_day_times(db, slot.get("faculty_id", ""), slot.get("day", ""))
     return {"message": message}
 
 
@@ -1983,8 +2050,9 @@ async def export_visual_pdf(
                             line += f"\n{teacher.get('full_name','')}"
                         if room.get("name") and not room_id:
                             line += f"\n[{room.get('name','')}]"
-                        if s.get("duration_minutes") and ts.get("start_time"):
-                            line += f"\n({ts.get('start_time')} - {_add_minutes(ts.get('start_time'), s['duration_minutes'])})"
+                        _est, _een, _ch = _effective_times(s, ts.get("start_time", ""), ts.get("end_time", ""))
+                        if _ch:
+                            line += f"\n({_est} - {_een})"
                         sec = s.get("section")
                         if sec and not section and not hide_section:
                             line += f" - شعبة {sec}"
@@ -2210,8 +2278,9 @@ async def export_visual_excel(
                             line += f"\n{teacher.get('full_name','')}"
                         if room.get("name") and not room_id:
                             line += f"\n[{room.get('name','')}]"
-                        if s.get("duration_minutes") and ts.get("start_time"):
-                            line += f"\n⏱ {ts.get('start_time')} - {_add_minutes(ts.get('start_time'), s['duration_minutes'])}"
+                        _est, _een, _ch = _effective_times(s, ts.get("start_time", ""), ts.get("end_time", ""))
+                        if _ch:
+                            line += f"\n⏱ {_est} - {_een}"
                         sec = s.get("section")
                         if sec and not section and not hide_section:
                             line += f" - ش/{sec}"
@@ -2590,6 +2659,73 @@ async def _faculty_slot_times(db, faculty_id: str) -> dict:
     return {s["slot_number"]: (s.get("start_time", ""), s.get("end_time", "")) for s in (settings or {}).get("time_slots", [])}
 
 
+async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
+    """⏱ حلحلة أوقات اليوم: إزاحة متسلسلة لبدايات المحاضرات المتأثرة بالمدد المخصصة
+    (بدون نقل أو حذف — فقط تعديل الأوقات). يخزن computed_start_time/computed_end_time
+    عند اختلافها عن أوقات الفترة الافتراضية، ويرجع قائمة المحاضرات المزاحة حالياً."""
+    if not faculty_id or not day:
+        return []
+    slot_times = await _faculty_slot_times(db, faculty_id)
+    if not slot_times:
+        return []
+    slots = await db.weekly_schedule.find({"faculty_id": faculty_id, "day": day}).to_list(2000)
+    processed: list = []
+    shifted: list = []
+    for s in sorted(slots, key=lambda x: (x.get("slot_number") or 0, str(x.get("_id")))):
+        st_def, en_def = slot_times.get(s.get("slot_number"), ("", ""))
+        base_start, base_end = _t2m(st_def), _t2m(en_def)
+        if base_start is None or base_end is None:
+            continue
+        try:
+            dur = int(s["duration_minutes"]) if s.get("duration_minutes") else max(base_end - base_start, 0)
+        except (TypeError, ValueError):
+            dur = max(base_end - base_start, 0)
+        eff_start = base_start
+        for p in processed:
+            if p["_end_m"] > eff_start and _slots_conflict(s, p):
+                eff_start = p["_end_m"]
+        eff_end = eff_start + dur
+        s["_end_m"] = eff_end
+        processed.append(s)
+        new_cs = _m2t(eff_start) if eff_start != base_start else None
+        new_ce = _m2t(eff_end) if (eff_start != base_start or eff_end != base_end) else None
+        sets, unsets = {}, {}
+        if new_cs != s.get("computed_start_time"):
+            (sets if new_cs else unsets)["computed_start_time"] = new_cs or ""
+        if new_ce != s.get("computed_end_time"):
+            (sets if new_ce else unsets)["computed_end_time"] = new_ce or ""
+        if sets or unsets:
+            upd = {}
+            if sets:
+                upd["$set"] = sets
+            if unsets:
+                upd["$unset"] = unsets
+            await db.weekly_schedule.update_one({"_id": s["_id"]}, upd)
+        if new_cs:
+            shifted.append({
+                "slot_id": str(s["_id"]),
+                "course_id": s.get("course_id", ""),
+                "slot_number": s.get("slot_number"),
+                "level": s.get("level"),
+                "section": s.get("section", "") or "",
+                "day": day,
+                "from": st_def,
+                "to": new_cs,
+                "end": new_ce,
+            })
+    cids = list({sh["course_id"] for sh in shifted if sh["course_id"]})
+    if cids:
+        names = {}
+        try:
+            async for c in db.courses.find({"_id": {"$in": [ObjectId(c) for c in cids]}}):
+                names[str(c["_id"])] = c.get("name", "")
+        except Exception:
+            pass
+        for sh in shifted:
+            sh["course_name"] = names.get(sh["course_id"], "")
+    return shifted
+
+
 async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_slot_number=None, new_room_id=None) -> dict:
     """المستقبل يتبع الجدول والماضي محفوظ: نقل/حذف المحاضرات اليومية المستقبلية المولّدة من موقع الخلية القديم.
     تُستثنى: الماضية، غير المجدولة، التي عليها حضور، والمعاد جدولتها يدوياً."""
@@ -2826,9 +2962,8 @@ async def generate_lectures_from_schedule(
                 if not st_time or not en_time:
                     skipped_no_time += 1
                     continue
-                # ⏱ مدة مخصصة للخانة تتجاوز نهاية الفترة
-                if s.get("duration_minutes"):
-                    en_time = _add_minutes(st_time, s["duration_minutes"])
+                # ⏱ الأوقات الفعلية (مدة مخصصة أو إزاحة تلقائية)
+                st_time, en_time, _ = _effective_times(s, st_time, en_time)
                 candidates.append({
                     "course_id": s.get("course_id", ""),
                     "date": date_str,
@@ -2956,8 +3091,7 @@ async def resync_lecture_times(
         st, en = slot_times.get(s.get("slot_number"), ("", ""))
         if wd is None or not st or not en:
             continue
-        if s.get("duration_minutes"):
-            en = _add_minutes(st, s["duration_minutes"])
+        st, en, _ = _effective_times(s, st, en)
         per_key[(s.get("course_id", ""), wd)].append((s.get("slot_number"), st, en))
     for k in per_key:
         per_key[k].sort()
@@ -3109,6 +3243,9 @@ async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Dep
         s = await _sync_future_lectures(db, g, "move", new_day=b["day"], new_slot_number=b["slot_number"])
         sync = {k: sync.get(k, 0) + v for k, v in s.items()} if sync else s
     total = len(group_a) + len(group_b)
+    await _resolve_day_times(db, a.get("faculty_id", ""), b.get("day", ""))
+    if a.get("day") != b.get("day"):
+        await _resolve_day_times(db, a.get("faculty_id", ""), a.get("day", ""))
     return {"message": f"تم الدمج في محاضرة مشتركة تضم {total} جداول" + _sync_summary(sync), "merge_group_id": gid}
 
 
@@ -3233,6 +3370,8 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
         entries.append({
             "id": str(s["_id"]),
             "duration_minutes": s.get("duration_minutes"),
+            "computed_start_time": s.get("computed_start_time"),
+            "computed_end_time": s.get("computed_end_time"),
             "department_id": s.get("department_id", ""),
             "level": s.get("level") or 1,
             "section": s.get("section", "") or "",
@@ -3390,7 +3529,11 @@ async def move_schedule_slot(
         s = await _sync_future_lectures(db, g, "move", new_day=data.target_day, new_slot_number=data.target_slot_number)
         sync = {k: sync.get(k, 0) + v for k, v in s.items()} if sync else s
     msg = "تم نقل المحاضرة بنجاح" if len(group) == 1 else f"تم نقل المحاضرة المشتركة ({len(group)} جداول) بنجاح"
-    return {"message": msg + _sync_summary(sync)}
+    # ⏱ حلحلة أوقات اليومين (القديم والجديد)
+    shifted = []
+    for d in {slot.get("day"), data.target_day}:
+        shifted += await _resolve_day_times(db, slot.get("faculty_id", ""), d)
+    return {"message": msg + _sync_summary(sync) + _shift_summary(shifted), "shifted": shifted}
 
 
 @router.post("/weekly-schedule/swap-slots")
@@ -3452,7 +3595,11 @@ async def swap_schedule_slots(
     for g in group_b:
         s = await _sync_future_lectures(db, g, "move", new_day=pos_a["day"], new_slot_number=pos_a["slot_number"])
         combined = {k: combined.get(k, 0) + v for k, v in s.items()}
-    return {"message": "تم تبديل المحاضرتين بنجاح" + _sync_summary(combined)}
+    # ⏱ حلحلة أوقات اليومين بعد التبديل
+    shifted = []
+    for d in {pos_a["day"], pos_b["day"]}:
+        shifted += await _resolve_day_times(db, slot_a.get("faculty_id", ""), d)
+    return {"message": "تم تبديل المحاضرتين بنجاح" + _sync_summary(combined) + _shift_summary(shifted), "shifted": shifted}
 
 
 # ===== تصدير العرض الشامل الملوّن (بأسلوب aSc Timetables) =====
@@ -3580,8 +3727,9 @@ async def export_master_pdf(
                     extra = _short_teacher(it["teacher_name"])
                     if it.get("room_name"):
                         extra += f" · {it['room_name']}"
-                    if it.get("duration_minutes") and ts.get("start_time"):
-                        extra += f"\n({ts.get('start_time')}-{_add_minutes(ts.get('start_time'), it['duration_minutes'])})"
+                    _est, _een, _ch = _effective_times(it, ts.get("start_time", ""), ts.get("end_time", ""))
+                    if _ch:
+                        extra += f"\n({_est}-{_een})"
                     row[col] = ar(f"{txt}\n{extra}")
                     bg = _master_course_color(it["course_id"])
                     fg = _master_text_color(bg)
@@ -3780,8 +3928,9 @@ async def export_master_excel(
                     extra = _short_teacher(it["teacher_name"])
                     if it.get("room_name"):
                         extra += f" · {it['room_name']}"
-                    if it.get("duration_minutes") and ts.get("start_time"):
-                        extra += f"\n⏱ {ts.get('start_time')} - {_add_minutes(ts.get('start_time'), it['duration_minutes'])}"
+                    _est, _een, _ch = _effective_times(it, ts.get("start_time", ""), ts.get("end_time", ""))
+                    if _ch:
+                        extra += f"\n⏱ {_est} - {_een}"
                     cell.value = f"{it['course_name']}\n{extra}"
                     bg = _master_course_color(it["course_id"])[1:].upper()
                     fg = _master_text_color("#" + bg)[1:].upper()

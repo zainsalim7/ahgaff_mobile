@@ -90,6 +90,13 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       const res = await api.put(`/weekly-schedule/${durationModal.id}`, {
         duration_minutes: dur,
       });
+      const shifted = res.data?.shifted || [];
+      if (shifted.length) {
+        window.alert(
+          `⚠️ حلحلة تلقائية للجدول — تمت إزاحة ${shifted.length} محاضرة لتفادي التداخل (بدون نقل أو حذف):\n\n` +
+          shifted.map((sh: any) => `• ${sh.course_name || 'محاضرة'} (فترة ${sh.slot_number}): ${sh.from} ← ${sh.to}${sh.end ? ` حتى ${sh.end}` : ''}`).join('\n')
+        );
+      }
       showMsg('success', `✅ ${res.data?.message || 'تم تحديث المدة'}`);
       setDurationModal(null);
       setSelected(null);
@@ -772,6 +779,11 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                               <div style={{ fontSize: 8.5, opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
                                 {shortName(item.teacher_name)}{item.room_name ? ` · ${item.room_name}` : ''}{item.duration_minutes ? ` · ⏱${item.duration_minutes}د` : ''}
                               </div>
+                              {(item.computed_start_time || item.computed_end_time) && (
+                                <div data-testid="shifted-time-badge" style={{ fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 110, background: 'rgba(0,0,0,0.22)', borderRadius: 3, padding: '0 3px', marginTop: 1 }}>
+                                  ⇠ {item.computed_start_time || ''}{item.computed_end_time ? ` - ${item.computed_end_time}` : ''}
+                                </div>
+                              )}
                               {item.merged_with?.length > 0 && (
                                 <div style={{ fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110, opacity: 0.95 }}>
                                   مع: {item.merged_with.join('، ')}
@@ -987,7 +999,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
               />
             )}
             <div style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginTop: 5 }}>
-              تؤثر على وقت نهاية المحاضرات عند التوليد — البداية تبقى بداية الفترة
+              عند التداخل مع محاضرات تالية سيُزيح النظام أوقاتها تلقائياً (بدون نقل أو حذف) وسيظهر لك ملخص الإزاحات
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={confirmDurationChange} disabled={busy} style={{

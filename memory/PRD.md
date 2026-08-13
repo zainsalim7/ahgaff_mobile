@@ -9,6 +9,7 @@
 - نشر خارجي للمستخدم: Railway (railway.toml + Dockerfile) مع دومينات ahgaff.net / api.ahgaff.net
 
 ## المنجز (آخر تحديث: 2026-06 — جلسة الفورك الحالية)
+- ✅ **حلحلة الجدول الذكية (الإزاحة التلقائية)**: عند تمديد محاضرة بمدة مخصصة تتداخل مع محاضرات تالية (نفس الشعبة أو المعلم أو القاعة)، يُزيح النظام أوقات بدايتها تلقائياً بشكل متسلسل (بدون نقل/حذف، بدون استراحات) مع تحذير يلخص الإزاحات. التخزين في computed_start_time/computed_end_time. المحلّل `_resolve_day_times` يُستدعى عند: PUT/POST/DELETE/نقل/تبديل/دمج/استيراد Excel. إلغاء المدة يفك الإزاحات تلقائياً. الأوقات المزاحة تظهر في: قائمة الجدول، العرض الشامل (شارة shifted-time-badge)، التصدير الأربعة، وتوليد المحاضرات. (مُختبر e2e: curl + Playwright + pytest 14/14)
 - ✅ إصلاح تصدير الجدول (PDF/Excel) لعرض الأوقات المخصصة duration_minutes في **4 مسارات**: export-visual/pdf، export-visual/excel، master-view/export/pdf، master-view/export/excel (اختبار: 14/14 ناجح، iteration_67)
 - ✅ إضافة duration_minutes لاستجابة GET /api/weekly-schedule
 - ✅ إصلاحات جاهزية النشر: SECRET_KEY إلزامي من env، CORS regex لدومينات emergent + ALLOWED_ORIGINS="*"، متغيرات Expo في frontend/.env، دعم emergent.host في api.ts، رفع healthcheckTimeout في railway.toml إلى 300

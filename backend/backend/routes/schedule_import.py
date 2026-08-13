@@ -12,7 +12,7 @@ from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
 from .deps import get_db, get_current_user, log_activity
-from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures
+from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures, _resolve_day_times
 
 router = APIRouter(tags=["استيراد الجدول الأسبوعي"])
 
@@ -827,6 +827,12 @@ async def import_master_schedule(
         await db.weekly_schedule.update_one({"_id": ObjectId(_sid)}, {"$set": {
             "merge_group_id": _gid, "merge_key": f"{_gid}:{_sdoc.get('department_id', '')}:{_sdoc.get('level')}:{_sdoc.get('section', '') or ''}"}})
 
+    # ⏱ حلحلة أوقات الأيام المتأثرة (المدد المخصصة من الملف تُزيح المحاضرات المتداخلة)
+    _import_days = {item.get("day") for item in to_create if item.get("day")}
+    _total_shifted = []
+    for _d in _import_days:
+        _total_shifted += await _resolve_day_times(db, faculty_id, _d)
+
     await log_activity(
         current_user, "import_master_schedule_excel", "weekly_schedule", department_id, None,
         {"faculty_id": faculty_id, "created": created, "replaced": replaced_count, "repositioned": len(removal_ids), "reassigned": len(reassign_map), "errors": len(errors), "skipped_identical": len(skipped_existing)},
@@ -835,6 +841,7 @@ async def import_master_schedule(
     report["replaced_count"] = replaced_count
     report["message"] = (
         f"✅ تم إدراج {created} محاضرة جديدة"
+        + (f" • ⏱ إزاحة تلقائية لأوقات {len(_total_shifted)} محاضرة بسبب المدد المخصصة" if _total_shifted else "")
         + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
         + (f" • استُبدلت {replaced_count} خلية بمحتوى الملف" if replaced_count else "")
         + (f" • أُزيلت {len(removal_ids)} خلية غير مذكورة في الملف (إعادة تموضع)" if removal_ids else "")
