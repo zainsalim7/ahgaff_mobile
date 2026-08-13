@@ -97,6 +97,41 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           shifted.map((sh: any) => `• ${sh.course_name || 'محاضرة'} (فترة ${sh.slot_number}): ${sh.from} ← ${sh.to}${sh.end ? ` حتى ${sh.end}` : ''}`).join('\n')
         );
       }
+      // ⚖️ فحص تجاوز الساعات الأسبوعية المعتمدة للمقرر
+      const lc = res.data?.load_check;
+      if (lc && lc.excess_minutes > 0) {
+        if ((lc.rebalance || []).length) {
+          const doBalance = window.confirm(
+            `⚠️ العبء سيزيد عن الخطة المعتمدة لمقرر «${lc.course_name}»\n\n` +
+            `المعتمد أسبوعياً: ${lc.plan_minutes} دقيقة — المدرج الآن: ${lc.scheduled_minutes} دقيقة (زيادة ${lc.excess_minutes}د)\n\n` +
+            `اضغط «موافق» لموازنة تلقائية بإنقاص المحاضرات الأخرى:\n` +
+            lc.rebalance.map((r: any) => `• ${r.day} فترة ${r.slot_number}: ${r.current_minutes}د ← ${r.proposed_minutes}د`).join('\n') +
+            `\n\nأو «إلغاء» لقبول الزيادة كما هي`
+          );
+          if (doBalance) {
+            const rb = await api.post('/weekly-schedule/apply-rebalance', {
+              changes: lc.rebalance.map((r: any) => ({ slot_id: r.slot_id, duration_minutes: r.proposed_minutes })),
+            });
+            const rbShifted = rb.data?.shifted || [];
+            if (rbShifted.length) {
+              window.alert(
+                `⚠️ إزاحات مصاحبة للموازنة:\n` +
+                rbShifted.map((sh: any) => `• ${sh.course_name || 'محاضرة'} (فترة ${sh.slot_number}): ${sh.from} ← ${sh.to}`).join('\n')
+              );
+            }
+            showMsg('success', `✅ ${rb.data?.message || 'تمت الموازنة'}`);
+            setDurationModal(null);
+            setSelected(null);
+            await load();
+            return;
+          }
+        } else {
+          window.alert(
+            `⚠️ العبء زاد عن الخطة المعتمدة لمقرر «${lc.course_name}» (${lc.scheduled_minutes}د / ${lc.plan_minutes}د)\n\n` +
+            `لا يمكن الموازنة تلقائياً — لا توجد محاضرات أخرى قابلة للإنقاص`
+          );
+        }
+      }
       showMsg('success', `✅ ${res.data?.message || 'تم تحديث المدة'}`);
       setDurationModal(null);
       setSelected(null);

@@ -1283,7 +1283,57 @@ async def update_schedule_slot(
         if clear_duration and not shifted:
             message += " — عادت الأوقات الافتراضية"
 
-    return {"message": message, "shifted": shifted}
+    # ⚖️ فحص تجاوز الساعات الأسبوعية المعتمدة للمقرر (بعد تعديل المدة)
+    load_check = None
+    if "duration_minutes" in update:
+        fresh = await db.weekly_schedule.find_one({"_id": ObjectId(slot_id)})
+        if fresh:
+            load_check = await _course_week_balance(db, fresh)
+        if load_check and load_check["excess_minutes"] > 0:
+            message += f" ⚠️ تجاوز الخطة الأسبوعية: {load_check['scheduled_minutes']}د مدرجة / {load_check['plan_minutes']}د معتمدة"
+
+    return {"message": message, "shifted": shifted, "load_check": load_check}
+
+
+class RebalanceChange(BaseModel):
+    slot_id: str
+    duration_minutes: int
+
+
+class ApplyRebalanceRequest(BaseModel):
+    changes: List[RebalanceChange]
+
+
+@router.post("/weekly-schedule/apply-rebalance")
+async def apply_rebalance(
+    data: ApplyRebalanceRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """⚖️ تطبيق موازنة الساعات الأسبوعية: إنقاص مدد محاضرات المقرر الأخرى دون المساس بغير ذلك"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    applied = []
+    days = set()
+    faculty_id = ""
+    for ch in data.changes:
+        try:
+            s = await db.weekly_schedule.find_one({"_id": ObjectId(ch.slot_id)})
+        except Exception:
+            s = None
+        if not s:
+            continue
+        dur = max(30, min(300, int(ch.duration_minutes)))
+        q = {"merge_group_id": s["merge_group_id"]} if s.get("merge_group_id") else {"_id": s["_id"]}
+        await db.weekly_schedule.update_many(q, {"$set": {"duration_minutes": dur}})
+        days.add(s.get("day"))
+        faculty_id = s.get("faculty_id", "") or faculty_id
+        applied.append({"slot_id": ch.slot_id, "day": s.get("day", ""), "slot_number": s.get("slot_number"), "duration_minutes": dur})
+    shifted = []
+    for d in days:
+        shifted += await _resolve_day_times(db, faculty_id, d)
+    msg = f"⚖️ تمت الموازنة: تعديل مدة {len(applied)} محاضرة لتوافق الساعات المعتمدة" + _shift_summary(shifted)
+    return {"message": msg, "applied": applied, "shifted": shifted}
 
 
 @router.delete("/weekly-schedule/{slot_id}")
@@ -3259,6 +3309,75 @@ def _needed_weekly_slots(credit_hours) -> int:
     if credit <= 3:
         return 2
     return 3
+
+
+async def _course_week_balance(db, slot: dict) -> Optional[dict]:
+    """⚖️ مقارنة دقائق المقرر المجدولة أسبوعياً (لنفس الشعبة) بالخطة المعتمدة (الساعة = 60 دقيقة)
+    مع اقتراح موازنة بإنقاص المحاضرات الأخرى عند التجاوز."""
+    course_id = slot.get("course_id")
+    if not course_id:
+        return None
+    try:
+        course = await db.courses.find_one({"_id": ObjectId(course_id)})
+    except Exception:
+        course = None
+    if not course:
+        return None
+    try:
+        plan_hours = float(course.get("weekly_hours") or course.get("credit_hours") or 0)
+    except (TypeError, ValueError):
+        plan_hours = 0
+    if plan_hours <= 0:
+        return None
+    plan_minutes = int(plan_hours * 60)
+    slot_times = await _faculty_slot_times(db, slot.get("faculty_id", ""))
+    sec = slot.get("section") or ""
+    sec_q = {"section": sec} if sec else {"section": {"$in": ["", None]}}
+    sibs = await db.weekly_schedule.find({
+        "course_id": course_id,
+        "department_id": slot.get("department_id"),
+        "level": slot.get("level"),
+        **sec_q,
+    }).to_list(100)
+
+    def _minutes(s):
+        if s.get("duration_minutes"):
+            try:
+                return int(s["duration_minutes"])
+            except (TypeError, ValueError):
+                pass
+        st, en = slot_times.get(s.get("slot_number"), ("", ""))
+        a, b = _t2m(st), _t2m(en)
+        return (b - a) if (a is not None and b is not None) else 0
+
+    scheduled = sum(_minutes(s) for s in sibs)
+    excess = scheduled - plan_minutes
+    result = {
+        "plan_minutes": plan_minutes,
+        "scheduled_minutes": scheduled,
+        "excess_minutes": excess,
+        "course_name": course.get("name", ""),
+        "rebalance": [],
+    }
+    if excess <= 0:
+        return result
+    changed_id = str(slot.get("_id"))
+    others = [s for s in sibs if str(s["_id"]) != changed_id]
+    target = plan_minutes - _minutes(slot)
+    if others and target >= 30 * len(others):
+        base = target // len(others)
+        rem = target - base * len(others)
+        for i, o in enumerate(others):
+            proposed = base + (rem if i == 0 else 0)
+            result["rebalance"].append({
+                "slot_id": str(o["_id"]),
+                "day": o.get("day", ""),
+                "slot_number": o.get("slot_number"),
+                "current_minutes": _minutes(o),
+                "proposed_minutes": proposed,
+            })
+    return result
+
 
 
 @router.get("/weekly-schedule/master-view")
