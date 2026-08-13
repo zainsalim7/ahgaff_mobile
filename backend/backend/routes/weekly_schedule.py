@@ -1282,6 +1282,13 @@ async def update_schedule_slot(
         message += _shift_summary(shifted)
         if clear_duration and not shifted:
             message += " — عادت الأوقات الافتراضية"
+        # 🕑 مزامنة أوقات المحاضرات القادمة المولّدة (تنعكس على النصاب والعبء تلقائياً)
+        synced = 0
+        for d in days_to_resolve:
+            if d:
+                synced += await _resync_slot_times_for_day(db, existing.get("faculty_id", ""), d)
+        if synced:
+            message += f" 🕑 تم تحديث أوقات {synced} محاضرة قادمة"
 
     # ⚖️ فحص تجاوز الساعات الأسبوعية المعتمدة للمقرر (بعد تعديل المدة)
     load_check = None
@@ -1330,9 +1337,14 @@ async def apply_rebalance(
         faculty_id = s.get("faculty_id", "") or faculty_id
         applied.append({"slot_id": ch.slot_id, "day": s.get("day", ""), "slot_number": s.get("slot_number"), "duration_minutes": dur})
     shifted = []
+    synced = 0
     for d in days:
         shifted += await _resolve_day_times(db, faculty_id, d)
+        if d:
+            synced += await _resync_slot_times_for_day(db, faculty_id, d)
     msg = f"⚖️ تمت الموازنة: تعديل مدة {len(applied)} محاضرة لتوافق الساعات المعتمدة" + _shift_summary(shifted)
+    if synced:
+        msg += f" 🕑 تم تحديث أوقات {synced} محاضرة قادمة"
     return {"message": msg, "applied": applied, "shifted": shifted}
 
 
@@ -2707,6 +2719,62 @@ _SAT_OFFSET = {"السبت": 0, "الأحد": 1, "الاثنين": 2, "الإث�
 async def _faculty_slot_times(db, faculty_id: str) -> dict:
     settings = await db.schedule_settings.find_one({"_id": f"faculty_{faculty_id}"}) or await db.schedule_settings.find_one({"_id": "global"})
     return {s["slot_number"]: (s.get("start_time", ""), s.get("end_time", "")) for s in (settings or {}).get("time_slots", [])}
+
+
+async def _resync_slot_times_for_day(db, faculty_id: str, day: str) -> int:
+    """🕑 مزامنة أوقات المحاضرات المستقبلية المولّدة مع الأوقات الفعلية (مدد مخصصة/إزاحات)
+    بعد أي تغيير في المدد — الماضي محفوظ والمعاد جدولتها يدوياً تُستثنى."""
+    from datetime import timedelta
+    from collections import defaultdict
+    wd = _ARABIC_DAY_TO_WEEKDAY.get(day)
+    if wd is None or not faculty_id:
+        return 0
+    slot_times = await _faculty_slot_times(db, faculty_id)
+    if not slot_times:
+        return 0
+    slots = await db.weekly_schedule.find({"faculty_id": faculty_id, "day": day}).to_list(2000)
+    per_course: dict = defaultdict(list)
+    for s in slots:
+        st, en = slot_times.get(s.get("slot_number"), ("", ""))
+        if not st or not en:
+            continue
+        st, en, _ = _effective_times(s, st, en)
+        per_course[s.get("course_id", "")].append((s.get("slot_number"), st, en))
+    for k in per_course:
+        per_course[k].sort()
+    if not per_course:
+        return 0
+    today = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y-%m-%d")
+    lecs = await db.lectures.find({
+        "course_id": {"$in": [c for c in per_course if c]},
+        "generated_from_schedule": True,
+        "status": "scheduled",
+        "date": {"$gte": today},
+    }).to_list(20000)
+    by_course_date: dict = defaultdict(list)
+    for l in lecs:
+        by_course_date[(l.get("course_id"), l.get("date", ""))].append(l)
+    updated = 0
+    for (cid, date_str), group in by_course_date.items():
+        try:
+            if datetime.strptime(date_str, "%Y-%m-%d").date().weekday() != wd:
+                continue
+        except (ValueError, TypeError):
+            continue
+        expected = per_course.get(cid)
+        if not expected:
+            continue
+        group.sort(key=lambda x: x.get("start_time", ""))
+        for i, lec in enumerate(group):
+            if i >= len(expected):
+                break
+            if lec.get("original_date") or lec.get("last_rescheduled_from"):
+                continue
+            _, st, en = expected[i]
+            if lec.get("start_time") != st or lec.get("end_time") != en:
+                await db.lectures.update_one({"_id": lec["_id"]}, {"$set": {"start_time": st, "end_time": en}})
+                updated += 1
+    return updated
 
 
 async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
