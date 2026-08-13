@@ -126,6 +126,34 @@ async def get_teaching_loads(
     t_ids = list({l["teacher_id"] for l in loads})
     c_ids = list({l["course_id"] for l in loads})
 
+    # ⚖️ الساعات الفعلية من الجدول الأسبوعي (المدد المخصصة/الممددة تُحسب ضمن عبء المعلم)
+    actual_minutes_by_course: dict = {}
+    if c_ids:
+        from .weekly_schedule import _faculty_slot_times, _t2m
+        sched = await db.weekly_schedule.find({"course_id": {"$in": c_ids}}).to_list(5000)
+        fac_times = {}
+        for f in {s.get("faculty_id", "") for s in sched if s.get("faculty_id")}:
+            fac_times[f] = await _faculty_slot_times(db, f)
+        seen_merge_groups = set()
+        for s in sched:
+            gid = s.get("merge_group_id")
+            if gid:
+                if gid in seen_merge_groups:
+                    continue  # المحاضرة المشتركة تُنفَّذ مرة واحدة
+                seen_merge_groups.add(gid)
+            m = 0
+            if s.get("duration_minutes"):
+                try:
+                    m = int(s["duration_minutes"])
+                except (TypeError, ValueError):
+                    m = 0
+            if not m:
+                st, en = fac_times.get(s.get("faculty_id", ""), {}).get(s.get("slot_number"), ("", ""))
+                a, b = _t2m(st), _t2m(en)
+                m = (b - a) if (a is not None and b is not None) else 0
+            cid = s.get("course_id", "")
+            actual_minutes_by_course[cid] = actual_minutes_by_course.get(cid, 0) + max(m, 0)
+
     # Batch fetch teachers and courses
     teachers_map = {}
     if t_ids:
@@ -168,13 +196,17 @@ async def get_teaching_loads(
             continue
 
         wh = load.get("weekly_hours", 0)
+        actual_min = actual_minutes_by_course.get(cid, 0)
+        actual_h = round(actual_min / 60, 2) if actual_min else 0
         if tid not in teacher_summary:
             teacher_summary[tid] = {
                 "teacher_name": teacher.get("full_name", ""),
                 "total_hours": 0,
+                "actual_total_hours": 0,
                 "courses_count": 0,
             }
         teacher_summary[tid]["total_hours"] += wh
+        teacher_summary[tid]["actual_total_hours"] = round(teacher_summary[tid]["actual_total_hours"] + actual_h, 2)
         teacher_summary[tid]["courses_count"] += 1
 
         items.append({
@@ -191,6 +223,7 @@ async def get_teaching_loads(
             "course_credit_hours": course.get("credit_hours", 3),
             "course_department_id": course.get("department_id", ""),
             "weekly_hours": wh,
+            "actual_weekly_hours": actual_h,
             "semester_id": load.get("semester_id"),
             "notes": load.get("notes", ""),
             "created_at": load.get("created_at"),

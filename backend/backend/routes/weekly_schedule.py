@@ -3508,6 +3508,38 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
         ck = (s.get("course_id", ""), s.get("department_id", ""), s.get("level") or 1, s.get("section", "") or "")
         scheduled_counts[ck] = scheduled_counts.get(ck, 0) + 1
 
+    # ⚖️ وسم المحاضرات الممددة المتسببة في تجاوز الخطة الأسبوعية للمقرر (الساعة = 60 دقيقة)
+    _slot_len = {}
+    for t in time_slots:
+        a, b = _t2m(t.get("start_time", "")), _t2m(t.get("end_time", ""))
+        _slot_len[t.get("slot_number")] = (b - a) if (a is not None and b is not None) else 0
+    _grp_minutes: dict = {}
+    for s in slots:
+        ck = (s.get("course_id", ""), s.get("department_id", ""), s.get("level") or 1, s.get("section", "") or "")
+        m = 0
+        if s.get("duration_minutes"):
+            try:
+                m = int(s["duration_minutes"])
+            except (TypeError, ValueError):
+                m = 0
+        if not m:
+            m = max(_slot_len.get(s.get("slot_number"), 0), 0)
+        _grp_minutes[ck] = _grp_minutes.get(ck, 0) + m
+    _over_plan: dict = {}
+    for ck, mins in _grp_minutes.items():
+        course = courses_map.get(ck[0], {})
+        try:
+            ph = float(course.get("weekly_hours") or course.get("credit_hours") or 0)
+        except (TypeError, ValueError):
+            ph = 0
+        if ph > 0 and mins > int(ph * 60):
+            _over_plan[ck] = mins - int(ph * 60)
+    if _over_plan:
+        for e in entries:
+            ck = (e["course_id"], e["department_id"], e["level"], e["section"])
+            if ck in _over_plan and e.get("duration_minutes"):
+                e["over_plan_minutes"] = _over_plan[ck]
+
     # المقررات غير المدرجة إطلاقاً (المقياس: خلية واحدة على الأقل في الجدول = مدرج)
     unscheduled = []
     for c in courses:

@@ -819,6 +819,11 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                                   ⇠ {item.computed_start_time || ''}{item.computed_end_time ? ` - ${item.computed_end_time}` : ''}
                                 </div>
                               )}
+                              {item.over_plan_minutes ? (
+                                <div data-testid="over-plan-badge" style={{ fontSize: 8, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 110, background: '#ff6d00', color: '#fff', borderRadius: 3, padding: '0 3px', marginTop: 1 }}>
+                                  🔺 +{item.over_plan_minutes}د فوق الخطة
+                                </div>
+                              ) : null}
                               {item.merged_with?.length > 0 && (
                                 <div style={{ fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110, opacity: 0.95 }}>
                                   مع: {item.merged_with.join('، ')}

@@ -46,6 +46,7 @@ interface LoadItem {
   course_code: string;
   course_section: string;
   weekly_hours: number;
+  actual_weekly_hours?: number;
   notes: string;
 }
 
@@ -694,14 +695,15 @@ export default function TeachingLoadPage() {
   };
 
   // Group summary by teacher + حساب ساعات داخل/خارج القسم
-  const groupedByTeacher = existingLoads.reduce((acc: Record<string, { name: string; empId: string; teacherDeptId: string; items: LoadItem[]; totalHours: number; inHours: number; outHours: number }>, item) => {
+  const groupedByTeacher = existingLoads.reduce((acc: Record<string, { name: string; empId: string; teacherDeptId: string; items: LoadItem[]; totalHours: number; actualHours: number; inHours: number; outHours: number }>, item) => {
     if (!acc[item.teacher_id]) {
       const t = teachers.find(tt => tt.id === item.teacher_id) as any;
       const tDept = String(t?.department_id || (Array.isArray(t?.department_ids) ? t.department_ids[0] : '') || '');
-      acc[item.teacher_id] = { name: item.teacher_name, empId: item.teacher_employee_id, teacherDeptId: tDept, items: [], totalHours: 0, inHours: 0, outHours: 0 };
+      acc[item.teacher_id] = { name: item.teacher_name, empId: item.teacher_employee_id, teacherDeptId: tDept, items: [], totalHours: 0, actualHours: 0, inHours: 0, outHours: 0 };
     }
     acc[item.teacher_id].items.push(item);
     acc[item.teacher_id].totalHours += item.weekly_hours;
+    acc[item.teacher_id].actualHours = Math.round((acc[item.teacher_id].actualHours + (item.actual_weekly_hours || 0)) * 100) / 100;
     const courseDept = String((item as any).course_department_id || '');
     const teacherDept = acc[item.teacher_id].teacherDeptId;
     if (teacherDept && courseDept && courseDept !== teacherDept) {
@@ -1370,6 +1372,13 @@ export default function TeachingLoadPage() {
                     <View style={styles.summaryBadge}>
                       <Text style={styles.summaryBadgeText}>{group.totalHours} ساعة/أسبوع</Text>
                     </View>
+                    {group.actualHours > 0 && group.actualHours !== group.totalHours && (
+                      <View style={{ backgroundColor: group.actualHours > group.totalHours ? '#ffedd5' : '#e0f2fe', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginTop: 6, alignSelf: 'flex-end' }} testID={`actual-hours-badge-${tId}`}>
+                        <Text style={{ fontSize: 10.5, color: group.actualHours > group.totalHours ? '#c2410c' : '#0369a1', fontWeight: '800' }}>
+                          ⚖️ الفعلي من الجدول: {group.actualHours} ساعة {group.actualHours > group.totalHours ? `(+${Math.round((group.actualHours - group.totalHours) * 100) / 100})` : ''}
+                        </Text>
+                      </View>
+                    )}
                     {group.outHours > 0 && (
                       <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 6 }}>
                         <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 }}>
@@ -1387,6 +1396,7 @@ export default function TeachingLoadPage() {
                   <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الرمز</Text>
                   <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الشعبة</Text>
                   <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الساعات</Text>
+                  <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الفعلي بالجدول</Text>
                   <Text style={[styles.summaryTableHeaderCell, { flex: 0.5 }]}></Text>
                 </View>
                 {group.items.map((item) => {
@@ -1405,6 +1415,9 @@ export default function TeachingLoadPage() {
                     <Text style={[styles.summaryTableCell, { flex: 1, color: '#666' }]}>{item.course_code}</Text>
                     <Text style={[styles.summaryTableCell, { flex: 1, color: '#888' }]}>{item.course_section || '-'}</Text>
                     <Text style={[styles.summaryTableCell, { flex: 1, textAlign: 'center', fontWeight: '600' }]}>{item.weekly_hours}</Text>
+                    <Text style={[styles.summaryTableCell, { flex: 1, textAlign: 'center', fontWeight: '700', color: (item.actual_weekly_hours || 0) > item.weekly_hours ? '#c2410c' : '#64748b' }]}>
+                      {item.actual_weekly_hours ? `${item.actual_weekly_hours}${(item.actual_weekly_hours || 0) > item.weekly_hours ? ' 🔺' : ''}` : '-'}
+                    </Text>
                     <View style={[{ flex: 0.5, alignItems: 'center', justifyContent: 'center' }]}>
                       <TouchableOpacity
                         onPress={() => handleDelete(item.id, item.course_name)}
@@ -1420,6 +1433,7 @@ export default function TeachingLoadPage() {
                 <View style={{ flexDirection: 'row-reverse', alignItems: 'center', padding: 10, backgroundColor: '#f1f5f9', borderTopWidth: 2, borderTopColor: '#cbd5e1', marginTop: 4 }}>
                   <Text style={{ flex: 3, fontSize: 13, fontWeight: '800', color: '#0f172a', textAlign: 'right' }}>المجموع الكلي</Text>
                   <Text style={{ flex: 1, fontSize: 14, fontWeight: '800', color: '#1565c0', textAlign: 'center' }}>{group.totalHours} ساعة</Text>
+                  <Text style={{ flex: 1, fontSize: 13, fontWeight: '800', color: group.actualHours > group.totalHours ? '#c2410c' : '#64748b', textAlign: 'center' }}>{group.actualHours ? `${group.actualHours} فعلياً` : '-'}</Text>
                   <View style={{ flex: 0.5 }} />
                 </View>
               </View>
