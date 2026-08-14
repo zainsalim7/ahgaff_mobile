@@ -338,6 +338,16 @@ async def import_master_schedule(
 
     # ===== 3) المرور على كتل المجموعات (3 صفوف لكل مجموعة) =====
     to_create = []
+    new_courses = {}  # 🆕 مقررات غير موجودة ستُنشأ من الملف: (اسم مطبع، مستوى، شعبة) -> مواصفات
+
+    def _slot_minutes(ts0):
+        try:
+            a = str(ts0.get("start_time", "")).split(":")
+            b = str(ts0.get("end_time", "")).split(":")
+            return (int(b[0]) * 60 + int(b[1])) - (int(a[0]) * 60 + int(a[1]))
+        except (ValueError, IndexError):
+            return 90
+
     reassign_map = {}  # course_id -> {"new_id", "new_name", "old_id", "old_name", "course_name"}
     file_teachers = {}  # course_id -> {normalized_name: raw_name} لكشف التناقضات
     file_positions = {}  # course_id -> {(day, slot_number)} مواضع المقرر كما في الملف (الملف هو الأساس حرفياً)
@@ -403,6 +413,30 @@ async def import_master_schedule(
                 if tmatches:
                     matches = tmatches
             course = matches[0] if matches else None
+            if not course:
+                # 🆕 مقرر غير موجود → يُنشأ تلقائياً من الملف (تظهر مواصفاته في المعاينة أولاً)
+                if not teacher_txt:
+                    errors.append(f"{loc} المقرر الجديد '{course_txt}' يتطلب اسم أستاذ في الملف لإنشائه — تُخُطيت الخلية")
+                    continue
+                _tc = teachers_by_name.get(_norm(teacher_txt), [])
+                if not _tc:
+                    errors.append(f"{loc} الأستاذ '{teacher_txt}' غير موجود في النظام (مطلوب لإنشاء المقرر الجديد '{course_txt}') — تُخُطيت الخلية")
+                    continue
+                if len(_tc) > 1:
+                    errors.append(f"{loc} يوجد أكثر من معلم بالاسم '{teacher_txt}' في النظام (مطلوب لإنشاء المقرر الجديد '{course_txt}') — تُخُطيت الخلية")
+                    continue
+                _nk = (_norm(course_txt), level, nsec)
+                new_courses.setdefault(_nk, {
+                    "name": course_txt, "level": level, "section": section or "",
+                    "teacher_id": str(_tc[0]["_id"]), "teacher_name": _tc[0].get("full_name", ""),
+                    "total_minutes": 0, "cells": 0,
+                })
+                course = {
+                    "_id": f"__new__{level}|{nsec}|{_norm(course_txt)}",
+                    "name": course_txt, "level": level, "section": section or "",
+                    "teacher_id": str(_tc[0]["_id"]),
+                    "_is_new": True, "_nk": _nk,
+                }
             if not course:
                 if candidates:
                     have = "، ".join(f"م{x.get('level') or 1}{'/' + x.get('section') if x.get('section') else ''}" for x in candidates[:3])
@@ -472,6 +506,11 @@ async def import_master_schedule(
                 old_room = rooms_by_id.get(ex.get("room_id", ""), "")
                 replace_desc = f"{loc} سيُستبدل '{old_name}'{f' ({old_room})' if old_room else ''} ← بـ'{course.get('name', '')}' ({room.get('name', '')})"
 
+            if course.get("_is_new"):
+                _nc0 = new_courses[course["_nk"]]
+                _nc0["total_minutes"] += duration_minutes or _slot_minutes(ts)
+                _nc0["cells"] += 1
+
             to_create.append({
                 "faculty_id": faculty_id,
                 "department_id": department_id,
@@ -483,6 +522,7 @@ async def import_master_schedule(
                 "teacher_id": effective_tid,
                 "room_id": str(room["_id"]),
                 **({"duration_minutes": duration_minutes} if duration_minutes else {}),
+                **({"_new_course_key": course["_nk"]} if course.get("_is_new") else {}),
                 "_loc": loc,
                 "_course_name": course.get("name", ""),
                 "_teacher_name": teacher.get("full_name", ""),
@@ -724,9 +764,16 @@ async def import_master_schedule(
         for info in reassign_map.values()
     ]
     can_commit = len(conflicts) == 0 and (len(to_create) > 0 or len(reassign_map) > 0 or len(removal_ids) > 0)
+    new_courses_list = [
+        {"name": nc["name"], "level": nc["level"], "section": nc["section"], "teacher_name": nc["teacher_name"],
+         "weekly_hours": round(nc["total_minutes"] / 60, 2), "lectures": nc["cells"]}
+        for nc in new_courses.values()
+    ]
     report = {
         "dry_run": is_dry,
         "to_create": new_count,
+        "to_create_courses": len(new_courses_list),
+        "new_courses": new_courses_list,
         "to_replace": len(replaced_msgs),
         "replaced": replaced_msgs,
         "to_reassign": len(reassign_msgs),
@@ -756,6 +803,7 @@ async def import_master_schedule(
             return report
         report["message"] = (
             f"معاينة: سيتم إدراج {new_count} محاضرة جديدة"
+            + (f" • 🆕 إنشاء {len(new_courses_list)} مقرر جديد بالمواصفات المذكورة أدناه" if new_courses_list else "")
             + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
             + (f" • استبدال {len(replaced_msgs)} خلية بمحتوى الملف" if replaced_msgs else "")
             + (f" • إعادة تموضع: إزالة {len(removal_ids)} خلية غير مذكورة في الملف" if removal_ids else "")
@@ -804,6 +852,39 @@ async def import_master_schedule(
                 load["semester_id"] = sem_id
             await db.teaching_loads.insert_one(load)
 
+    # 🆕 إنشاء المقررات الجديدة من الملف (الساعات المعتمدة = مجموع مدد محاضراتها في الملف)
+    if new_courses:
+        active_sem = await db.semesters.find_one({"status": "active"})
+        for _nk, nc in new_courses.items():
+            hours = round(nc["total_minutes"] / 60, 2)
+            cdoc = {
+                "name": nc["name"], "department_id": department_id, "faculty_id": faculty_id,
+                "level": nc["level"], "term": 1, "code": "", "room": "",
+                "teacher_id": nc["teacher_id"], "credit_hours": hours, "weekly_hours": hours,
+                "is_active": True, "created_from_import": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_by": current_user.get("id", ""),
+            }
+            if nc["section"]:
+                cdoc["section"] = nc["section"]
+            if active_sem:
+                cdoc["semester_id"] = str(active_sem["_id"])
+            _res_new = await db.courses.insert_one(cdoc)
+            nc["created_id"] = str(_res_new.inserted_id)
+            # ⚖️ عبء تدريسي للأستاذ بنفس الساعات
+            load = {
+                "teacher_id": nc["teacher_id"], "course_id": nc["created_id"], "weekly_hours": hours,
+                "created_by": current_user.get("id", ""),
+                "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+            }
+            if active_sem:
+                load["semester_id"] = str(active_sem["_id"])
+            await db.teaching_loads.insert_one(load)
+        _nk_ids = {k: v["created_id"] for k, v in new_courses.items()}
+        for item in to_create:
+            if item.get("_new_course_key") in _nk_ids:
+                item["course_id"] = _nk_ids[item["_new_course_key"]]
+
     created = 0
     replaced_count = 0
     for item in to_create:
@@ -841,6 +922,7 @@ async def import_master_schedule(
     report["replaced_count"] = replaced_count
     report["message"] = (
         f"✅ تم إدراج {created} محاضرة جديدة"
+        + (f" • 🆕 أُنشئ {len(new_courses)} مقرر جديد بساعاته من الملف" if new_courses else "")
         + (f" • ⏱ إزاحة تلقائية لأوقات {len(_total_shifted)} محاضرة بسبب المدد المخصصة" if _total_shifted else "")
         + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
         + (f" • استُبدلت {replaced_count} خلية بمحتوى الملف" if replaced_count else "")

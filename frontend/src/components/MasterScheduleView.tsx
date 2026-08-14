@@ -1251,6 +1251,20 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                     </div>
                   </div>
                 )}
+                {importReport.new_courses?.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#e65100', textAlign: 'right', marginBottom: 4 }}>
+                      🆕 تنبيه: مقررات غير موجودة ستُنشأ تلقائياً بهذه المواصفات ({importReport.new_courses.length}):
+                    </div>
+                    <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid #ffcc80', borderRadius: 8, padding: 8, backgroundColor: '#fff8f0' }} data-testid="import-new-courses-list">
+                      {importReport.new_courses.map((nc: any, i: number) => (
+                        <div key={i} style={{ fontSize: 11.5, color: '#bf360c', textAlign: 'right', padding: '4px 0', borderBottom: '1px dashed #ffe0b2', fontWeight: 700 }}>
+                          «{nc.name}» — المستوى {nc.level}{nc.section ? ` شعبة ${nc.section}` : ''} — الأستاذ: {nc.teacher_name} — الساعات المعتمدة: {nc.weekly_hours} ساعة ({nc.lectures} محاضرة أسبوعياً)
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {importReport.merged?.length > 0 && (
                   <div style={{ marginBottom: 8 }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#00695c', textAlign: 'right', marginBottom: 4 }}>🔗 محاضرات مشتركة سيتم دمجها ({importReport.merged.length}):</div>
