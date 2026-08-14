@@ -1373,29 +1373,53 @@ async def merge_duplicate_courses(
         raise HTTPException(status_code=400, detail="معرف مقرر غير صالح")
     if not keep or not remove:
         raise HTTPException(status_code=404, detail="أحد المقررين غير موجود")
+
+    async def _move(coll: str, dup_keys: list) -> int:
+        """نقل مراجع مقرر مع معالجة التكرارات: عند وجود مفاتيح تكرار نمرّ سجلاً بسجل"""
+        if not dup_keys:
+            try:
+                res = await db[coll].update_many(
+                    {"course_id": data.remove_course_id},
+                    {"$set": {"course_id": data.keep_course_id}},
+                )
+                return res.modified_count
+            except Exception:
+                pass
+        cnt = 0
+        docs = await db[coll].find({"course_id": data.remove_course_id}).to_list(None)
+        for doc in docs:
+            try:
+                q = {"course_id": data.keep_course_id, **{k: doc.get(k) for k in dup_keys}}
+                if dup_keys and await db[coll].find_one(q):
+                    await db[coll].delete_one({"_id": doc["_id"]})
+                else:
+                    await db[coll].update_one({"_id": doc["_id"]}, {"$set": {"course_id": data.keep_course_id}})
+                    cnt += 1
+            except Exception:
+                await db[coll].delete_one({"_id": doc["_id"]})
+        return cnt
+
     moved = {}
-    for coll in ["weekly_schedule", "lectures", "enrollments", "attendance"]:
-        res = await db[coll].update_many(
-            {"course_id": data.remove_course_id},
-            {"$set": {"course_id": data.keep_course_id}},
+    try:
+        moved["weekly_schedule"] = await _move("weekly_schedule", ["department_id", "level", "section", "day", "slot_number"])
+        moved["lectures"] = await _move("lectures", ["date", "start_time"])
+        moved["enrollments"] = await _move("enrollments", ["student_id"])
+        moved["attendance"] = await _move("attendance", [])
+        await _move("teaching_loads", [])
+        seen_loads = set()
+        async for ld in db.teaching_loads.find({"course_id": data.keep_course_id}):
+            lk = (ld.get("teacher_id"), ld.get("semester_id"))
+            if lk in seen_loads:
+                await db.teaching_loads.delete_one({"_id": ld["_id"]})
+            else:
+                seen_loads.add(lk)
+        await db.courses.update_one(
+            {"_id": remove["_id"]},
+            {"$set": {"is_active": False, "merged_into": data.keep_course_id}},
         )
-        moved[coll] = res.modified_count
-    await db.teaching_loads.update_many(
-        {"course_id": data.remove_course_id},
-        {"$set": {"course_id": data.keep_course_id}},
-    )
-    seen_loads = set()
-    async for ld in db.teaching_loads.find({"course_id": data.keep_course_id}):
-        lk = (ld.get("teacher_id"), ld.get("semester_id"))
-        if lk in seen_loads:
-            await db.teaching_loads.delete_one({"_id": ld["_id"]})
-        else:
-            seen_loads.add(lk)
-    await db.courses.update_one(
-        {"_id": remove["_id"]},
-        {"$set": {"is_active": False, "merged_into": data.keep_course_id}},
-    )
-    await _sync_course_shared_links(db, data.keep_course_id)
+        await _sync_course_shared_links(db, data.keep_course_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"فشل الدمج: {type(e).__name__}: {e}")
     fresh = await db.courses.find_one({"_id": keep["_id"]})
     return {
         "message": f"🔀 تم دمج '{remove.get('name')}' في '{keep.get('name')}' — الخانات: {moved['weekly_schedule']}، المحاضرات: {moved['lectures']}، التسجيلات: {moved['enrollments']}",
