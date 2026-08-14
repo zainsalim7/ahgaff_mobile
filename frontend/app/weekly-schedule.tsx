@@ -688,8 +688,15 @@ export default function WeeklySchedulePage() {
     grid[day] = {};
     for (const ts of timeSlots) { grid[day][ts.slot_number] = []; }
   }
+  const seenMerge = new Set<string>();
   for (const s of schedule) {
     if (grid[s.day] && grid[s.day][s.slot_number]) {
+      // 🔗 وضع المعلم: دمج أعضاء المجموعة المشتركة في صندوق واحد بدل التكرار
+      if (viewMode === 'teacher' && s.merge_group_id) {
+        const k = `${s.merge_group_id}:${s.day}:${s.slot_number}`;
+        if (seenMerge.has(k)) continue;
+        seenMerge.add(k);
+      }
       grid[s.day][s.slot_number].push(s);
     }
   }
@@ -974,7 +981,7 @@ export default function WeeklySchedulePage() {
 
                   {schedule.length > 0 && (
                     <View style={{ marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#e3f2fd', borderRadius: 6 }}>
-                      <Text style={{ fontSize: 12, color: '#1565c0', fontWeight: '600' }}>إجمالي المحاضرات: {schedule.length}</Text>
+                      <Text style={{ fontSize: 12, color: '#1565c0', fontWeight: '600' }}>إجمالي المحاضرات: {viewMode === 'teacher' ? new Set(schedule.map((s: any) => s.merge_group_id ? `${s.merge_group_id}:${s.day}:${s.slot_number}` : s.id)).size : schedule.length}</Text>
                     </View>
                   )}
                 </View>
@@ -1174,7 +1181,12 @@ export default function WeeklySchedulePage() {
                                       fontSize: 11, fontWeight: 700, boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
                                     }}>!</div>
                                   )}
-                                  <div style={{ fontSize: 12, fontWeight: 600, color: '#333', textAlign: 'right' }}>{item.course_name}</div>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: '#333', textAlign: 'right' }}>
+                                    {item.course_name}
+                                    {(item.merged_with?.length > 0 || item.merge_group_id) && (
+                                      <span data-testid={`shared-slot-badge-${item.id}`} style={{ fontSize: 9, color: '#00695c', fontWeight: 800, backgroundColor: '#e0f2f1', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🔗 مشترك</span>
+                                    )}
+                                  </div>
                                   <div style={{ fontSize: 10, color: '#666', textAlign: 'right' }}>{item.course_code}</div>
                                   <div style={{ fontSize: 10, color: '#1565c0', textAlign: 'right' }}>{item.teacher_name}</div>
                                   <div style={{ fontSize: 10, color: '#888', textAlign: 'right' }}>{item.room_name} | {item.department_name} م{item.level}{item.section ? ` ${item.section}` : ''}</div>
