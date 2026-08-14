@@ -5926,6 +5926,7 @@ async def get_courses(
             "lectures_count": lecture_counts.get(str(c["_id"]), 0),
             "created_at": c.get("created_at"),
             "is_active": c.get("is_active", True),
+            "source": ("curriculum" if (c.get("curriculum_course_id") or c.get("auto_generated")) else ("import" if c.get("created_from_import") else "manual")),
         })
     
     return apply_fields(result, allowed)

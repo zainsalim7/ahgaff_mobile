@@ -765,7 +765,19 @@ export default function AddCourseScreen() {
             </View>
           )}
           <View style={{ flex: 1 }}>
-            <Text style={styles.tName} numberOfLines={1}>{item.name}</Text>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4 }}>
+              <Text style={styles.tName} numberOfLines={1}>{item.name}</Text>
+              {(item as any).source === 'curriculum' && (
+                <View style={{ backgroundColor: '#ede7f6', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }} testID={`course-source-curriculum-${item.id}`}>
+                  <Text style={{ fontSize: 8.5, color: '#5e35b1', fontWeight: '800' }}>📚 من الخطة</Text>
+                </View>
+              )}
+              {(item as any).source === 'import' && (
+                <View style={{ backgroundColor: '#fff3e0', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }} testID={`course-source-import-${item.id}`}>
+                  <Text style={{ fontSize: 8.5, color: '#e65100', fontWeight: '800' }}>📥 من الاستيراد</Text>
+                </View>
+              )}
+            </View>
             <Text style={styles.tSubName}>{item.code}{item.section ? ` · شعبة ${item.section}` : ''}</Text>
           </View>
         </TouchableOpacity>
