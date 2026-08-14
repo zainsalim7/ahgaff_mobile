@@ -1165,9 +1165,12 @@ export default function AddCourseScreen() {
                   const q = searchQuery.toLowerCase();
                   if (!c.name?.toLowerCase().includes(q) && !c.code?.toLowerCase().includes(q)) return false;
                 }
-                if (filterLevel && String(c.level) !== filterLevel) {
-                  const sharedLevels = ((c as any).shared_links || []).map((l: any) => String(l.level));
-                  if (!sharedLevels.includes(filterLevel)) return false;
+                if (filterLevel) {
+                  const links = ((c as any).shared_links || []) as any[];
+                  const inSelectedDept = !filterDept || filterDept === 'all' || c.department_id === filterDept;
+                  const nativeOk = inSelectedDept && String(c.level) === filterLevel;
+                  const sharedOk = links.some((l: any) => String(l.level) === filterLevel && (!filterDept || filterDept === 'all' || l.department_id === filterDept));
+                  if (!nativeOk && !sharedOk) return false;
                 }
                 if (filterSection && (c.section || '') !== filterSection) return false;
                 return true;
