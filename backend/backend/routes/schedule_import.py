@@ -115,8 +115,12 @@ async def download_import_template(
     if not working_days or not time_slots:
         raise HTTPException(status_code=400, detail="لا توجد أيام عمل أو فترات معرفة لهذه الكلية — عرّفها من الإعدادات أولاً")
 
-    # 🆕 القالب متاح لكل الأقسام: المجموعات تُبنى من كل مقررات القسم حتى غير المسندة لأستاذ
-    all_courses = await db.courses.find({"department_id": department_id, "is_active": True}).to_list(2000)
+    # 🆕 القالب متاح لكل الأقسام: المجموعات تُبنى من مقررات الفصل النشط (+ بلا فصل) حتى غير المسندة لأستاذ
+    _active_sem_t = await db.semesters.find_one({"status": "active"})
+    _tq = {"department_id": department_id, "is_active": True}
+    if _active_sem_t:
+        _tq["$or"] = [{"semester_id": str(_active_sem_t["_id"])}, {"semester_id": {"$in": [None, ""]}}]
+    all_courses = await db.courses.find(_tq).to_list(2000)
     seen_groups = {(g["level"], g["section"]) for g in groups}
     for cdoc in all_courses:
         key = (cdoc.get("level") or 1, cdoc.get("section") or "")
@@ -319,7 +323,12 @@ async def import_master_schedule(
     working_set = set(working_days)
 
     # ===== 2) بيانات النظام للمطابقة =====
-    courses = await db.courses.find({"department_id": department_id, "is_active": True}).to_list(2000)
+    # 🎯 المطابقة على مقررات الفصل النشط فقط (+ مقررات بلا فصل) — مقررات الفصول القديمة لا تُطابق
+    _active_sem = await db.semesters.find_one({"status": "active"})
+    _cq = {"department_id": department_id, "is_active": True}
+    if _active_sem:
+        _cq["$or"] = [{"semester_id": str(_active_sem["_id"])}, {"semester_id": {"$in": [None, ""]}}]
+    courses = await db.courses.find(_cq).to_list(2000)
     courses_by_name = {}
     for cdoc in courses:
         courses_by_name.setdefault(_norm(cdoc.get("name")), []).append(cdoc)
@@ -764,6 +773,8 @@ async def import_master_schedule(
         for info in reassign_map.values()
     ]
     can_commit = len(conflicts) == 0 and (len(to_create) > 0 or len(reassign_map) > 0 or len(removal_ids) > 0)
+    # 🆕 استبعاد المقررات الجديدة التي فشلت كل خلاياها (أخطاء أسماء)
+    new_courses = {k: v for k, v in new_courses.items() if v["cells"] > 0}
     new_courses_list = [
         {"name": nc["name"], "level": nc["level"], "section": nc["section"], "teacher_name": nc["teacher_name"],
          "weekly_hours": round(nc["total_minutes"] / 60, 2), "lectures": nc["cells"]}
