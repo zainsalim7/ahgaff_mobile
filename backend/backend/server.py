@@ -16649,6 +16649,18 @@ async def startup_event():
     await create_indexes()
     # 🔧 Migration لمرة واحدة: تحديث تفضيلات المعلمين الافتراضية (أقصى يومي 3 + السماح بالمتتالية)
     await migrate_teacher_prefs_defaults_v2()
+    # 🔗 مزامنة روابط المشاركة للمقررات من واقع خانات الجدول (المحاضرات المشتركة تظهر في مقررات كل قسم مشارك)
+    try:
+        from routes.weekly_schedule import _sync_course_shared_links
+        _cids_to_sync = set()
+        async for _ws in db.weekly_schedule.find({}, {"course_id": 1, "department_id": 1, "level": 1, "merge_group_id": 1}):
+            if _ws.get("course_id"):
+                _cids_to_sync.add(_ws["course_id"])
+        for _cid0 in _cids_to_sync:
+            await _sync_course_shared_links(db, _cid0)
+        logging.info(f"Shared-links sync done for {len(_cids_to_sync)} courses")
+    except Exception as e:
+        logging.warning(f"Shared-links startup sync failed (non-critical): {e}")
     # تحديث صلاحيات الأدوار الافتراضية تلقائياً
     await sync_default_roles()
     # 🔧 Migration لمرة واحدة: استعادة صلاحيات المحاضرات للأدوار التي فقدتها بالخطأ
