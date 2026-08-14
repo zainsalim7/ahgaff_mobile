@@ -5801,6 +5801,17 @@ async def get_courses(
     need_teacher_name = (allowed is None) or ("teacher_name" in allowed)
     need_semester_name = (allowed is None) or ("semester_name" in allowed)
 
+    # 🔗 نموذج المقرر الواحد: تضمين المقررات المشتركة مع هذا القسم/المستوى
+    if isinstance(query.get("department_id"), str):
+        _dep = query.pop("department_id")
+        _own = {"department_id": _dep}
+        if "level" in query:
+            _lv = query.pop("level")
+            _own["level"] = _lv
+            _shared = {"shared_links": {"$elemMatch": {"department_id": _dep, "level": _lv}}}
+        else:
+            _shared = {"shared_links.department_id": _dep}
+        query["$or"] = [_own, _shared]
     courses = await db.courses.find(query).to_list(None)
     
     # جلب عدد الطلاب لكل مقرر دفعة واحدة (فقط إذا مطلوب)
@@ -5927,6 +5938,8 @@ async def get_courses(
             "created_at": c.get("created_at"),
             "is_active": c.get("is_active", True),
             "source": ("curriculum" if (c.get("curriculum_course_id") or c.get("auto_generated")) else ("import" if c.get("created_from_import") else "manual")),
+            "shared_links": c.get("shared_links") or [],
+            "shared_here": bool(department_id and c.get("department_id") and c.get("department_id") != department_id),
         })
     
     return apply_fields(result, allowed)

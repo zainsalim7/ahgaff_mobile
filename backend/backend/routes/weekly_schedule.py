@@ -1153,6 +1153,8 @@ async def create_schedule_slot(
     # ⏱ حلحلة أوقات اليوم (قد تُزاح المحاضرة الجديدة إذا سبقتها محاضرة ممتدة)
     shifted = await _resolve_day_times(db, data.faculty_id, data.day)
     msg += _shift_summary(shifted)
+    if data.course_id:
+        await _sync_course_shared_links(db, data.course_id)
     return {"id": inserted_id, "merge_group_id": merge_gid, "message": msg, "shifted": shifted}
 
 
@@ -1373,6 +1375,8 @@ async def delete_schedule_slot(
         message += _sync_summary(sync)
         # ⏱ إعادة حساب أوقات اليوم (فك الإزاحات المرتبطة بالمحاضرة المحذوفة)
         await _resolve_day_times(db, slot.get("faculty_id", ""), slot.get("day", ""))
+        if slot.get("course_id"):
+            await _sync_course_shared_links(db, slot["course_id"])
     return {"message": message}
 
 
@@ -2777,6 +2781,25 @@ async def _resync_slot_times_for_day(db, faculty_id: str, day: str) -> int:
     return updated
 
 
+async def _sync_course_shared_links(db, course_id: str) -> None:
+    """🔗 نموذج المقرر الواحد: اشتقاق الأقسام/المستويات المشاركة من خانات الجدول وتخزينها على المقرر"""
+    try:
+        course = await db.courses.find_one({"_id": ObjectId(course_id)})
+    except Exception:
+        return
+    if not course:
+        return
+    own = (course.get("department_id", ""), course.get("level"))
+    links, seen = [], set()
+    async for s in db.weekly_schedule.find({"course_id": course_id}):
+        key = (s.get("department_id", ""), s.get("level"), s.get("section", "") or "")
+        if (key[0], key[1]) == own or key in seen:
+            continue
+        seen.add(key)
+        links.append({"department_id": key[0], "level": key[1], "section": key[2]})
+    await db.courses.update_one({"_id": course["_id"]}, {"$set": {"shared_links": links}})
+
+
 async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
     """⏱ حلحلة أوقات اليوم: إزاحة متسلسلة لبدايات المحاضرات المتأثرة بالمدد المخصصة
     (بدون نقل أو حذف — فقط تعديل الأوقات). يخزن computed_start_time/computed_end_time
@@ -3364,6 +3387,9 @@ async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Dep
     await _resolve_day_times(db, a.get("faculty_id", ""), b.get("day", ""))
     if a.get("day") != b.get("day"):
         await _resolve_day_times(db, a.get("faculty_id", ""), a.get("day", ""))
+    for _cid in {a.get("course_id", ""), b.get("course_id", "")}:
+        if _cid:
+            await _sync_course_shared_links(db, _cid)
     return {"message": f"تم الدمج في محاضرة مشتركة تضم {total} جداول" + _sync_summary(sync), "merge_group_id": gid}
 
 

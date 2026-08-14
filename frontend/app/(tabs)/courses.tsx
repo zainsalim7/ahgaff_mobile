@@ -777,6 +777,11 @@ export default function AddCourseScreen() {
                   <Text style={{ fontSize: 8.5, color: '#e65100', fontWeight: '800' }}>📥 من الاستيراد</Text>
                 </View>
               )}
+              {(((item as any).shared_here) || (((item as any).shared_links || []).length > 0)) && (
+                <View style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }} testID={`course-shared-badge-${item.id}`}>
+                  <Text style={{ fontSize: 8.5, color: '#00695c', fontWeight: '800' }}>🔗 مشترك</Text>
+                </View>
+              )}
             </View>
             <Text style={styles.tSubName}>{item.code}{item.section ? ` · شعبة ${item.section}` : ''}</Text>
           </View>

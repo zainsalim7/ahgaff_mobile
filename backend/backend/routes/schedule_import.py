@@ -12,7 +12,7 @@ from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
 from .deps import get_db, get_current_user, log_activity
-from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures, _resolve_day_times
+from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures, _resolve_day_times, _sync_course_shared_links
 
 router = APIRouter(tags=["استيراد الجدول الأسبوعي"])
 
@@ -348,6 +348,8 @@ async def import_master_schedule(
     # ===== 3) المرور على كتل المجموعات (3 صفوف لكل مجموعة) =====
     to_create = []
     new_courses = {}  # 🆕 مقررات غير موجودة ستُنشأ من الملف: (اسم مطبع، مستوى، شعبة) -> مواصفات
+    shared_links_add = set()  # 🔗 (course_id, dept, level, section) روابط مشاركة ستُضاف لمقررات قائمة
+    all_courses_map = {str(c["_id"]): c for c in await db.courses.find({}, {"name": 1, "room_id": 1}).to_list(5000)}
 
     def _slot_minutes(ts0):
         try:
@@ -503,6 +505,14 @@ async def import_master_schedule(
             replace_course = ""
             ex = existing_cells.get((level, section_val, day, slot_number))
             if ex:
+                # 🔗 خلية عضو في محاضرة مشتركة قائمة ومقررها من قسم آخر: مطابقة بالاسم + القاعة → ربط بدل الإنشاء
+                if course.get("_is_new"):
+                    _exc = all_courses_map.get(ex.get("course_id", ""), {})
+                    if _exc and _norm(_exc.get("name", "")) == _norm(course_txt) and (ex.get("room_id") or "") == str(room["_id"]) \
+                            and (ex.get("duration_minutes") or None) == duration_minutes:
+                        skipped_existing.append(f"{loc} مطابقة لمحاضرة مشتركة قائمة — سيُربط مقررها '{_exc.get('name', '')}' كمشترك مع هذا القسم/المستوى")
+                        shared_links_add.add((ex.get("course_id", ""), department_id, level, section_val))
+                        continue
                 same = (ex.get("course_id") == str(course["_id"]) and (ex.get("room_id") or "") == str(room["_id"])
                         and (ex.get("duration_minutes") or None) == duration_minutes)
                 if same:
@@ -729,6 +739,15 @@ async def import_master_schedule(
         elif rk in seen_room and (not gid_i or seen_room[rk] != gid_i):
             conflicts.append(f"{loc} تعارض قاعة داخل الملف: '{item['_room_name']}' مذكورة في خليتين بنفس (اليوم/الفترة)")
         if joined_existing is not None:
+            # 🔗 نموذج المقرر الواحد: خلية بمقرر جديد تنضم لمحاضرة قائمة → تتبنى مقررها بدل إنشاء نسخة
+            if item.get("_new_course_key") and joined_existing.get("course_id"):
+                _nk0 = item.pop("_new_course_key")
+                _nc1 = new_courses.get(_nk0)
+                if _nc1:
+                    _nc1["cells"] -= 1
+                    _nc1["total_minutes"] -= (item.get("duration_minutes") or 90)
+                item["course_id"] = joined_existing["course_id"]
+                shared_links_add.add((joined_existing["course_id"], item["department_id"], item["level"], item.get("section") or ""))
             gid = joined_existing.get("merge_group_id") or uuid.uuid4().hex
             members = [x for x in to_create if gid_i and x.get("merge_group_id") == gid_i] or [item]
             for x in members:
@@ -772,7 +791,7 @@ async def import_master_schedule(
          else f"المقرر '{info['course_name']}': الإسناد سيتغير من '{info['old_name']}' ← إلى '{info['new_name']}' (يسري على كل محاضراته)")
         for info in reassign_map.values()
     ]
-    can_commit = len(conflicts) == 0 and (len(to_create) > 0 or len(reassign_map) > 0 or len(removal_ids) > 0)
+    can_commit = len(conflicts) == 0 and (len(to_create) > 0 or len(reassign_map) > 0 or len(removal_ids) > 0 or len(shared_links_add) > 0)
     # 🆕 استبعاد المقررات الجديدة التي فشلت كل خلاياها (أخطاء أسماء)
     new_courses = {k: v for k, v in new_courses.items() if v["cells"] > 0}
     new_courses_list = [
@@ -785,6 +804,7 @@ async def import_master_schedule(
         "to_create": new_count,
         "to_create_courses": len(new_courses_list),
         "new_courses": new_courses_list,
+        "shared_links_to_add": len(shared_links_add),
         "to_replace": len(replaced_msgs),
         "replaced": replaced_msgs,
         "to_reassign": len(reassign_msgs),
@@ -815,6 +835,7 @@ async def import_master_schedule(
         report["message"] = (
             f"معاينة: سيتم إدراج {new_count} محاضرة جديدة"
             + (f" • 🆕 إنشاء {len(new_courses_list)} مقرر جديد بالمواصفات المذكورة أدناه" if new_courses_list else "")
+            + (f" • 🔗 ربط {len(shared_links_add)} مقرر كمشترك مع هذا القسم/المستوى" if shared_links_add else "")
             + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
             + (f" • استبدال {len(replaced_msgs)} خلية بمحتوى الملف" if replaced_msgs else "")
             + (f" • إعادة تموضع: إزالة {len(removal_ids)} خلية غير مذكورة في الملف" if removal_ids else "")
@@ -925,6 +946,14 @@ async def import_master_schedule(
     for _d in _import_days:
         _total_shifted += await _resolve_day_times(db, faculty_id, _d)
 
+    # 🔗 نموذج المقرر الواحد: تحديث روابط المشاركة للمقررات المتأثرة (تظهر في جدول مقررات كل قسم مشارك)
+    _link_cids = {it.get("course_id", "") for it in to_create}
+    _link_cids |= {sh[0] for sh in shared_links_add}
+    _link_cids |= {jd[0].get("course_id", "") for jd in existing_merge_joins.values()}
+    for _cid in _link_cids:
+        if _cid and ObjectId.is_valid(_cid):
+            await _sync_course_shared_links(db, _cid)
+
     await log_activity(
         current_user, "import_master_schedule_excel", "weekly_schedule", department_id, None,
         {"faculty_id": faculty_id, "created": created, "replaced": replaced_count, "repositioned": len(removal_ids), "reassigned": len(reassign_map), "errors": len(errors), "skipped_identical": len(skipped_existing)},
@@ -934,6 +963,7 @@ async def import_master_schedule(
     report["message"] = (
         f"✅ تم إدراج {created} محاضرة جديدة"
         + (f" • 🆕 أُنشئ {len(new_courses)} مقرر جديد بساعاته من الملف" if new_courses else "")
+        + (f" • 🔗 رُبط {len(shared_links_add)} مقرر كمشترك مع هذا القسم/المستوى" if shared_links_add else "")
         + (f" • ⏱ إزاحة تلقائية لأوقات {len(_total_shifted)} محاضرة بسبب المدد المخصصة" if _total_shifted else "")
         + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
         + (f" • استُبدلت {replaced_count} خلية بمحتوى الملف" if replaced_count else "")
