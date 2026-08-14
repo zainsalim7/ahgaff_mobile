@@ -1350,6 +1350,87 @@ async def apply_rebalance(
     return {"message": msg, "applied": applied, "shifted": shifted}
 
 
+class MergeCoursesRequest(BaseModel):
+    keep_course_id: str
+    remove_course_id: str
+
+
+@router.post("/courses-tools/merge-duplicates")
+async def merge_duplicate_courses(
+    data: MergeCoursesRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """🔀 دمج مقرر مكرر في الأصلي: نقل الخانات/المحاضرات/التسجيلات/الأعباء ثم بناء روابط المشاركة"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    if data.keep_course_id == data.remove_course_id:
+        raise HTTPException(status_code=400, detail="لا يمكن دمج المقرر مع نفسه")
+    db = get_db()
+    try:
+        keep = await db.courses.find_one({"_id": ObjectId(data.keep_course_id)})
+        remove = await db.courses.find_one({"_id": ObjectId(data.remove_course_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="معرف مقرر غير صالح")
+    if not keep or not remove:
+        raise HTTPException(status_code=404, detail="أحد المقررين غير موجود")
+    moved = {}
+    for coll in ["weekly_schedule", "lectures", "enrollments", "attendance"]:
+        res = await db[coll].update_many(
+            {"course_id": data.remove_course_id},
+            {"$set": {"course_id": data.keep_course_id}},
+        )
+        moved[coll] = res.modified_count
+    await db.teaching_loads.update_many(
+        {"course_id": data.remove_course_id},
+        {"$set": {"course_id": data.keep_course_id}},
+    )
+    seen_loads = set()
+    async for ld in db.teaching_loads.find({"course_id": data.keep_course_id}):
+        lk = (ld.get("teacher_id"), ld.get("semester_id"))
+        if lk in seen_loads:
+            await db.teaching_loads.delete_one({"_id": ld["_id"]})
+        else:
+            seen_loads.add(lk)
+    await db.courses.update_one(
+        {"_id": remove["_id"]},
+        {"$set": {"is_active": False, "merged_into": data.keep_course_id}},
+    )
+    await _sync_course_shared_links(db, data.keep_course_id)
+    fresh = await db.courses.find_one({"_id": keep["_id"]})
+    return {
+        "message": f"🔀 تم دمج '{remove.get('name')}' في '{keep.get('name')}' — الخانات: {moved['weekly_schedule']}، المحاضرات: {moved['lectures']}، التسجيلات: {moved['enrollments']}",
+        "moved": moved,
+        "shared_links": fresh.get("shared_links", []),
+    }
+
+
+@router.get("/courses-tools/duplicate-candidates")
+async def get_duplicate_candidates(
+    faculty_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """🔎 اكتشاف المقررات المكررة بالاسم (نشطة) لاقتراح دمجها"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    groups: dict = {}
+    dep_names = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}).to_list(500)}
+    async for c in db.courses.find({"is_active": True}):
+        if faculty_id and c.get("faculty_id") and c.get("faculty_id") != faculty_id:
+            continue
+        key = str(c.get("name", "")).strip()
+        groups.setdefault(key, []).append({
+            "id": str(c["_id"]),
+            "department_id": c.get("department_id", ""),
+            "department_name": dep_names.get(c.get("department_id", ""), ""),
+            "level": c.get("level"),
+            "semester_id": c.get("semester_id"),
+            "teacher_id": c.get("teacher_id"),
+            "slots": await db.weekly_schedule.count_documents({"course_id": str(c["_id"])}),
+        })
+    return {"duplicates": [{"name": k, "courses": v} for k, v in groups.items() if len(v) > 1]}
+
+
 @router.delete("/weekly-schedule/{slot_id}")
 async def delete_schedule_slot(
     slot_id: str,
