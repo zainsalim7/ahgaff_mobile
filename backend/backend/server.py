@@ -4863,6 +4863,7 @@ async def get_teacher_courses(
 
     result = []
     total_weekly_hours = 0
+    _all_deps = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}, {"name": 1}).to_list(500)}
     for course in courses:
         # جلب معلومات القسم
         dept_name = ""
@@ -4892,6 +4893,7 @@ async def get_teacher_courses(
             weekly_hours = load_hours
         total_weekly_hours += weekly_hours
 
+        _slinks = course.get("shared_links", []) or []
         result.append({
             "id": course_id_str,
             "name": course["name"],
@@ -4906,7 +4908,17 @@ async def get_teacher_courses(
             "lectures_count": lectures_count,
             "weekly_hours": weekly_hours,
             "teaching_load_id": load_id_by_course.get(course_id_str),
-            "is_active": course.get("is_active", True)
+            "is_active": course.get("is_active", True),
+            "is_shared": len(_slinks) > 0,
+            "shared_with": [
+                {
+                    "department_id": l.get("department_id", ""),
+                    "department_name": _all_deps.get(l.get("department_id", ""), ""),
+                    "level": l.get("level"),
+                    "section": l.get("section", "") or "",
+                }
+                for l in _slinks
+            ],
         })
     
     return {
