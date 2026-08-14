@@ -1455,6 +1455,122 @@ async def get_duplicate_candidates(
     return {"duplicates": [{"name": k, "courses": v} for k, v in groups.items() if len(v) > 1]}
 
 
+@router.get("/courses/{course_id}/shared-details")
+async def get_course_shared_details(
+    course_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """🔍 شفافية المشاركة: تفاصيل كل قسم/مستوى/شعبة يظهر فيها المقرر + المحاضرات الداعمة"""
+    db = get_db()
+    try:
+        course = await db.courses.find_one({"_id": ObjectId(course_id)})
+    except Exception:
+        course = None
+    if not course:
+        raise HTTPException(status_code=404, detail="المقرر غير موجود")
+    dep_names = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}).to_list(500)}
+    slots = await db.weekly_schedule.find({"course_id": course_id}).to_list(1000)
+    t_ids = [s["teacher_id"] for s in slots if s.get("teacher_id") and ObjectId.is_valid(s["teacher_id"])]
+    r_ids = [s["room_id"] for s in slots if s.get("room_id") and ObjectId.is_valid(s["room_id"])]
+    t_map = {str(t["_id"]): t.get("full_name", "") for t in await db.teachers.find({"_id": {"$in": [ObjectId(i) for i in set(t_ids)]}}).to_list(500)}
+    r_map = {str(r["_id"]): r.get("name", "") for r in await db.rooms.find({"_id": {"$in": [ObjectId(i) for i in set(r_ids)]}}).to_list(500)}
+    fac_id = course.get("faculty_id") or (slots[0].get("faculty_id", "") if slots else "")
+    settings = await db.schedule_settings.find_one({"_id": f"faculty_{fac_id}"}) or await db.schedule_settings.find_one({"_id": "global"})
+    slot_meta = {ts.get("slot_number"): ts for ts in (settings or {}).get("time_slots", [])}
+    own_key = (course.get("department_id", ""), course.get("level"))
+    groups: dict = {}
+    for s in slots:
+        key = (s.get("department_id", ""), s.get("level"), s.get("section", "") or "")
+        g = groups.setdefault(key, {
+            "department_id": key[0],
+            "department_name": dep_names.get(key[0], ""),
+            "level": key[1],
+            "section": key[2],
+            "is_native": (key[0], key[1]) == own_key,
+            "slots": [],
+        })
+        meta = slot_meta.get(s.get("slot_number"), {})
+        g["slots"].append({
+            "day": s.get("day", ""),
+            "slot_number": s.get("slot_number"),
+            "slot_name": meta.get("name", ""),
+            "start_time": s.get("computed_start_time") or meta.get("start_time", ""),
+            "end_time": s.get("computed_end_time") or meta.get("end_time", ""),
+            "room_name": s.get("room_name") or r_map.get(s.get("room_id", ""), ""),
+            "teacher_name": s.get("teacher_name") or t_map.get(s.get("teacher_id", ""), ""),
+        })
+    day_order = {d: i for i, d in enumerate(["السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"])}
+    for g in groups.values():
+        g["slots"].sort(key=lambda x: (day_order.get(x["day"], 9), x["slot_number"] or 0))
+    orphan_links = []
+    for l in course.get("shared_links", []) or []:
+        k = (l.get("department_id", ""), l.get("level"), l.get("section", "") or "")
+        if k not in groups:
+            orphan_links.append({**l, "department_name": dep_names.get(l.get("department_id", ""), "")})
+    return {
+        "course": {
+            "id": str(course["_id"]),
+            "name": course.get("name", ""),
+            "code": course.get("code", ""),
+            "department_id": course.get("department_id", ""),
+            "department_name": dep_names.get(course.get("department_id", ""), ""),
+            "level": course.get("level"),
+            "section": course.get("section", "") or "",
+        },
+        "groups": sorted(groups.values(), key=lambda g: (not g["is_native"], g["department_name"])),
+        "orphan_links": orphan_links,
+    }
+
+
+@router.get("/courses-tools/shared-links-integrity")
+async def shared_links_integrity(current_user: dict = Depends(get_current_user)):
+    """🩺 فحص سلامة روابط المشاركة: كل رابطة يجب أن تدعمها خانات جدول حقيقية"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    dep_names = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}).to_list(500)}
+    orphans, checked_courses, checked_links = [], 0, 0
+    async for c in db.courses.find({"shared_links.0": {"$exists": True}}):
+        checked_courses += 1
+        cid = str(c["_id"])
+        for l in c.get("shared_links", []) or []:
+            checked_links += 1
+            sec = l.get("section", "") or ""
+            q = {"course_id": cid, "department_id": l.get("department_id", ""), "level": l.get("level")}
+            q["section"] = {"$in": ["", None]} if sec == "" else sec
+            n = await db.weekly_schedule.count_documents(q)
+            if n == 0:
+                orphans.append({
+                    "course_id": cid,
+                    "course_name": c.get("name", ""),
+                    "course_code": c.get("code", ""),
+                    "own_department_name": dep_names.get(c.get("department_id", ""), ""),
+                    "own_level": c.get("level"),
+                    "link_department_id": l.get("department_id", ""),
+                    "link_department_name": dep_names.get(l.get("department_id", ""), ""),
+                    "link_level": l.get("level"),
+                    "link_section": sec,
+                })
+    return {"checked_courses": checked_courses, "checked_links": checked_links, "orphan_links": orphans}
+
+
+@router.post("/courses-tools/shared-links-integrity/fix")
+async def fix_shared_links_integrity(current_user: dict = Depends(get_current_user)):
+    """🔧 إعادة مزامنة روابط المشاركة من خانات الجدول (يزيل الروابط اليتيمة)"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    fixed = 0
+    ids = [c["_id"] async for c in db.courses.find({"shared_links.0": {"$exists": True}}, {"_id": 1})]
+    for _id in ids:
+        before = (await db.courses.find_one({"_id": _id}, {"shared_links": 1}) or {}).get("shared_links", []) or []
+        await _sync_course_shared_links(db, str(_id))
+        after = (await db.courses.find_one({"_id": _id}, {"shared_links": 1}) or {}).get("shared_links", []) or []
+        if {tuple(sorted(l.items())) for l in before} != {tuple(sorted(l.items())) for l in after}:
+            fixed += 1
+    return {"message": f"🔧 أعيدت مزامنة الروابط من الجدول — تم تصحيح {fixed} مقرر", "fixed_courses": fixed}
+
+
 @router.delete("/weekly-schedule/{slot_id}")
 async def delete_schedule_slot(
     slot_id: str,

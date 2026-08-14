@@ -110,6 +110,11 @@ export default function AddCourseScreen() {
   const [filterSection, setFilterSection] = useState<string>('');
   const [filterSemester, setFilterSemester] = useState<string>(''); // '' = الفصل النشط (افتراضي), 'all' = كل الفصول, أو semester_id محدد
   const [sortBy, setSortBy] = useState<string | null>(null);
+  const [sharedDetailCourse, setSharedDetailCourse] = useState<Course | null>(null);
+  const [sharedDetailData, setSharedDetailData] = useState<any>(null);
+  const [integrityOpen, setIntegrityOpen] = useState(false);
+  const [integrityData, setIntegrityData] = useState<any>(null);
+  const [fixingLinks, setFixingLinks] = useState(false);
   const [activeSemester, setActiveSemester] = useState<any>(null);
   const [allSemesters, setAllSemesters] = useState<any[]>([]);
   
@@ -778,9 +783,17 @@ export default function AddCourseScreen() {
                 </View>
               )}
               {(((item as any).shared_here) || (((item as any).shared_links || []).length > 0)) && (
-                <View style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }} testID={`course-shared-badge-${item.id}`}>
+                <TouchableOpacity
+                  style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
+                  testID={`course-shared-badge-${item.id}`}
+                  onPress={async () => {
+                    setSharedDetailCourse(item); setSharedDetailData(null);
+                    try { const r = await api.get(`/courses/${item.id}/shared-details`); setSharedDetailData(r.data); }
+                    catch { setSharedDetailData({ error: true }); }
+                  }}
+                >
                   <Text style={{ fontSize: 8.5, color: '#00695c', fontWeight: '800' }}>🔗 مشترك</Text>
-                </View>
+                </TouchableOpacity>
               )}
             </View>
             <Text style={styles.tSubName}>{item.code}{item.section ? ` · شعبة ${item.section}` : ''}</Text>
@@ -1501,6 +1514,14 @@ export default function AddCourseScreen() {
                   <Text style={styles.menuText}>{enrollingAll ? 'جاري التسجيل...' : 'تسجيل تلقائي للكل'}</Text>
                 </TouchableOpacity>
               )}
+              <TouchableOpacity style={styles.menuItem} testID="shared-links-integrity-btn" onPress={async () => {
+                setOpenMenuId(null); setIntegrityOpen(true); setIntegrityData(null);
+                try { const r = await api.get('/courses-tools/shared-links-integrity'); setIntegrityData(r.data); }
+                catch { setIntegrityData({ error: true }); }
+              }}>
+                <Ionicons name="pulse-outline" size={18} color="#00695c" />
+                <Text style={styles.menuText}>فحص سلامة المشاركات</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); handleRestore(); }} disabled={restoring}>
                 <Ionicons name="refresh-outline" size={18} color="#1565c0" />
                 <Text style={styles.menuText}>{restoring ? 'جاري...' : 'استعادة'}</Text>
@@ -1510,6 +1531,113 @@ export default function AddCourseScreen() {
         </Modal>
       )}
       
+      {/* 🔍 نافذة تفاصيل المشاركة */}
+      {sharedDetailCourse && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setSharedDetailCourse(null)}>
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSharedDetailCourse(null)} />
+            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18, width: '92%', maxWidth: 560, maxHeight: '85%' }} testID="shared-details-modal">
+              <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: '#1a2540' }}>🔗 تفاصيل المشاركة — {sharedDetailCourse.name}</Text>
+                <TouchableOpacity onPress={() => setSharedDetailCourse(null)} testID="shared-details-close"><Ionicons name="close" size={20} color="#5b6678" /></TouchableOpacity>
+              </View>
+              {!sharedDetailData ? (
+                <ActivityIndicator size="small" color="#00695c" style={{ marginVertical: 24 }} />
+              ) : sharedDetailData.error ? (
+                <Text style={{ color: '#f44336', textAlign: 'center', marginVertical: 20 }}>فشل في جلب التفاصيل</Text>
+              ) : (
+                <ScrollView style={{ maxHeight: 480 }}>
+                  <Text style={{ fontSize: 11.5, color: '#5b6678', textAlign: 'right', marginBottom: 10, lineHeight: 18 }}>
+                    كل بطاقة أدناه تمثل قسماً/مستوى يظهر فيه المقرر، مع المحاضرات الفعلية في الجدول التي تدعم ذلك — المشاركة تنشأ فقط من محاضرات مشتركة حقيقية (نفس الأستاذ والقاعة والوقت).
+                  </Text>
+                  {(sharedDetailData.groups || []).map((g: any, gi: number) => (
+                    <View key={gi} style={{ borderWidth: 1, borderColor: g.is_native ? '#c8e6c9' : '#b2dfdb', backgroundColor: g.is_native ? '#f6fbf6' : '#f2fbfa', borderRadius: 10, padding: 10, marginBottom: 8 }} testID={`shared-group-${gi}`}>
+                      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: '#1a2540' }}>{g.department_name || '—'}</Text>
+                        <Text style={{ fontSize: 11.5, color: '#5b6678' }}>المستوى {g.level}{g.section ? ` · شعبة ${g.section}` : ''}</Text>
+                        <View style={{ backgroundColor: g.is_native ? '#2e7d32' : '#00695c', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+                          <Text style={{ fontSize: 9, color: '#fff', fontWeight: '800' }}>{g.is_native ? 'القسم الأصلي' : 'مشاركة'}</Text>
+                        </View>
+                      </View>
+                      {(g.slots || []).map((s: any, si: number) => (
+                        <Text key={si} style={{ fontSize: 11.5, color: '#37455c', textAlign: 'right', lineHeight: 20 }}>
+                          • {s.day} — {s.slot_name || `الفترة ${s.slot_number}`}{s.start_time ? ` (${s.start_time}-${s.end_time})` : ''} · {s.room_name || 'بدون قاعة'} · {s.teacher_name || 'بدون أستاذ'}
+                        </Text>
+                      ))}
+                      {(!g.slots || g.slots.length === 0) && <Text style={{ fontSize: 11.5, color: '#8a95a8', textAlign: 'right' }}>لا محاضرات</Text>}
+                    </View>
+                  ))}
+                  {(sharedDetailData.orphan_links || []).length > 0 && (
+                    <View style={{ borderWidth: 1, borderColor: '#ffcdd2', backgroundColor: '#fff5f5', borderRadius: 10, padding: 10 }} testID="shared-orphan-links">
+                      <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#c62828', textAlign: 'right', marginBottom: 4 }}>⚠️ روابط بلا محاضرات داعمة (يتيمة)</Text>
+                      {sharedDetailData.orphan_links.map((l: any, li: number) => (
+                        <Text key={li} style={{ fontSize: 11.5, color: '#b71c1c', textAlign: 'right' }}>• {l.department_name || l.department_id} — المستوى {l.level}{l.section ? ` · شعبة ${l.section}` : ''}</Text>
+                      ))}
+                      <Text style={{ fontSize: 10.5, color: '#8a95a8', textAlign: 'right', marginTop: 4 }}>استخدم «فحص سلامة المشاركات» من قائمة المزيد لإزالتها.</Text>
+                    </View>
+                  )}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* 🩺 نافذة فحص سلامة المشاركات */}
+      {integrityOpen && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setIntegrityOpen(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setIntegrityOpen(false)} />
+            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18, width: '92%', maxWidth: 560, maxHeight: '85%' }} testID="integrity-modal">
+              <View style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: '#1a2540' }}>🩺 فحص سلامة المشاركات</Text>
+                <TouchableOpacity onPress={() => setIntegrityOpen(false)} testID="integrity-close"><Ionicons name="close" size={20} color="#5b6678" /></TouchableOpacity>
+              </View>
+              {!integrityData ? (
+                <ActivityIndicator size="small" color="#00695c" style={{ marginVertical: 24 }} />
+              ) : integrityData.error ? (
+                <Text style={{ color: '#f44336', textAlign: 'center', marginVertical: 20 }}>فشل الفحص</Text>
+              ) : (
+                <ScrollView style={{ maxHeight: 440 }}>
+                  <Text style={{ fontSize: 12.5, color: '#37455c', textAlign: 'right', marginBottom: 10 }} testID="integrity-summary">
+                    فُحص {integrityData.checked_courses} مقرر مشترك ({integrityData.checked_links} رابطة) — {integrityData.orphan_links.length === 0 ? '✅ كل الروابط تدعمها محاضرات حقيقية في الجدول' : `⚠️ ${integrityData.orphan_links.length} رابطة يتيمة بلا محاضرات`}
+                  </Text>
+                  {integrityData.orphan_links.map((o: any, oi: number) => (
+                    <View key={oi} style={{ borderWidth: 1, borderColor: '#ffcdd2', backgroundColor: '#fff5f5', borderRadius: 10, padding: 10, marginBottom: 6 }}>
+                      <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#1a2540', textAlign: 'right' }}>{o.course_name} <Text style={{ fontSize: 10.5, color: '#8a95a8' }}>({o.course_code})</Text></Text>
+                      <Text style={{ fontSize: 11.5, color: '#b71c1c', textAlign: 'right', marginTop: 2 }}>رابطة يتيمة: {o.link_department_name || o.link_department_id} — المستوى {o.link_level}{o.link_section ? ` · شعبة ${o.link_section}` : ''}</Text>
+                      <Text style={{ fontSize: 10.5, color: '#5b6678', textAlign: 'right' }}>القسم الأصلي: {o.own_department_name} — المستوى {o.own_level}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+              {integrityData && !integrityData.error && integrityData.orphan_links.length > 0 && (
+                <TouchableOpacity
+                  style={{ backgroundColor: '#c62828', borderRadius: 10, padding: 12, alignItems: 'center', marginTop: 10 }}
+                  disabled={fixingLinks}
+                  testID="integrity-fix-btn"
+                  onPress={async () => {
+                    if (Platform.OS === 'web' && !window.confirm('إزالة الروابط اليتيمة بإعادة مزامنتها من خانات الجدول الفعلية؟')) return;
+                    setFixingLinks(true);
+                    try {
+                      const r = await api.post('/courses-tools/shared-links-integrity/fix');
+                      if (Platform.OS === 'web') window.alert(r.data.message); else Alert.alert('تم', r.data.message);
+                      const re = await api.get('/courses-tools/shared-links-integrity');
+                      setIntegrityData(re.data);
+                      fetchCourses(filterDept);
+                    } catch {
+                      if (Platform.OS === 'web') window.alert('فشل الإصلاح');
+                    } finally { setFixingLinks(false); }
+                  }}
+                >
+                  {fixingLinks ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>إزالة الروابط اليتيمة (إعادة مزامنة من الجدول)</Text>}
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* نافذة الحذف الآمن */}
       <Modal visible={showDeleteModal} transparent animationType="fade">
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
