@@ -166,7 +166,7 @@ except Exception as e:
     db = None
 
 # تهيئة قاعدة البيانات للـ routes
-from routes.deps import set_database
+from routes.deps import set_database, build_course_student_query
 if db is not None:
     set_database(db)
 
@@ -5695,15 +5695,7 @@ async def create_course(course: CourseCreate, current_user: dict = Depends(get_c
     matching_students_count = 0
     auto_enrolled_count = 0
     try:
-        student_query = {
-            "department_id": course_dict.get("department_id"),
-            "level": course_dict.get("level"),
-            "is_active": True,
-            "is_alumni": {"$ne": True},
-            "status": {"$ne": "graduated"},
-        }
-        if course_dict.get("section"):
-            student_query["section"] = course_dict["section"]
+        student_query = build_course_student_query(course_dict)
         matching_students = await db.students.find(student_query, {"_id": 1}).to_list(10000)
         matching_students_count = len(matching_students)
         
@@ -6439,15 +6431,7 @@ async def auto_enroll_matching_students(course_id: str, current_user: dict = Dep
     if not course:
         raise HTTPException(status_code=404, detail="المقرر غير موجود")
     
-    student_query = {
-        "department_id": course.get("department_id"),
-        "level": course.get("level"),
-        "is_active": True,
-        "is_alumni": {"$ne": True},
-        "status": {"$ne": "graduated"},
-    }
-    if course.get("section"):
-        student_query["section"] = course["section"]
+    student_query = build_course_student_query(course)
     
     students = await db.students.find(student_query, {"_id": 1}).to_list(10000)
     
@@ -6549,9 +6533,18 @@ async def auto_enroll_all_courses(
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     
     course_query = {"is_active": True}
-    if department_id:
-        course_query["department_id"] = department_id
-    if level:
+    if department_id and level:
+        # 🔗 يشمل المقررات المشتركة مع هذا القسم/المستوى
+        course_query["$or"] = [
+            {"department_id": department_id, "level": level},
+            {"shared_links": {"$elemMatch": {"department_id": department_id, "level": level}}},
+        ]
+    elif department_id:
+        course_query["$or"] = [
+            {"department_id": department_id},
+            {"shared_links.department_id": department_id},
+        ]
+    elif level:
         course_query["level"] = level
     
     courses = await db.courses.find(course_query).to_list(2000)
@@ -6563,21 +6556,7 @@ async def auto_enroll_all_courses(
     
     for course in courses:
         cid = str(course["_id"])
-        c_section = (course.get("section") or "").strip()
-        student_query = {
-            "department_id": course.get("department_id"),
-            "level": course.get("level"),
-            "is_active": True,
-            "is_alumni": {"$ne": True},
-            "status": {"$ne": "graduated"},
-        }
-        if c_section:
-            # مطابقة مرنة: trim المسافات
-            student_query["$or"] = [
-                {"section": c_section},
-                {"section": c_section + " "},
-                {"section": " " + c_section},
-            ]
+        student_query = build_course_student_query(course)
         
         students = await db.students.find(student_query, {"_id": 1}).to_list(10000)
         if not students:

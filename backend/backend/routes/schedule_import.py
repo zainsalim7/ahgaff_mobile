@@ -954,6 +954,28 @@ async def import_master_schedule(
         if _cid and ObjectId.is_valid(_cid):
             await _sync_course_shared_links(db, _cid)
 
+    # 🎓 تسجيل تلقائي لطلاب الأقسام/المستويات المشاركة الجديدة في المقرر
+    _shared_enrolled = 0
+    for (_cid, _dep, _lvl, _sec) in shared_links_add:
+        if not _cid or not ObjectId.is_valid(_cid):
+            continue
+        _sq = {"department_id": _dep, "level": _lvl, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}}
+        _sec_v = (_sec or "").strip()
+        if _sec_v:
+            _sq["section"] = {"$in": [_sec_v, _sec_v + " ", " " + _sec_v]}
+        _sids = [str(s["_id"]) for s in await db.students.find(_sq, {"_id": 1}).to_list(10000)]
+        if not _sids:
+            continue
+        _have = {e["student_id"] for e in await db.enrollments.find({"course_id": _cid, "student_id": {"$in": _sids}}, {"student_id": 1}).to_list(10000)}
+        _new_sids = [sid for sid in _sids if sid not in _have]
+        if _new_sids:
+            _now = datetime.now(timezone.utc)
+            await db.enrollments.insert_many([
+                {"course_id": _cid, "student_id": sid, "enrolled_at": _now, "enrolled_by": current_user.get("id", "")}
+                for sid in _new_sids
+            ])
+            _shared_enrolled += len(_new_sids)
+
     await log_activity(
         current_user, "import_master_schedule_excel", "weekly_schedule", department_id, None,
         {"faculty_id": faculty_id, "created": created, "replaced": replaced_count, "repositioned": len(removal_ids), "reassigned": len(reassign_map), "errors": len(errors), "skipped_identical": len(skipped_existing)},
@@ -964,6 +986,7 @@ async def import_master_schedule(
         f"✅ تم إدراج {created} محاضرة جديدة"
         + (f" • 🆕 أُنشئ {len(new_courses)} مقرر جديد بساعاته من الملف" if new_courses else "")
         + (f" • 🔗 رُبط {len(shared_links_add)} مقرر كمشترك مع هذا القسم/المستوى" if shared_links_add else "")
+        + (f" • 🎓 سُجّل {_shared_enrolled} طالباً من الأقسام المشاركة تلقائياً" if _shared_enrolled else "")
         + (f" • ⏱ إزاحة تلقائية لأوقات {len(_total_shifted)} محاضرة بسبب المدد المخصصة" if _total_shifted else "")
         + (f" • 🔗 {len(merge_msgs)} دمج كمحاضرات مشتركة" if merge_msgs else "")
         + (f" • استُبدلت {replaced_count} خلية بمحتوى الملف" if replaced_count else "")

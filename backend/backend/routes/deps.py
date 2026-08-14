@@ -28,6 +28,25 @@ def mark_manual_activity_logged():
     if ctx is not None:
         ctx["manual"] = True
 
+
+def build_course_student_query(course: dict) -> dict:
+    """🔗 مطابقة الطلاب للمقرر: القسم/المستوى/الشعبة الأصلية + كل روابط المشاركة shared_links"""
+    targets = [(course.get("department_id"), course.get("level"), (course.get("section") or "").strip())]
+    for l in course.get("shared_links", []) or []:
+        targets.append((l.get("department_id"), l.get("level"), (l.get("section") or "").strip()))
+    ors = []
+    for dep, lvl, sec in targets:
+        q = {"department_id": dep, "level": lvl}
+        if sec:
+            q["section"] = {"$in": [sec, sec + " ", " " + sec]}
+        ors.append(q)
+    return {
+        "$or": ors,
+        "is_active": True,
+        "is_alumni": {"$ne": True},
+        "status": {"$ne": "graduated"},
+    }
+
 _login_attempts = {}
 RATE_LIMIT_WINDOW = 300  # 5 دقائق
 RATE_LIMIT_MAX_ATTEMPTS = 10
