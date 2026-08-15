@@ -62,11 +62,6 @@ async def _academic_year_display(db) -> str:
 TERM_NAME = {1: "الأول", 2: "الثاني", 3: "الصيفي"}
 
 
-async def _active_term_name(db) -> str:
-    active_sem = await db.semesters.find_one({"status": "active"})
-    return TERM_NAME.get((active_sem or {}).get("term"), "")
-
-
 # 📌 قوالب مدمجة ثابتة (لا يمكن حذفها — يمكن تعديل متنها)
 BUILTIN_TEMPLATES = [
     {
@@ -124,6 +119,7 @@ class IssueRequest(BaseModel):
     template_name: Optional[str] = None
     gpa: Optional[str] = None       # 📊 المعدل — يعبّئ {المعدل}
     grade: Optional[str] = None     # 🏅 التقدير — يعبّئ {التقدير}
+    term: Optional[str] = None      # 📅 الفصل الدراسي — يعبّئ {الفصل} (إدخال يدوي)
 
 
 class RevokeRequest(BaseModel):
@@ -204,7 +200,7 @@ async def _safe_dept(db, student: dict):
 
 async def _issue_core(db, student: dict, current_user: dict, nationality, purpose, valid_days, base_url,
                       signatory_name=None, signatory_title=None, body=None, template_name=None,
-                      gpa=None, grade=None) -> dict:
+                      gpa=None, grade=None, term=None) -> dict:
     dept = await _safe_dept(db, student)
     faculty_id = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
     if not _can_issue(current_user, faculty_id):
@@ -242,7 +238,7 @@ async def _issue_core(db, student: dict, current_user: dict, nationality, purpos
     rendered_body = ""
     if (body or "").strip():
         ctx = _var_ctx(student, dept, faculty, academic_year_display, nationality,
-                       gpa=gpa or "", grade=grade or "", term_name=await _active_term_name(db))
+                       gpa=gpa or "", grade=grade or "", term_name=term or "")
         rendered_body = _apply_vars(body.strip(), ctx)
 
     doc = {
@@ -374,6 +370,7 @@ class PreviewBodyRequest(BaseModel):
     body: str = ""
     gpa: str = ""
     grade: str = ""
+    term: str = ""
 
 
 @router.post("/statements/preview-body")
@@ -394,7 +391,7 @@ async def preview_statement_body(data: PreviewBodyRequest, current_user: dict = 
         except Exception:
             faculty = None
     ctx = _var_ctx(student, dept, faculty, await _academic_year_display(db),
-                   gpa=data.gpa, grade=data.grade, term_name=await _active_term_name(db))
+                   gpa=data.gpa, grade=data.grade, term_name=data.term)
     return {"body": _apply_vars((data.body or ""), ctx), "variables": ctx}
 
 

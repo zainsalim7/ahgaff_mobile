@@ -648,7 +648,7 @@ export default function StudentDetailsScreen() {
     if (!t || !student) { setStatementBody(''); return; }
     setPreviewLoading(true);
     try {
-      const res = await api.post('/statements/preview-body', { student_id: student.id, body: t.body, gpa: statementGpa, grade: statementGrade });
+      const res = await api.post('/statements/preview-body', { student_id: student.id, body: t.body, gpa: statementGpa, grade: statementGrade, term: statementTerm });
       setStatementBody(res.data?.body || t.body);
     } catch {
       setStatementBody(t.body);
@@ -671,6 +671,10 @@ export default function StudentDetailsScreen() {
       }
       if (statementBody.includes('{التقدير}') && !statementGrade.trim()) {
         showMessage('تنبيه', 'المتن يحتوي {التقدير} — أدخل التقدير في الحقل المخصص');
+        return;
+      }
+      if (statementBody.includes('{الفصل}') && !statementTerm.trim()) {
+        showMessage('تنبيه', 'المتن يحتوي {الفصل} — أدخل الفصل الدراسي في الحقل المخصص');
         return;
       }
     }
@@ -2171,7 +2175,7 @@ export default function StudentDetailsScreen() {
               {([['standard', '📄 قياسية'], ['template', '📋 من قالب'], ['free', '✍️ نص حر']] as [typeof statementMode, string][]).map(([m, lbl]) => (
                 <TouchableOpacity
                   key={m}
-                  onPress={() => { setStatementMode(m); setStatementBody(''); setSelectedTemplateId(''); setStatementGpa(''); setStatementGrade(''); }}
+                  onPress={() => { setStatementMode(m); setStatementBody(''); setSelectedTemplateId(''); setStatementGpa(''); setStatementGrade(''); setStatementTerm(''); }}
                   style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: statementMode === m ? '#00796b' : '#dde3ec', backgroundColor: statementMode === m ? '#e0f2f1' : '#fff' }}
                   testID={`statement-mode-${m}`}
                 >
