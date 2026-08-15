@@ -59,7 +59,7 @@ export default function StatementSettingsScreen() {
   const [tplMsg, setTplMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [savingTpl, setSavingTpl] = useState(false);
 
-  const TPL_VARS = ['{اسم_الطالب}', '{رقم_القيد}', '{الجنسية}', '{المستوى}', '{التخصص}', '{الكلية}', '{العام_الجامعي}', '{الحالة}', '{التاريخ}'];
+  const TPL_VARS = ['{اسم_الطالب}', '{رقم_القيد}', '{الجنسية}', '{المستوى}', '{التخصص}', '{الكلية}', '{العام_الجامعي}', '{الحالة}', '{التاريخ}', '{الفصل}', '{المعدل}', '{التقدير}'];
 
   const loadTemplates = useCallback(async () => {
     try {
@@ -388,7 +388,14 @@ export default function StatementSettingsScreen() {
                 </TouchableOpacity>
               </View>
               <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={styles.tplName}>{t.name}</Text>
+                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6 }}>
+                  <Text style={styles.tplName}>{t.name}</Text>
+                  {!!t.builtin && (
+                    <View style={{ backgroundColor: '#e0f2f1', borderRadius: 10, paddingVertical: 1, paddingHorizontal: 8 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: '#00796b' }}>ثابت</Text>
+                    </View>
+                  )}
+                </View>
                 <Text style={styles.tplBodyPreview} numberOfLines={2}>{t.body}</Text>
               </View>
             </View>

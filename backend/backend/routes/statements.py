@@ -25,19 +25,28 @@ def _apply_vars(text: str, ctx: dict) -> str:
     return text
 
 
-def _var_ctx(student: dict, dept, faculty, academic_year_display: str, nationality=None) -> dict:
+def _var_ctx(student: dict, dept, faculty, academic_year_display: str, nationality=None,
+             gpa: str = "", grade: str = "", term_name: str = "") -> dict:
     """قيم المتغيرات المتاحة في قوالب الإفادات."""
-    return {
+    ctx = {
         "اسم_الطالب": student.get("full_name", ""),
         "رقم_القيد": student.get("student_id", ""),
         "الجنسية": (nationality or student.get("nationality") or "يمني").strip(),
         "المستوى": LEVEL_AR.get(student.get("level") or 1, str(student.get("level") or "")),
-        "التخصص": (dept or {}).get("name", ""),
-        "الكلية": (faculty or {}).get("name", ""),
+        "التخصص": ((dept or {}).get("name", "") or "").strip(),
+        "الكلية": ((faculty or {}).get("name", "") or "").strip(),
         "العام_الجامعي": academic_year_display,
         "الحالة": STATUS_WORD.get(student.get("status", "active"), "مستمر في الدراسة"),
         "التاريخ": datetime.now(timezone.utc).strftime("%Y/%m/%d") + "م",
     }
+    # تُدرج فقط عند توفر قيمة — وإلا يبقى المتغير ظاهراً ليعبّأ لاحقاً
+    if (term_name or "").strip():
+        ctx["الفصل"] = term_name.strip()
+    if (gpa or "").strip():
+        ctx["المعدل"] = str(gpa).strip()
+    if (grade or "").strip():
+        ctx["التقدير"] = str(grade).strip()
+    return ctx
 
 
 async def _academic_year_display(db) -> str:
@@ -48,6 +57,34 @@ async def _academic_year_display(db) -> str:
         return f"{parts[1]}/{parts[0]}م"
     y = datetime.now(timezone.utc).year
     return f"{y + 1}/{y}م"
+
+
+TERM_NAME = {1: "الأول", 2: "الثاني", 3: "الصيفي"}
+
+
+async def _active_term_name(db) -> str:
+    active_sem = await db.semesters.find_one({"status": "active"})
+    return TERM_NAME.get((active_sem or {}).get("term"), "")
+
+
+# 📌 قوالب مدمجة ثابتة (لا يمكن حذفها — يمكن تعديل متنها)
+BUILTIN_TEMPLATES = [
+    {
+        "name": "قياسي 2 — إتمام فصل بمعدل وتقدير",
+        "body": "من طلاب {الكلية} – جامعة الأحقاف – أكمل الفصل الدراسي {الفصل} من المستوى {المستوى} تخصص ({التخصص}) في العام الجامعي {العام_الجامعي} بنجاح ومعدل فصلي ({المعدل}) وتقدير ({التقدير})، ومستمراً في الدراسة، {الجنسية} الجنسية.\nأعطيت له هذه الإفادة بناءً على طلبه.",
+    },
+]
+
+
+async def _ensure_builtin_templates(db):
+    for t in BUILTIN_TEMPLATES:
+        await db.statement_templates.update_one(
+            {"name": t["name"]},
+            {"$setOnInsert": {"name": t["name"], "body": t["body"],
+                              "created_by_name": "النظام",
+                              "created_at": datetime.now(timezone.utc).isoformat()},
+             "$set": {"builtin": True}},
+            upsert=True)
 
 
 def _can_issue(user: dict, faculty_id: str) -> bool:
@@ -85,6 +122,8 @@ class IssueRequest(BaseModel):
     signatory_title: Optional[str] = None
     body: Optional[str] = None  # 📝 متن مخصص (من قالب أو حر)
     template_name: Optional[str] = None
+    gpa: Optional[str] = None       # 📊 المعدل — يعبّئ {المعدل}
+    grade: Optional[str] = None     # 🏅 التقدير — يعبّئ {التقدير}
 
 
 class RevokeRequest(BaseModel):
@@ -164,7 +203,8 @@ async def _safe_dept(db, student: dict):
 
 
 async def _issue_core(db, student: dict, current_user: dict, nationality, purpose, valid_days, base_url,
-                      signatory_name=None, signatory_title=None, body=None, template_name=None) -> dict:
+                      signatory_name=None, signatory_title=None, body=None, template_name=None,
+                      gpa=None, grade=None) -> dict:
     dept = await _safe_dept(db, student)
     faculty_id = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
     if not _can_issue(current_user, faculty_id):
@@ -201,7 +241,8 @@ async def _issue_core(db, student: dict, current_user: dict, nationality, purpos
     # 📝 متن مخصص (قالب/حر): استبدال المتغيرات ببيانات الطالب قبل التخزين
     rendered_body = ""
     if (body or "").strip():
-        ctx = _var_ctx(student, dept, faculty, academic_year_display, nationality)
+        ctx = _var_ctx(student, dept, faculty, academic_year_display, nationality,
+                       gpa=gpa or "", grade=grade or "", term_name=await _active_term_name(db))
         rendered_body = _apply_vars(body.strip(), ctx)
 
     doc = {
@@ -247,7 +288,8 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
         raise HTTPException(status_code=404, detail="الطالب غير موجود")
     doc = await _issue_core(db, student, current_user, data.nationality, data.purpose, data.valid_days, data.base_url,
                             signatory_name=data.signatory_name, signatory_title=data.signatory_title,
-                            body=data.body, template_name=data.template_name)
+                            body=data.body, template_name=data.template_name,
+                            gpa=data.gpa, grade=data.grade)
     return {"id": doc["inserted_id"], "number": doc["number_display"], "verify_url": doc["verify_url"], "token": doc["verify_token"]}
 
 
@@ -267,6 +309,7 @@ async def list_statement_templates(current_user: dict = Depends(get_current_user
     if not _can_manage_templates(current_user):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     db = get_db()
+    await _ensure_builtin_templates(db)
     items = []
     async for t in db.statement_templates.find({}).sort("name", 1):
         t["id"] = str(t.pop("_id"))
@@ -315,6 +358,11 @@ async def delete_statement_template(template_id: str, current_user: dict = Depen
     if not _can_manage_templates(current_user):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     db = get_db()
+    _tpl = await db.statement_templates.find_one({"_id": ObjectId(template_id)})
+    if not _tpl:
+        raise HTTPException(status_code=404, detail="القالب غير موجود")
+    if _tpl.get("builtin"):
+        raise HTTPException(status_code=400, detail="هذا قالب قياسي ثابت لا يمكن حذفه — يمكنك تعديل متنه فقط")
     r = await db.statement_templates.delete_one({"_id": ObjectId(template_id)})
     if r.deleted_count == 0:
         raise HTTPException(status_code=404, detail="القالب غير موجود")
@@ -324,6 +372,8 @@ async def delete_statement_template(template_id: str, current_user: dict = Depen
 class PreviewBodyRequest(BaseModel):
     student_id: str
     body: str = ""
+    gpa: str = ""
+    grade: str = ""
 
 
 @router.post("/statements/preview-body")
@@ -343,7 +393,8 @@ async def preview_statement_body(data: PreviewBodyRequest, current_user: dict = 
             faculty = await db.faculties.find_one({"_id": ObjectId(fid)})
         except Exception:
             faculty = None
-    ctx = _var_ctx(student, dept, faculty, await _academic_year_display(db))
+    ctx = _var_ctx(student, dept, faculty, await _academic_year_display(db),
+                   gpa=data.gpa, grade=data.grade, term_name=await _active_term_name(db))
     return {"body": _apply_vars((data.body or ""), ctx), "variables": ctx}
 
 

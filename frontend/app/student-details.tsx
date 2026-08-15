@@ -192,6 +192,8 @@ export default function StudentDetailsScreen() {
   const [statementTemplates, setStatementTemplates] = useState<any[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [statementBody, setStatementBody] = useState('');
+  const [statementGpa, setStatementGpa] = useState('');
+  const [statementGrade, setStatementGrade] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // 🆕 Notifications (إشعارات/إنذارات الطالب)
@@ -646,7 +648,7 @@ export default function StudentDetailsScreen() {
     if (!t || !student) { setStatementBody(''); return; }
     setPreviewLoading(true);
     try {
-      const res = await api.post('/statements/preview-body', { student_id: student.id, body: t.body });
+      const res = await api.post('/statements/preview-body', { student_id: student.id, body: t.body, gpa: statementGpa, grade: statementGrade });
       setStatementBody(res.data?.body || t.body);
     } catch {
       setStatementBody(t.body);
@@ -662,6 +664,16 @@ export default function StudentDetailsScreen() {
       showMessage('تنبيه', statementMode === 'template' ? 'اختر قالباً أولاً أو اكتب متن الإفادة' : 'اكتب متن الإفادة الحرة');
       return;
     }
+    if (statementMode !== 'standard') {
+      if (statementBody.includes('{المعدل}') && !statementGpa.trim()) {
+        showMessage('تنبيه', 'المتن يحتوي {المعدل} — أدخل المعدل في الحقل المخصص');
+        return;
+      }
+      if (statementBody.includes('{التقدير}') && !statementGrade.trim()) {
+        showMessage('تنبيه', 'المتن يحتوي {التقدير} — أدخل التقدير في الحقل المخصص');
+        return;
+      }
+    }
     setIssuingStatement(true);
     try {
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
@@ -674,6 +686,8 @@ export default function StudentDetailsScreen() {
         signatory_name: statementSignatoryName.trim() || undefined,
         signatory_title: statementSignatoryTitle.trim() || undefined,
         body: statementMode !== 'standard' ? statementBody.trim() : undefined,
+        gpa: statementMode !== 'standard' && statementGpa.trim() ? statementGpa.trim() : undefined,
+        grade: statementMode !== 'standard' && statementGrade.trim() ? statementGrade.trim() : undefined,
         template_name: statementMode === 'template'
           ? (statementTemplates.find((t: any) => t.id === selectedTemplateId)?.name || 'قالب')
           : statementMode === 'free' ? 'إفادة حرة' : undefined,
@@ -2157,7 +2171,7 @@ export default function StudentDetailsScreen() {
               {([['standard', '📄 قياسية'], ['template', '📋 من قالب'], ['free', '✍️ نص حر']] as [typeof statementMode, string][]).map(([m, lbl]) => (
                 <TouchableOpacity
                   key={m}
-                  onPress={() => { setStatementMode(m); setStatementBody(''); setSelectedTemplateId(''); }}
+                  onPress={() => { setStatementMode(m); setStatementBody(''); setSelectedTemplateId(''); setStatementGpa(''); setStatementGrade(''); }}
                   style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: statementMode === m ? '#00796b' : '#dde3ec', backgroundColor: statementMode === m ? '#e0f2f1' : '#fff' }}
                   testID={`statement-mode-${m}`}
                 >
@@ -2194,9 +2208,38 @@ export default function StudentDetailsScreen() {
                   style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 6, fontSize: 13, minHeight: 110, textAlignVertical: 'top' as any }}
                   testID="statement-body-input"
                 />
+                {(statementBody.includes('{المعدل}') || statementBody.includes('{التقدير}')) && (
+                  <View style={{ flexDirection: 'row-reverse', gap: 8, marginBottom: 8 }}>
+                    {statementBody.includes('{المعدل}') && (
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>المعدل (رقماً)</Text>
+                        <TextInput
+                          value={statementGpa}
+                          onChangeText={setStatementGpa}
+                          placeholder="مثال: 3.57"
+                          keyboardType="decimal-pad"
+                          style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13 }}
+                          testID="statement-gpa-input"
+                        />
+                      </View>
+                    )}
+                    {statementBody.includes('{التقدير}') && (
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>التقدير (نصاً)</Text>
+                        <TextInput
+                          value={statementGrade}
+                          onChangeText={setStatementGrade}
+                          placeholder="مثال: جيد جداً"
+                          style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13 }}
+                          testID="statement-grade-input"
+                        />
+                      </View>
+                    )}
+                  </View>
+                )}
                 <Text style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginBottom: 10, lineHeight: 17 }}>
                   {statementMode === 'free'
-                    ? '💡 المتغيرات المتاحة (تُستبدل تلقائياً عند الإصدار): {اسم_الطالب} {رقم_القيد} {الجنسية} {المستوى} {التخصص} {الكلية} {العام_الجامعي} {الحالة} {التاريخ}'
+                    ? '💡 المتغيرات المتاحة (تُستبدل تلقائياً عند الإصدار): {اسم_الطالب} {رقم_القيد} {الجنسية} {المستوى} {التخصص} {الكلية} {العام_الجامعي} {الحالة} {التاريخ} {الفصل} {المعدل} {التقدير}'
                     : '💡 يُطبع المتن في الـ PDF بعد سطر «بأن الطالب: الاسم» مع نفس الترويسة والتوقيع ورمز QR'}
                 </Text>
               </>
