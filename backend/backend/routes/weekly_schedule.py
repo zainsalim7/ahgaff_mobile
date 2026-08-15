@@ -3019,11 +3019,11 @@ async def _sync_course_shared_links(db, course_id: str) -> None:
         return
     if not course:
         return
-    own = (course.get("department_id", ""), course.get("level"))
+    own = (course.get("department_id", ""), course.get("level"), (course.get("section") or "").strip())
     links, seen = [], set()
     async for s in db.weekly_schedule.find({"course_id": course_id}):
-        key = (s.get("department_id", ""), s.get("level"), s.get("section", "") or "")
-        if (key[0], key[1]) == own or key in seen:
+        key = (s.get("department_id", ""), s.get("level"), (s.get("section", "") or "").strip())
+        if key == own or key in seen:
             continue
         seen.add(key)
         links.append({"department_id": key[0], "level": key[1], "section": key[2]})

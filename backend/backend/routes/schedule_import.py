@@ -86,7 +86,7 @@ def _extract_duration(course_txt: str):
     return course_txt[:m.start()].strip(), dur
 
 
-_PRACTICAL_RE = re.compile(r"[\s\-—ـ(]\s*\(?\s*عملي\s*\)?\s*$")
+_PRACTICAL_RE = re.compile(r"[\s\-—ـ(]\s*\(?\s*(?:عملي|ع)\s*\)?\s*$")
 
 
 def _extract_practical(course_txt: str):
@@ -560,6 +560,7 @@ async def import_master_schedule(
                 "teacher_id": effective_tid,
                 "room_id": str(room["_id"]),
                 "slot_type": "practical" if cell_practical else "theory",
+                "_slot_minutes": _slot_minutes(ts),
                 **({"duration_minutes": duration_minutes} if duration_minutes else {}),
                 **({"_new_course_key": course["_nk"]} if course.get("_is_new") else {}),
                 "_loc": loc,
@@ -632,11 +633,50 @@ async def import_master_schedule(
         if len(_items) < 2:
             continue
         _gid = uuid.uuid4().hex
+        # 🧩 نموذج المقرر الواحد: كل أعضاء المجموعة (شعب/مستويات) يشيرون لمقرر واحد — الأولوية لمقرر قائم
+        _prim = next((x for x in _items if not str(x.get("course_id", "")).startswith("__new__")), _items[0])
+        for it in _items:
+            if it["course_id"] == _prim["course_id"]:
+                continue
+            _old_key = it.get("_new_course_key")
+            # أعد توجيه كل خلايا المقرر الفائض (وليس خلية الدمج فقط) للمقرر الأساسي
+            _targets = [x for x in to_create if (_old_key and x.get("_new_course_key") == _old_key) or x["course_id"] == it["course_id"]]
+            for x in _targets:
+                x["course_id"] = _prim["course_id"]
+                x["_course_name"] = _prim["_course_name"]
+                if _prim.get("_new_course_key"):
+                    x["_new_course_key"] = _prim["_new_course_key"]
+                else:
+                    x.pop("_new_course_key", None)
+            if _old_key:
+                new_courses.pop(_old_key, None)
         for it in _items:
             it["merge_group_id"] = _gid
             it["merge_key"] = f"{_gid}:{it['department_id']}:{it['level']}:{it.get('section', '') or ''}"
         _labels = " + ".join(f"م{it['level']}" + (f"/{it['section']}" if it.get("section") else "") for it in _items)
-        merge_msgs.append(f"🔗 محاضرة مشتركة: '{_items[0]['_course_name']}' — {_labels} ({_items[0]['day']} الفترة {_items[0]['slot_number']}) بمدرس وقاعة موحدين")
+        merge_msgs.append(f"🔗 محاضرة مشتركة: '{_prim['_course_name']}' — {_labels} ({_items[0]['day']} الفترة {_items[0]['slot_number']}) بمدرس وقاعة موحدين — مقرر واحد مشترك")
+
+    # 🔁 إعادة حساب ساعات المقررات الجديدة بعد التوحيد (المحاضرة المشتركة تُحسب مرة واحدة)
+    for _nc in new_courses.values():
+        _nc["total_minutes"] = 0
+        _nc["cells"] = 0
+        _nc["practical_minutes"] = 0
+    _seen_recount = set()
+    for x in to_create:
+        _nk2 = x.get("_new_course_key")
+        if _nk2 not in new_courses:
+            continue
+        _g2 = x.get("merge_group_id")
+        if _g2:
+            if _g2 in _seen_recount:
+                continue
+            _seen_recount.add(_g2)
+        _m2 = x.get("duration_minutes") or x.get("_slot_minutes") or 0
+        _nc2 = new_courses[_nk2]
+        _nc2["total_minutes"] += _m2
+        _nc2["cells"] += 1
+        if x.get("slot_type") == "practical":
+            _nc2["practical_minutes"] += _m2
 
     # ===== 4) فحص التعارضات (داخل الملف + مع الجدول القائم عبر كل الأقسام) =====
     # الخلايا المستبدلة تُستثنى، والإسنادات الجديدة تسري على المحاضرات القائمة لنفس المقرر (تحديث متسلسل)
@@ -982,16 +1022,16 @@ async def import_master_schedule(
         if _cid and ObjectId.is_valid(_cid):
             await _sync_course_shared_links(db, _cid)
 
-    # 🎓 تسجيل تلقائي لطلاب الأقسام/المستويات المشاركة الجديدة في المقرر
+    # 🎓 تسجيل تلقائي للطلاب: المقررات المتأثرة تُسجّل طلاب قسمها/مستواها/شعبتها + كل روابط المشاركة
+    from .deps import build_course_student_query
     _shared_enrolled = 0
-    for (_cid, _dep, _lvl, _sec) in shared_links_add:
+    for _cid in _link_cids:
         if not _cid or not ObjectId.is_valid(_cid):
             continue
-        _sq = {"department_id": _dep, "level": _lvl, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}}
-        _sec_v = (_sec or "").strip()
-        if _sec_v:
-            _sq["section"] = {"$in": [_sec_v, _sec_v + " ", " " + _sec_v]}
-        _sids = [str(s["_id"]) for s in await db.students.find(_sq, {"_id": 1}).to_list(10000)]
+        _cdoc2 = await db.courses.find_one({"_id": ObjectId(_cid)})
+        if not _cdoc2:
+            continue
+        _sids = [str(s["_id"]) for s in await db.students.find(build_course_student_query(_cdoc2), {"_id": 1}).to_list(10000)]
         if not _sids:
             continue
         _have = {e["student_id"] for e in await db.enrollments.find({"course_id": _cid, "student_id": {"$in": _sids}}, {"student_id": 1}).to_list(10000)}

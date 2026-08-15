@@ -38,7 +38,11 @@ def build_course_student_query(course: dict) -> dict:
     for dep, lvl, sec in targets:
         q = {"department_id": dep, "level": lvl}
         if sec:
-            q["section"] = {"$in": [sec, sec + " ", " " + sec]}
+            vs = {sec, f"{sec} ", f" {sec}"}
+            if sec in ("ا", "أ", "إ", "آ"):
+                for v in ("ا", "أ"):
+                    vs |= {v, f"{v} ", f" {v}"}
+            q["section"] = {"$in": list(vs)}
         ors.append(q)
     return {
         "$or": ors,
