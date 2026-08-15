@@ -86,7 +86,7 @@ def _extract_duration(course_txt: str):
     return course_txt[:m.start()].strip(), dur
 
 
-_PRACTICAL_RE = re.compile(r"[\s\-—ـ(]\s*\(?\s*(?:عملي|ع)\s*\)?\s*$")
+_PRACTICAL_RE = re.compile(r"[\s\-—ـ(]\s*\(?\s*عملي\s*\)?\s*$")  # «عملي» فقط — «ع» قد تكون جزءاً من الاسم
 
 
 def _extract_practical(course_txt: str):
