@@ -445,7 +445,8 @@ export default function StudentsScreen() {
         const url = window.URL.createObjectURL(new Blob([res.data]));
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'statements_bulk.pdf';
+        const xf = res.headers?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : `إفادات ${new Date().toISOString().slice(0, 10)}.pdf`;
         a.click();
         window.URL.revokeObjectURL(url);
       }

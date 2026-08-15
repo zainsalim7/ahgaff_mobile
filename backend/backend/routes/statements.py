@@ -402,9 +402,19 @@ async def bulk_issue_statements(data: BulkIssueRequest, current_user: dict = Dep
 
     out = io.BytesIO()
     writer.write(out)
+    # 📁 اسم الملف: القسم (أو "أقسام متعددة") + تاريخ اليوم
+    dept_names = set()
+    for s in students:
+        d = await _safe_dept(db, s)
+        dept_names.add(((d or {}).get("name", "") or "بدون قسم").strip())
+    dept_label = dept_names.pop() if len(dept_names) == 1 else "أقسام متعددة"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    from urllib.parse import quote
+    fname = quote(f"إفادات {dept_label} {today}.pdf")
     return StreamingResponse(io.BytesIO(out.getvalue()), media_type="application/pdf",
-                             headers={"Content-Disposition": "attachment; filename=statements_bulk.pdf",
-                                      "X-Issued-Count": str(len(students))})
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}",
+                                      "X-Issued-Count": str(len(students)),
+                                      "X-Filename": fname})
 
 
 @router.get("/statements")
