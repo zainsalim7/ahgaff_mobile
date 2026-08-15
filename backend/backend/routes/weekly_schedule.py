@@ -1654,6 +1654,93 @@ async def merge_courses_as_shared(
     }
 
 
+@router.post("/courses-tools/unmerge-shared")
+async def unmerge_shared_course(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """↩️ فك الدمج: فصل قسم/مستوى/شعبة من مقرر مشترك إلى مقرر مستقل بخاناته وطلابه"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    course_id = payload.get("course_id") or ""
+    link = payload.get("link") or {}
+    l_dep, l_lvl, l_sec = link.get("department_id") or "", link.get("level"), (link.get("section") or "").strip()
+    try:
+        primary = await db.courses.find_one({"_id": ObjectId(course_id)})
+    except Exception:
+        primary = None
+    if not primary:
+        raise HTTPException(status_code=404, detail="المقرر غير موجود")
+    own = (primary.get("department_id", ""), primary.get("level"), (primary.get("section") or "").strip())
+    if (l_dep, l_lvl, l_sec) == own:
+        raise HTTPException(status_code=400, detail="لا يمكن فصل الموقع الأصلي للمقرر — افصل الروابط الأخرى عنه")
+    slots = [s for s in await db.weekly_schedule.find({"course_id": course_id}).to_list(2000)
+             if (s.get("department_id", ""), s.get("level"), (s.get("section", "") or "").strip()) == (l_dep, l_lvl, l_sec)]
+    if not slots:
+        raise HTTPException(status_code=400, detail="لا توجد خانات جدول لهذا الموقع — استخدم «فحص سلامة المشاركات» لإزالة الرابطة اليتيمة")
+
+    # 🆕 مقرر مستقل جديد
+    fac_times = await _faculty_slot_times(db, primary.get("faculty_id") or slots[0].get("faculty_id", ""))
+    def _mins(s):
+        m = s.get("duration_minutes")
+        if not m:
+            st, en = fac_times.get(s.get("slot_number"), ("", ""))
+            a, b = _t2m(st), _t2m(en)
+            m = (b - a) if (a is not None and b is not None) else 0
+        return max(m or 0, 0)
+    new_hours = round(sum(_mins(s) for s in slots) / 60, 2)
+    new_doc = {k: v for k, v in primary.items() if k not in ("_id", "shared_links")}
+    new_doc.update({
+        "department_id": l_dep, "level": l_lvl, "section": l_sec,
+        "code": f"{primary.get('code', '') or 'CRS'}-{l_sec or l_lvl}",
+        "credit_hours": new_hours, "weekly_hours": new_hours,
+        "created_at": datetime.now(timezone.utc).isoformat(), "created_by": current_user.get("id", ""),
+    })
+    new_id = str((await db.courses.insert_one(new_doc)).inserted_id)
+
+    # نقل الخانات للمقرر الجديد — تبقى مفاتيح الدمج لأن المحاضرة لا تزال بنفس الوقت/الأستاذ فيزيائياً
+    for s in slots:
+        await db.weekly_schedule.update_one({"_id": s["_id"]}, {"$set": {"course_id": new_id}})
+
+    # نقل طلاب هذا الموقع
+    from .deps import _sec_matches
+    moved_students = 0
+    for e in await db.enrollments.find({"course_id": course_id}).to_list(20000):
+        try:
+            st = await db.students.find_one({"_id": ObjectId(e["student_id"])})
+        except Exception:
+            st = None
+        if st and st.get("department_id") == l_dep and st.get("level") == l_lvl and _sec_matches(l_sec, st.get("section") or ""):
+            await db.enrollments.update_one({"_id": e["_id"]}, {"$set": {"course_id": new_id}})
+            moved_students += 1
+
+    # ⚖️ إعادة حساب عبء الأساسي + عبء جديد
+    prim_slots = await db.weekly_schedule.find({"course_id": course_id}).to_list(2000)
+    seen_k, prim_min = set(), 0.0
+    for s in prim_slots:
+        k = (s.get("day"), s.get("slot_number"), s.get("teacher_id", ""), s.get("room_id", ""))
+        if k in seen_k:
+            continue
+        seen_k.add(k)
+        prim_min += _mins(s)
+    prim_hours = round(prim_min / 60, 2)
+    await db.courses.update_one({"_id": primary["_id"]}, {"$set": {"credit_hours": prim_hours, "weekly_hours": prim_hours}})
+    await db.teaching_loads.update_many({"course_id": course_id}, {"$set": {"weekly_hours": prim_hours}})
+    if primary.get("teacher_id"):
+        await db.teaching_loads.insert_one({
+            "teacher_id": primary.get("teacher_id"), "course_id": new_id, "weekly_hours": new_hours,
+            "created_by": current_user.get("id", ""), "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+            **({"semester_id": primary.get("semester_id")} if primary.get("semester_id") else {}),
+        })
+    await _sync_course_shared_links(db, course_id)
+    await _sync_course_shared_links(db, new_id)
+    return {
+        "message": f"↩️ فُصل الموقع (م{l_lvl}{'/' + l_sec if l_sec else ''}) إلى مقرر مستقل «{new_doc['name']}» — {len(slots)} خانة و{moved_students} طالباً • ساعاته: {new_hours} وساعات الأصلي: {prim_hours}",
+        "new_course_id": new_id,
+    }
+
+
 @router.get("/courses-tools/shared-links-integrity")
 async def shared_links_integrity(current_user: dict = Depends(get_current_user)):
     """🩺 فحص سلامة روابط المشاركة: كل رابطة يجب أن تدعمها خانات جدول حقيقية"""

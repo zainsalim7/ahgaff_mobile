@@ -804,13 +804,6 @@ export default function AddCourseScreen() {
                   <Text style={{ fontSize: 8.5, color: '#fff', fontWeight: '800' }}>🧪 {(item as any).practical_hours}ع</Text>
                 </View>
               )}
-              <TouchableOpacity
-                onPress={() => setMergeSel(prev => prev.includes(item.id) ? prev.filter(x => x !== item.id) : [...prev, item.id])}
-                style={{ width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: mergeSel.includes(item.id) ? '#7b1fa2' : '#c3ccda', backgroundColor: mergeSel.includes(item.id) ? '#7b1fa2' : '#fff', alignItems: 'center', justifyContent: 'center' }}
-                testID={`merge-select-${item.id}`}
-              >
-                {mergeSel.includes(item.id) && <Ionicons name="checkmark" size={11} color="#fff" />}
-              </TouchableOpacity>
               {(((item as any).shared_here) || (((item as any).shared_links || []).length > 0)) && (
                 <TouchableOpacity
                   style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
@@ -1204,6 +1197,15 @@ export default function AddCourseScreen() {
                       <Ionicons name="people" size={16} color="#fff" />
                       <Text style={styles.btnPrimaryText}>إسناد جماعي ({selectedIds.size})</Text>
                     </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.headerBtn, { backgroundColor: '#7b1fa2' }]}
+                      onPress={() => { const ids = Array.from(selectedIds); setMergeSel(ids); setMergePrimary(ids[0]); setMergePlan(null); setMergeModal(true); }}
+                      disabled={selectedIds.size < 2}
+                      testID="merge-courses-btn"
+                    >
+                      <Ionicons name="git-merge-outline" size={16} color="#fff" />
+                      <Text style={styles.btnPrimaryText}>دمج كمشترك ({selectedIds.size})</Text>
+                    </TouchableOpacity>
                     <TouchableOpacity style={[styles.headerBtn, { backgroundColor: '#f44336' }]} onPress={handleBulkDelete} disabled={selectedIds.size === 0 || deleting}>
                       {deleting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="trash" size={16} color="#fff" />}
                       <Text style={styles.btnPrimaryText}>حذف ({selectedIds.size})</Text>
@@ -1573,18 +1575,6 @@ export default function AddCourseScreen() {
         </Modal>
       )}
       
-      {/* 🧩 شريط دمج المقررات المحددة */}
-      {mergeSel.length >= 2 && (
-        <TouchableOpacity
-          style={{ position: 'absolute', bottom: 20, alignSelf: 'center', backgroundColor: '#7b1fa2', borderRadius: 24, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 8, elevation: 6, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8 }}
-          onPress={() => { setMergePrimary(mergeSel[0]); setMergePlan(null); setMergeModal(true); }}
-          testID="merge-courses-btn"
-        >
-          <Ionicons name="git-merge-outline" size={18} color="#fff" />
-          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>دمج كمقرر مشترك ({mergeSel.length})</Text>
-        </TouchableOpacity>
-      )}
-
       {/* 🧩 نافذة دمج المقررات */}
       {mergeModal && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setMergeModal(false)}>
@@ -1652,6 +1642,7 @@ export default function AddCourseScreen() {
                         const r = await api.post('/courses-tools/merge-shared', { course_ids: mergeSel, primary_id: mergePrimary, dry_run: false });
                         if (Platform.OS === 'web') window.alert(r.data.message);
                         setMergeModal(false); setMergeSel([]); setMergePlan(null);
+                        setSelectedIds(new Set()); setSelectionMode(false);
                         fetchCourses(filterDept);
                       } catch (e: any) {
                         setMergePlan({ error: e?.response?.data?.detail || 'فشل الدمج' });
@@ -1698,6 +1689,28 @@ export default function AddCourseScreen() {
                         <View style={{ backgroundColor: g.is_native ? '#2e7d32' : '#00695c', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
                           <Text style={{ fontSize: 9, color: '#fff', fontWeight: '800' }}>{g.is_native ? 'القسم الأصلي' : 'مشاركة'}</Text>
                         </View>
+                        {!g.is_native && (
+                          <TouchableOpacity
+                            style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#ef9a9a', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}
+                            testID={`unmerge-group-${gi}`}
+                            onPress={async () => {
+                              if (Platform.OS === 'web' && !window.confirm(`فك هذا الموقع (م${g.level}${g.section ? '/' + g.section : ''}) إلى مقرر مستقل بخاناته وطلابه؟`)) return;
+                              try {
+                                const r = await api.post('/courses-tools/unmerge-shared', {
+                                  course_id: sharedDetailData.course.id,
+                                  link: { department_id: g.department_id, level: g.level, section: g.section || '' },
+                                });
+                                if (Platform.OS === 'web') window.alert(r.data.message);
+                                setSharedDetailCourse(null);
+                                fetchCourses(filterDept);
+                              } catch (e: any) {
+                                if (Platform.OS === 'web') window.alert(e?.response?.data?.detail || 'فشل فك الدمج');
+                              }
+                            }}
+                          >
+                            <Text style={{ fontSize: 9.5, color: '#c62828', fontWeight: '800' }}>↩️ فك الدمج</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
                       {(g.slots || []).map((s: any, si: number) => (
                         <Text key={si} style={{ fontSize: 11.5, color: '#37455c', textAlign: 'right', lineHeight: 20 }}>
