@@ -1396,7 +1396,7 @@ export default function TeachingLoadPage() {
                   <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الرمز</Text>
                   <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الشعبة</Text>
                   <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الساعات</Text>
-                  <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الفعلي بالجدول</Text>
+                  <Text style={[styles.summaryTableHeaderCell, { flex: 1 }]}>الفعلي بالجدول (🧪 العملي=نصف)</Text>
                   <Text style={[styles.summaryTableHeaderCell, { flex: 0.5 }]}></Text>
                 </View>
                 {group.items.map((item) => {

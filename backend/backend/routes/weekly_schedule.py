@@ -124,6 +124,7 @@ class ScheduleSlotCreate(BaseModel):
     teacher_id: str
     room_id: str
     duration_minutes: Optional[int] = None  # ⏱ مدة مخصصة (افتراضي: مدة الفترة)
+    slot_type: str = "theory"  # 📖 نظري (افتراضي) | 🧪 practical عملي
     merge_with: Optional[List[MergeTarget]] = None  # 🆕 محاضرة مشتركة: مستويات/شعب إضافية
 
 
@@ -132,6 +133,7 @@ class ScheduleSlotUpdate(BaseModel):
     teacher_id: Optional[str] = None
     room_id: Optional[str] = None
     duration_minutes: Optional[int] = None
+    slot_type: Optional[str] = None  # theory | practical
 
 
 def _add_minutes(hhmm: str, minutes: int) -> str:
@@ -515,9 +517,11 @@ async def get_schedule_settings(
             "time_slots": default_slots,
             "working_days": default_days,
         }
+    _global = await db.schedule_settings.find_one({"_id": "global"}) or {}
     return {
         "time_slots": settings.get("time_slots", []),
         "working_days": settings.get("working_days", []),
+        "practical_hour_weight": _global.get("practical_hour_weight", 0.5),
     }
 
 
@@ -525,6 +529,7 @@ async def get_schedule_settings(
 async def update_schedule_settings(
     time_slots: Optional[List[dict]] = None,
     working_days: Optional[List[str]] = None,
+    practical_hour_weight: Optional[float] = None,
     current_user: dict = Depends(get_current_user),
 ):
     if not can_manage_schedule(current_user):
@@ -535,6 +540,10 @@ async def update_schedule_settings(
         update["time_slots"] = time_slots
     if working_days is not None:
         update["working_days"] = working_days
+    if practical_hour_weight is not None:
+        if not (0 < practical_hour_weight <= 1):
+            raise HTTPException(status_code=400, detail="معامل الساعة العملية يجب أن يكون بين 0 و 1")
+        update["practical_hour_weight"] = practical_hour_weight
     if update:
         await db.schedule_settings.update_one({"_id": "global"}, {"$set": update}, upsert=True)
     return {"message": "تم تحديث الإعدادات"}
@@ -1243,7 +1252,7 @@ async def update_schedule_slot(
             await db.weekly_schedule.update_many(_dq, {"$unset": {"duration_minutes": ""}})
         # 🆕 محاضرة مشتركة: المقرر/المعلم/القاعة/المدة تسري على كل المجموعة
         if _mg:
-            shared = {k: v for k, v in update.items() if k in ("course_id", "teacher_id", "room_id", "duration_minutes")}
+            shared = {k: v for k, v in update.items() if k in ("course_id", "teacher_id", "room_id", "duration_minutes", "slot_type")}
             if shared:
                 await db.weekly_schedule.update_many(
                     {"merge_group_id": _mg, "_id": {"$ne": ObjectId(slot_id)}}, {"$set": shared})
@@ -3819,6 +3828,7 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
             "room_name": room.get("name", ""),
             "merge_group_id": _gid or "",
             "merged_with": _labels,
+            "slot_type": s.get("slot_type", "theory"),
         })
         ck = (s.get("course_id", ""), s.get("department_id", ""), s.get("level") or 1, s.get("section", "") or "")
         scheduled_counts[ck] = scheduled_counts.get(ck, 0) + 1
@@ -4190,6 +4200,8 @@ async def export_master_pdf(
                 if items:
                     it = items[0]
                     txt = it["course_name"]
+                    if it.get("slot_type") == "practical":
+                        txt += " (عملي)"
                     extra = _short_teacher(it["teacher_name"])
                     if it.get("room_name"):
                         extra += f" · {it['room_name']}"
@@ -4397,7 +4409,7 @@ async def export_master_excel(
                     _est, _een, _ch = _effective_times(it, ts.get("start_time", ""), ts.get("end_time", ""))
                     if _ch:
                         extra += f"\n⏱ {_est} - {_een}"
-                    cell.value = f"{it['course_name']}\n{extra}"
+                    cell.value = f"{it['course_name']}{' (عملي)' if it.get('slot_type') == 'practical' else ''}\n{extra}"
                     bg = _master_course_color(it["course_id"])[1:].upper()
                     fg = _master_text_color("#" + bg)[1:].upper()
                     cell.fill = PatternFill("solid", fgColor=bg)

@@ -113,7 +113,7 @@ export default function WeeklySchedulePage() {
   const [prefsListOpen, setPrefsListOpen] = useState(false);
   // Add slot modal
   const [showAddSlot, setShowAddSlot] = useState(false);
-  const [addSlotData, setAddSlotData] = useState({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '' });
+  const [addSlotData, setAddSlotData] = useState({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '', slot_type: 'theory' });
   const [mergeLevels, setMergeLevels] = useState<number[]>([]);
   const [mergeSections, setMergeSections] = useState('');
   const [mergeDept, setMergeDept] = useState(''); // 🆕 قسم آخر من نفس الكلية للمحاضرة المشتركة
@@ -663,10 +663,11 @@ export default function WeeklySchedulePage() {
         course_id: addSlotData.course_id,
         teacher_id: addSlotData.teacher_id || course?.teacher_id || '',
         room_id: addSlotData.room_id,
+        slot_type: addSlotData.slot_type || 'theory',
         ...(merge_with.length ? { merge_with } : {}),
       });
       setShowAddSlot(false);
-      setAddSlotData({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '' });
+      setAddSlotData({ day: '', slot_number: '', course_id: '', teacher_id: '', room_id: '', slot_type: 'theory' });
       setMergeLevels([]);
       setMergeSections('');
       setMergeDept('');
@@ -1055,6 +1056,13 @@ export default function WeeklySchedulePage() {
                       </Text>
                     )}
                   </View>
+                  <View style={{ flex: 1, minWidth: 120 }}>
+                    <Text style={st.miniLabel}>النوع</Text>
+                    <View style={st.pickerWrap}><Picker selectedValue={addSlotData.slot_type || 'theory'} onValueChange={v => setAddSlotData(p => ({ ...p, slot_type: v }))} style={{ height: 38 }} testID="add-slot-type-picker">
+                      <Picker.Item label="📖 نظري (افتراضي)" value="theory" />
+                      <Picker.Item label="🧪 عملي (نصف الساعة في النصاب)" value="practical" />
+                    </Picker></View>
+                  </View>
                 </View>
                 <View style={{ marginTop: 10, backgroundColor: '#e8f5e9', borderRadius: 8, padding: 10 }} data-testid="merge-lecture-box">
                   <Text style={{ fontSize: 12, fontWeight: '700', color: '#2e7d32', textAlign: 'right', marginBottom: 6 }}>🔗 محاضرة مشتركة (اختياري) — تُنشأ في جدول كل مستوى/شعبة بنفس المدرس والقاعة والوقت</Text>
@@ -1183,6 +1191,9 @@ export default function WeeklySchedulePage() {
                                   )}
                                   <div style={{ fontSize: 12, fontWeight: 600, color: '#333', textAlign: 'right' }}>
                                     {item.course_name}
+                                    {(item.slot_type === 'practical') && (
+                                      <span data-testid={`practical-badge-${item.id}`} style={{ fontSize: 9, color: '#fff', fontWeight: 800, backgroundColor: '#00695c', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🧪 عملي</span>
+                                    )}
                                     {(item.merged_with?.length > 0 || item.merge_group_id) && (
                                       <span data-testid={`shared-slot-badge-${item.id}`} style={{ fontSize: 9, color: '#00695c', fontWeight: 800, backgroundColor: '#e0f2f1', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🔗 مشترك</span>
                                     )}

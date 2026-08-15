@@ -131,6 +131,9 @@ async def get_teaching_loads(
     if c_ids:
         from .weekly_schedule import _faculty_slot_times, _t2m
         sched = await db.weekly_schedule.find({"course_id": {"$in": c_ids}}).to_list(5000)
+        # 🧪 معامل الساعة العملية (افتراضي: نصف النظري)
+        _gs = await db.schedule_settings.find_one({"_id": "global"}) or {}
+        practical_weight = float(_gs.get("practical_hour_weight", 0.5))
         fac_times = {}
         for f in {s.get("faculty_id", "") for s in sched if s.get("faculty_id")}:
             fac_times[f] = await _faculty_slot_times(db, f)
@@ -151,6 +154,9 @@ async def get_teaching_loads(
                 st, en = fac_times.get(s.get("faculty_id", ""), {}).get(s.get("slot_number"), ("", ""))
                 a, b = _t2m(st), _t2m(en)
                 m = (b - a) if (a is not None and b is not None) else 0
+            # 🧪 المحاضرة العملية تُحسب بوزن مخفض في النصاب
+            if s.get("slot_type") == "practical":
+                m = m * practical_weight
             cid = s.get("course_id", "")
             actual_minutes_by_course[cid] = actual_minutes_by_course.get(cid, 0) + max(m, 0)
 

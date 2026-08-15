@@ -53,6 +53,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [durationModal, setDurationModal] = useState<any>(null);   // ⏱ نافذة المدة المستقلة
   const [newDuration, setNewDuration] = useState('');
   const [newDurationCustom, setNewDurationCustom] = useState('');
+  const [addType, setAddType] = useState('theory'); // 🧪 نوع المحاضرة عند الإضافة (افتراضي: نظري)
 
   const PRESET_DURATIONS = ['45', '60', '90', '120', '180'];
 
@@ -484,9 +485,11 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
         teacher_id: course.teacher_id,
         room_id: addRoomId,
         duration_minutes: _addDur || null,
+        slot_type: addType,
       });
       showMsg('success', `✅ ${res.data.message}`);
       setAddModal(null);
+      setAddType('theory');
       setPlacing(null);
       setValidMap(null);
       await load();
@@ -642,6 +645,30 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           >
             <Ionicons name="home" size={14} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>تغيير القاعة</Text>
+          </TouchableOpacity>
+        )}
+        {editMode && selected && (
+          <TouchableOpacity
+            onPress={async () => {
+              const toPractical = selected.slot_type !== 'practical';
+              if (!window.confirm(toPractical
+                ? `تحويل «${selected.course_name}» في هذه الفترة إلى محاضرة عملية؟\n\n🧪 ستُحسب في نصاب الأستاذ بنصف قيمتها الزمنية.`
+                : `إعادة «${selected.course_name}» في هذه الفترة إلى محاضرة نظرية؟`)) return;
+              setBusy(true);
+              try {
+                await api.put(`/weekly-schedule/${selected.id}`, { slot_type: toPractical ? 'practical' : 'theory' });
+                showMsg('success', toPractical ? '✅ أصبحت المحاضرة عملية (نصف الساعة في النصاب)' : '✅ عادت المحاضرة نظرية');
+                setSelected(null);
+                await load();
+              } catch (e: any) { handleConflictError(e); }
+              finally { setBusy(false); }
+            }}
+            disabled={busy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#00695c' }}
+            testID="master-toggle-slot-type-btn"
+          >
+            <Ionicons name="flask" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{selected.slot_type === 'practical' ? 'تحويل لنظري' : 'تحويل لعملي'}</Text>
           </TouchableOpacity>
         )}
         {editMode && selected && (
@@ -824,6 +851,11 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                                   🔺 +{item.over_plan_minutes}د فوق الخطة
                                 </div>
                               ) : null}
+                              {item.slot_type === 'practical' && (
+                                <div data-testid="practical-slot-badge" style={{ fontSize: 8, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: 110, background: '#00695c', color: '#fff', borderRadius: 3, padding: '0 3px', marginTop: 1 }}>
+                                  🧪 عملي
+                                </div>
+                              )}
                               {item.merged_with?.length > 0 && (
                                 <div style={{ fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110, opacity: 0.95 }}>
                                   مع: {item.merged_with.join('، ')}
@@ -902,6 +934,19 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 )}
               </>
             )}
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginTop: 12, marginBottom: 6, textAlign: 'right' }}>
+              نوع المحاضرة:
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexDirection: 'row-reverse' }} data-testid="add-slot-type-toggle">
+              {[{ v: 'theory', l: '📖 نظري (افتراضي)' }, { v: 'practical', l: '🧪 عملي (تُحسب بنصف الساعة في النصاب)' }].map(o => (
+                <div key={o.v} onClick={() => setAddType(o.v)} style={{
+                  flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'center', fontSize: 12, fontWeight: 700,
+                  border: addType === o.v ? '2px solid #00695c' : '1px solid #e3e9f2',
+                  backgroundColor: addType === o.v ? '#e0f2f1' : '#fafbfd',
+                  color: addType === o.v ? '#00695c' : '#555',
+                }} data-testid={`add-slot-type-${o.v}`}>{o.l}</div>
+              ))}
+            </div>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginTop: 12, marginBottom: 6, textAlign: 'right' }}>
               ⏱ مدة المحاضرة عند التوليد:
             </div>
