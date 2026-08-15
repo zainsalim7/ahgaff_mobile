@@ -595,9 +595,12 @@ async def import_master_schedule(
     # ===== 🔗 كشف المحاضرات المشتركة داخل الملف: نفس (اليوم/الفترة/المدرس/القاعة/الاسم الأساسي للمقرر) لمستويات/شعب مختلفة =====
     def _base_cname(name, sec):
         n = (name or "").strip()
-        suffix = f"({sec})" if sec else ""
-        if suffix and n.endswith(suffix):
-            n = n[: -len(suffix)].strip()
+        # 🔗 تشذيب لاحقة الشعبة بأي صيغة: "الفقه(أ)" / "الفقه (ب)" / "الفقه( ا )" — للمفتاح فقط
+        m = re.match(r"^(.*?)\s*\(\s*([^)]{1,3})\s*\)\s*$", n)
+        if m:
+            tail = _norm(m.group(2))
+            if tail and (tail == _norm(sec or "") or tail in {_norm(c) for c in SECTION_CHARS}):
+                n = m.group(1).strip()
         return _norm(n)
 
     merge_msgs = []
