@@ -23,6 +23,7 @@ const EMPTY = {
   address: 'الجمهورية اليمنية – تريم – حضرموت',
   faculty_name_en: '',
   logo_base64: '',
+  reference_format: '',
 };
 
 const Field = ({ label, value, onChange, placeholder, ltr, testID }: any) => (
@@ -292,6 +293,12 @@ export default function StatementSettingsScreen() {
             onChange={(t: string) => setForm((p) => ({ ...p, faculty_name_en: t }))}
             placeholder="Faculty of Shariah & Law"
             ltr
+          />
+          <Field
+            label="صيغة رقم المرجع — {seq} = الرقم التسلسلي، {year} = السنة، {yy} = آخر رقمين"
+            value={form.reference_format}
+            onChange={(t: string) => setForm((p) => ({ ...p, reference_format: t }))}
+            placeholder="مثال: {seq}/2/7/ت ك ش ق /27/26 — اتركه فارغاً للصيغة الافتراضية رقم/سنة"
           />
 
           {/* التذييل */}

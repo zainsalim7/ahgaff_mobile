@@ -72,6 +72,7 @@ class StatementSettings(BaseModel):
     address: str = "الجمهورية اليمنية – تريم – حضرموت"
     faculty_name_en: str = ""
     logo_base64: str = ""
+    reference_format: str = ""
 
 
 class IssueRequest(BaseModel):
@@ -528,6 +529,10 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     font_path = Path(__file__).parent.parent / "fonts" / "Amiri-Regular.ttf"
     if "Amiri" not in pdfmetrics.getRegisteredFontNames():
         pdfmetrics.registerFont(TTFont("Amiri", str(font_path)))
+    bold_path = Path(__file__).parent.parent / "fonts" / "Amiri-Bold.ttf"
+    if bold_path.exists() and "Amiri-Bold" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("Amiri-Bold", str(bold_path)))
+    BOLD = "Amiri-Bold" if "Amiri-Bold" in pdfmetrics.getRegisteredFontNames() else "Amiri"
 
     buf = io.BytesIO()
     W, H = A4
@@ -570,16 +575,23 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
         hijri_str = f"{hj.year}/{hj.month:02d}/{hj.day:02d}هـ"
     except Exception:
         hijri_str = ""
-    c.setFont("Amiri", 11)
-    c.drawRightString(W - 18 * mm, H - 50 * mm, ar(f"المرجع: {s.get('number_display', '')}"))
-    c.drawRightString(W - 18 * mm, H - 57 * mm, ar(f"التاريخ: {hijri_str}"))
+    # المرجع (يسار، أخضر عريض) مقابل التاريخين (يمين، أخضر)
+    GREEN = (0.0, 0.5, 0.13)
+    c.setFillColorRGB(*GREEN)
+    c.setFont(BOLD, 13)
+    c.drawString(18 * mm, H - 52 * mm, ar(f"المرجع : {s.get('number_display', '')}"))
+    c.setFont(BOLD, 11.5)
+    c.drawRightString(W - 18 * mm, H - 50 * mm, ar(f"التاريخ: {hijri_str}"))
     greg_str = f"{issued.replace('-', '/')}م" if issued else ""
-    c.drawRightString(W - 18 * mm, H - 64 * mm, ar(f"الموافق: {greg_str}"))
+    c.drawRightString(W - 18 * mm, H - 57 * mm, ar(f"الموافق: {greg_str}"))
+    c.setFillColorRGB(0, 0, 0)
 
     # ===== العنوان =====
-    c.setFont("Amiri", 18)
+    c.setFont(BOLD, 20)
     c.drawCentredString(W / 2, H - 78 * mm, ar("إلى من يهمه الأمر"))
-    c.line(W / 2 - 30 * mm, H - 80 * mm, W / 2 + 30 * mm, H - 80 * mm)
+    c.setLineWidth(0.8)
+    c.line(W / 2 - 33 * mm, H - 80.5 * mm, W / 2 + 33 * mm, H - 80.5 * mm)
+    c.setLineWidth(1.0)
 
     # ===== نص الإفادة =====
     level_ar = LEVEL_AR.get(s.get("level") or 1, str(s.get("level")))
