@@ -3584,6 +3584,13 @@ async def create_student(student: StudentCreate, current_user: dict = Depends(ge
     del student_dict["password"]
 
     result = await db.students.insert_one(student_dict)
+    # 🎓 تسجيل تلقائي في مقررات مستواه/شعبته (بما فيها المشتركة)
+    try:
+        from routes.deps import enroll_student_in_matching_courses
+        student_dict["_id"] = result.inserted_id
+        await enroll_student_in_matching_courses(db, student_dict)
+    except Exception as _e:
+        logging.warning(f"auto-enroll new student failed: {_e}")
     student_dict["id"] = str(result.inserted_id)
 
     return student_dict
@@ -4219,14 +4226,20 @@ async def update_student(student_id: str, data: StudentUpdate, current_user: dic
             {"_id": ObjectId(student_id)},
             {"$set": update_data}
         )
-        # 🔄 تغيّر القسم أو المستوى → نظّف تسجيلات مقررات الفصل النشط القديمة
+        # 🔄 تغيّر القسم أو المستوى أو الشعبة → نظّف تسجيلات الفصل النشط ثم سجّله في مقررات موقعه الجديد
         _dept_changed = "department_id" in update_data and update_data["department_id"] != student.get("department_id")
         _level_changed = "level" in update_data and update_data["level"] != student.get("level")
-        if _dept_changed or _level_changed:
+        _sec_changed = "section" in update_data and (update_data["section"] or "") != (student.get("section") or "")
+        if _dept_changed or _level_changed or _sec_changed:
             from routes.student_transfer import cleanup_active_enrollments
+            from routes.deps import enroll_student_in_matching_courses
             removed = await cleanup_active_enrollments(db, student_id)
             if removed:
                 update_data["_enrollments_cleaned"] = removed
+            _fresh = await db.students.find_one({"_id": ObjectId(student_id)})
+            _added = await enroll_student_in_matching_courses(db, _fresh)
+            if _added:
+                update_data["_enrollments_added"] = _added
         # مزامنة قسم حساب المستخدم المرتبط
         if _dept_changed and student.get("user_id"):
             try:

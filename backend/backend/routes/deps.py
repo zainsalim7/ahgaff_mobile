@@ -51,6 +51,55 @@ def build_course_student_query(course: dict) -> dict:
         "status": {"$ne": "graduated"},
     }
 
+
+def _sec_matches(course_sec: str, student_sec: str) -> bool:
+    """مطابقة الشعبة بمرونة الهمزة — شعبة المقرر الفارغة تعني كل الشعب"""
+    cs = (course_sec or "").strip()
+    if not cs:
+        return True
+    n = lambda x: (x or "").strip().replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    return n(cs) == n(student_sec)
+
+
+async def enroll_student_in_matching_courses(db, student: dict) -> int:
+    """🎓 تسجيل الطالب في كل مقررات الفصل النشط المطابقة لموقعه (أصلياً أو عبر روابط المشاركة)"""
+    if not student or student.get("is_alumni") or student.get("status") == "graduated":
+        return 0
+    active = await db.semesters.find_one({"$or": [{"status": "active"}, {"is_active": True}]})
+    active_id = str(active["_id"]) if active else None
+    dep, lvl, sec = student.get("department_id"), student.get("level"), (student.get("section") or "")
+    if not dep or not lvl:
+        return 0
+    q = {
+        "is_active": {"$ne": False},
+        "$or": [
+            {"department_id": dep, "level": lvl},
+            {"shared_links": {"$elemMatch": {"department_id": dep, "level": lvl}}},
+        ],
+    }
+    if active_id:
+        q["semester_id"] = active_id
+    sid = str(student["_id"])
+    have = {e["course_id"] for e in await db.enrollments.find({"student_id": sid}, {"course_id": 1}).to_list(20000)}
+    added = 0
+    async for c in db.courses.find(q):
+        cid = str(c["_id"])
+        if cid in have:
+            continue
+        ok = c.get("department_id") == dep and c.get("level") == lvl and _sec_matches(c.get("section"), sec)
+        if not ok:
+            ok = any(
+                l.get("department_id") == dep and l.get("level") == lvl and _sec_matches(l.get("section"), sec)
+                for l in (c.get("shared_links") or [])
+            )
+        if ok:
+            doc = {"course_id": cid, "student_id": sid, "enrolled_at": datetime.utcnow().isoformat(), "enrolled_by": "auto_student_sync"}
+            if active_id:
+                doc["semester_id"] = active_id
+            await db.enrollments.insert_one(doc)
+            added += 1
+    return added
+
 _login_attempts = {}
 RATE_LIMIT_WINDOW = 300  # 5 دقائق
 RATE_LIMIT_MAX_ATTEMPTS = 10

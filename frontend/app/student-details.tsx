@@ -516,7 +516,6 @@ export default function StudentDetailsScreen() {
     if (!trgDeptId) { showMessage('خطأ', 'اختر القسم الهدف'); return; }
     const lvl = parseInt(trgLevel);
     if (isNaN(lvl) || lvl < 1 || lvl > 10) { showMessage('خطأ', 'المستوى غير صالح (1-10)'); return; }
-    if (!trgSection.trim()) { showMessage('خطأ', 'الشعبة مطلوبة'); return; }
     setSavingTransfer(true);
     try {
       await api.post(`/students/${student.id}/transfer`, {

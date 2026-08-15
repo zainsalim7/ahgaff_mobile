@@ -35,7 +35,7 @@ class TransferRequest(BaseModel):
     target_faculty_id: Optional[str] = Field(None, description="معرف الكلية الجديدة (اختياري إن نُقل ضمن نفس الكلية)")
     target_department_id: str = Field(..., description="معرف القسم الجديد")
     target_level: int = Field(..., ge=1, le=10, description="المستوى الجديد")
-    target_section: str = Field(..., description="الشعبة الجديدة")
+    target_section: str = Field("", description="الشعبة الجديدة (اختيارية — اتركها فارغة إن لم توجد شعب في المستوى الهدف)")
     reason: Optional[str] = Field(None, max_length=500, description="سبب النقل (اختياري)")
 
 
@@ -44,7 +44,7 @@ class BulkTransferRequest(BaseModel):
     target_faculty_id: Optional[str] = None
     target_department_id: str
     target_level: int = Field(..., ge=1, le=10)
-    target_section: str
+    target_section: str = ""
     reason: Optional[str] = Field(None, max_length=500)
 
 
@@ -235,6 +235,15 @@ async def _perform_transfer(db, student: dict, target: dict, target_level: int, 
     except Exception:
         pass
 
+    # 3.5) 🎓 سجّله تلقائياً في مقررات وجهته الجديدة (بما فيها المشتركة)
+    enrolled_new = 0
+    try:
+        from .deps import enroll_student_in_matching_courses
+        _fresh = await db.students.find_one({"_id": student["_id"]})
+        enrolled_new = await enroll_student_in_matching_courses(db, _fresh)
+    except Exception:
+        pass
+
     # 4) إشعار للطالب
     try:
         # ابحث عن user مرتبط بهذا الطالب
@@ -284,7 +293,7 @@ async def _perform_transfer(db, student: dict, target: dict, target_level: int, 
     except Exception:
         pass
 
-    return {"history_id": str(history_doc.get("_id", "")), "from": snapshot_from, "to": snapshot_to}
+    return {"history_id": str(history_doc.get("_id", "")), "from": snapshot_from, "to": snapshot_to, "enrolled_in_new_courses": enrolled_new}
 
 
 # ============================
