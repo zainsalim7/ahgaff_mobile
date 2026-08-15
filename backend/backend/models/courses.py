@@ -13,6 +13,7 @@ class CourseBase(BaseModel):
     level: int
     section: Optional[str] = ""
     credit_hours: Optional[int] = 3
+    practical_hours: Optional[int] = 0  # 🧪 منها ساعات عملية
     semester_id: Optional[str] = None
     academic_year: Optional[str] = ""
     # حقول الربط بالخطة الدراسية (Layer 1 → Layer 3)

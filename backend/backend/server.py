@@ -5932,6 +5932,7 @@ async def get_courses(
             "level": c.get("level", 1),
             "section": c.get("section"),
             "credit_hours": c.get("credit_hours", 3),
+            "practical_hours": c.get("practical_hours", 0),
             "room": c.get("room"),
             "semester": c.get("semester"),
             "semester_id": c.get("semester_id"),
@@ -6847,6 +6848,8 @@ class CourseUpdate(BaseModel):
     section: Optional[str] = None
     semester: Optional[str] = None
     academic_year: Optional[str] = None
+    credit_hours: Optional[int] = None
+    practical_hours: Optional[int] = None  # 🧪 منها ساعات عملية
 
 @api_router.put("/courses/{course_id}")
 async def update_course(course_id: str, data: CourseUpdate, current_user: dict = Depends(get_current_user)):

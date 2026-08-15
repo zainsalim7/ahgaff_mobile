@@ -187,6 +187,7 @@ export default function AddCourseScreen() {
     level: '1',
     section: '',
     credit_hours: '3',
+    practical_hours: '0',
   });
   const [sectionCount, setSectionCount] = useState('');
   const [extraSections, setExtraSections] = useState('');  // إضافة شُعب جديدة عند التعديل
@@ -273,10 +274,19 @@ export default function AddCourseScreen() {
 
     setSaving(true);
     try {
+      const _ch = parseInt(formData.credit_hours) || 3;
+      const _ph = parseInt(formData.practical_hours) || 0;
+      if (_ph > _ch) {
+        if (Platform.OS === 'web') window.alert('الساعات العملية لا يمكن أن تتجاوز الساعات المعتمدة');
+        else Alert.alert('خطأ', 'الساعات العملية لا يمكن أن تتجاوز الساعات المعتمدة');
+        setSaving(false);
+        return;
+      }
       const baseData = {
         ...formData,
         level: parseInt(formData.level),
-        credit_hours: parseInt(formData.credit_hours) || 3,
+        credit_hours: _ch,
+        practical_hours: _ph,
         semester_id: settings?.current_semester_id || null,
         academic_year: settings?.academic_year || '',
       };
@@ -410,6 +420,7 @@ export default function AddCourseScreen() {
       level: '1',
       section: '',
       credit_hours: '3',
+      practical_hours: '0',
     });
     setSectionCount('');
   };
@@ -515,6 +526,7 @@ export default function AddCourseScreen() {
       level: String(course.level),
       section: course.section || '',
       credit_hours: String(course.credit_hours || 3),
+      practical_hours: String((course as any).practical_hours || 0),
     });
     setShowForm(true);
   };
@@ -782,6 +794,11 @@ export default function AddCourseScreen() {
                   <Text style={{ fontSize: 8.5, color: '#e65100', fontWeight: '800' }}>📥 من الاستيراد</Text>
                 </View>
               )}
+              {(((item as any).practical_hours || 0) > 0) && (
+                <View style={{ backgroundColor: '#00695c', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }} testID={`course-practical-badge-${item.id}`}>
+                  <Text style={{ fontSize: 8.5, color: '#fff', fontWeight: '800' }}>🧪 {(item as any).practical_hours}ع</Text>
+                </View>
+              )}
               {(((item as any).shared_here) || (((item as any).shared_links || []).length > 0)) && (
                 <TouchableOpacity
                   style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
@@ -967,6 +984,19 @@ export default function AddCourseScreen() {
               keyboardType="numeric"
               data-testid="credit-hours-input"
             />
+
+            <Text style={styles.label}>منها ساعات عملية 🧪 (اختياري)</Text>
+            <TextInput
+              style={styles.input}
+              value={formData.practical_hours}
+              onChangeText={(text) => setFormData({ ...formData, practical_hours: text.replace(/[^0-9]/g, '') })}
+              placeholder="0"
+              keyboardType="numeric"
+              data-testid="practical-hours-input"
+            />
+            <Text style={{ fontSize: 11, color: '#666', marginBottom: 6, textAlign: 'right' }}>
+              💡 الافتراضي 0 = كل الساعات نظرية · الساعة العملية تُحسب بنصف قيمتها في نصاب الأستاذ
+            </Text>
 
             {editingCourse ? (
               <>
