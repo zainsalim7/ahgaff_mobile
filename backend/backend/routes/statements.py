@@ -16,6 +16,38 @@ router = APIRouter()
 
 LEVEL_AR = {1: "الأول", 2: "الثاني", 3: "الثالث", 4: "الرابع", 5: "الخامس", 6: "السادس", 7: "السابع", 8: "الثامن", 9: "التاسع", 10: "العاشر"}
 STATUS_PHRASE = {"active": "ومستمراً في الدراسة", "frozen": "وقد جمّد قيده حالياً", "suspended": "وموقوف عن الدراسة حالياً"}
+STATUS_WORD = {"active": "مستمر في الدراسة", "frozen": "مجمّد القيد حالياً", "suspended": "موقوف عن الدراسة حالياً", "graduated": "متخرج"}
+
+
+def _apply_vars(text: str, ctx: dict) -> str:
+    for k, v in ctx.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
+
+def _var_ctx(student: dict, dept, faculty, academic_year_display: str, nationality=None) -> dict:
+    """قيم المتغيرات المتاحة في قوالب الإفادات."""
+    return {
+        "اسم_الطالب": student.get("full_name", ""),
+        "رقم_القيد": student.get("student_id", ""),
+        "الجنسية": (nationality or student.get("nationality") or "يمني").strip(),
+        "المستوى": LEVEL_AR.get(student.get("level") or 1, str(student.get("level") or "")),
+        "التخصص": (dept or {}).get("name", ""),
+        "الكلية": (faculty or {}).get("name", ""),
+        "العام_الجامعي": academic_year_display,
+        "الحالة": STATUS_WORD.get(student.get("status", "active"), "مستمر في الدراسة"),
+        "التاريخ": datetime.now(timezone.utc).strftime("%Y/%m/%d") + "م",
+    }
+
+
+async def _academic_year_display(db) -> str:
+    active_sem = await db.semesters.find_one({"status": "active"})
+    academic_year = (active_sem or {}).get("academic_year") or ""
+    if academic_year and "-" in academic_year:
+        parts = academic_year.split("-")
+        return f"{parts[1]}/{parts[0]}م"
+    y = datetime.now(timezone.utc).year
+    return f"{y + 1}/{y}م"
 
 
 def _can_issue(user: dict, faculty_id: str) -> bool:
@@ -50,6 +82,8 @@ class IssueRequest(BaseModel):
     valid_days: Optional[int] = None
     signatory_name: Optional[str] = None
     signatory_title: Optional[str] = None
+    body: Optional[str] = None  # 📝 متن مخصص (من قالب أو حر)
+    template_name: Optional[str] = None
 
 
 class RevokeRequest(BaseModel):
@@ -129,7 +163,7 @@ async def _safe_dept(db, student: dict):
 
 
 async def _issue_core(db, student: dict, current_user: dict, nationality, purpose, valid_days, base_url,
-                      signatory_name=None, signatory_title=None) -> dict:
+                      signatory_name=None, signatory_title=None, body=None, template_name=None) -> dict:
     dept = await _safe_dept(db, student)
     faculty_id = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
     if not _can_issue(current_user, faculty_id):
@@ -141,21 +175,21 @@ async def _issue_core(db, student: dict, current_user: dict, nationality, purpos
         except Exception:
             faculty = None
 
-    active_sem = await db.semesters.find_one({"status": "active"})
-    academic_year = (active_sem or {}).get("academic_year") or ""
-    if academic_year and "-" in academic_year:
-        parts = academic_year.split("-")
-        academic_year_display = f"{parts[1]}/{parts[0]}م"
-    else:
-        y = datetime.now(timezone.utc).year
-        academic_year_display = f"{y + 1}/{y}م"
+    academic_year_display = await _academic_year_display(db)
 
     year = datetime.now(timezone.utc).year
     counter = await db.statement_counters.find_one_and_update(
         {"_id": f"{faculty_id}_{year}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True
     )
     seq = counter["seq"]
-    number_display = f"{seq}/{year}"
+    # 🔢 صيغة رقم المرجع قابلة للضبط من إعدادات الإفادات: {seq} {year} {yy} {enrollment_no}
+    _st = await db.statement_settings.find_one({"_id": f"faculty_{faculty_id}"}) or {}
+    _fmt = (_st.get("reference_format") or "").strip()
+    if _fmt:
+        number_display = (_fmt.replace("{seq}", str(seq)).replace("{year}", str(year))
+                          .replace("{yy}", str(year % 100)).replace("{enrollment_no}", str(student.get("student_id", ""))))
+    else:
+        number_display = f"{seq}/{year}"
 
     token = uuid.uuid4().hex
     verify_base = (await get_verify_base(db)) or (base_url or "").rstrip("/")
@@ -164,6 +198,12 @@ async def _issue_core(db, student: dict, current_user: dict, nationality, purpos
     from datetime import timedelta
     vd = valid_days if (valid_days and valid_days > 0) else 90
     expires_at = (datetime.now(timezone.utc) + timedelta(days=vd)).isoformat()
+
+    # 📝 متن مخصص (قالب/حر): استبدال المتغيرات ببيانات الطالب قبل التخزين
+    rendered_body = ""
+    if (body or "").strip():
+        ctx = _var_ctx(student, dept, faculty, academic_year_display, nationality)
+        rendered_body = _apply_vars(body.strip(), ctx)
 
     doc = {
         "serial": seq,
@@ -181,6 +221,8 @@ async def _issue_core(db, student: dict, current_user: dict, nationality, purpos
         "academic_year": academic_year_display,
         "student_status": student.get("status", "active"),
         "purpose": (purpose or "").strip(),
+        "body": rendered_body,
+        "template_name": (template_name or "").strip(),
         "signatory_name": (signatory_name or "").strip(),
         "signatory_title": (signatory_title or "").strip(),
         "verify_token": token,
@@ -205,8 +247,105 @@ async def issue_statement(data: IssueRequest, current_user: dict = Depends(get_c
     if not student:
         raise HTTPException(status_code=404, detail="الطالب غير موجود")
     doc = await _issue_core(db, student, current_user, data.nationality, data.purpose, data.valid_days, data.base_url,
-                            signatory_name=data.signatory_name, signatory_title=data.signatory_title)
+                            signatory_name=data.signatory_name, signatory_title=data.signatory_title,
+                            body=data.body, template_name=data.template_name)
     return {"id": doc["inserted_id"], "number": doc["number_display"], "verify_url": doc["verify_url"], "token": doc["verify_token"]}
+
+
+# ============ قوالب الإفادات (مشتركة لكل الكليات) ============
+
+def _can_manage_templates(user: dict) -> bool:
+    return user.get("role") not in ("teacher", "student")
+
+
+class StatementTemplate(BaseModel):
+    name: str
+    body: str
+
+
+@router.get("/statement-templates")
+async def list_statement_templates(current_user: dict = Depends(get_current_user)):
+    if not _can_manage_templates(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    items = []
+    async for t in db.statement_templates.find({}).sort("name", 1):
+        t["id"] = str(t.pop("_id"))
+        items.append(t)
+    return items
+
+
+@router.post("/statement-templates")
+async def create_statement_template(data: StatementTemplate, current_user: dict = Depends(get_current_user)):
+    if not _can_manage_templates(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    name, body = data.name.strip(), data.body.strip()
+    if not name or not body:
+        raise HTTPException(status_code=400, detail="اسم القالب ومتنه مطلوبان")
+    db = get_db()
+    if await db.statement_templates.find_one({"name": name}):
+        raise HTTPException(status_code=400, detail="يوجد قالب بهذا الاسم مسبقاً")
+    doc = {"name": name, "body": body,
+           "created_by_name": current_user.get("full_name", ""),
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    res = await db.statement_templates.insert_one(doc)
+    return {"message": "تم إنشاء القالب", "id": str(res.inserted_id)}
+
+
+@router.put("/statement-templates/{template_id}")
+async def update_statement_template(template_id: str, data: StatementTemplate, current_user: dict = Depends(get_current_user)):
+    if not _can_manage_templates(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    name, body = data.name.strip(), data.body.strip()
+    if not name or not body:
+        raise HTTPException(status_code=400, detail="اسم القالب ومتنه مطلوبان")
+    db = get_db()
+    dup = await db.statement_templates.find_one({"name": name, "_id": {"$ne": ObjectId(template_id)}})
+    if dup:
+        raise HTTPException(status_code=400, detail="يوجد قالب آخر بهذا الاسم")
+    r = await db.statement_templates.update_one(
+        {"_id": ObjectId(template_id)},
+        {"$set": {"name": name, "body": body, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="القالب غير موجود")
+    return {"message": "تم تحديث القالب"}
+
+
+@router.delete("/statement-templates/{template_id}")
+async def delete_statement_template(template_id: str, current_user: dict = Depends(get_current_user)):
+    if not _can_manage_templates(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    r = await db.statement_templates.delete_one({"_id": ObjectId(template_id)})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="القالب غير موجود")
+    return {"message": "تم حذف القالب"}
+
+
+class PreviewBodyRequest(BaseModel):
+    student_id: str
+    body: str = ""
+
+
+@router.post("/statements/preview-body")
+async def preview_statement_body(data: PreviewBodyRequest, current_user: dict = Depends(get_current_user)):
+    """معاينة متن قالب/نص حر بعد استبدال المتغيرات ببيانات طالب محدد."""
+    db = get_db()
+    student = await db.students.find_one({"_id": ObjectId(data.student_id)})
+    if not student:
+        raise HTTPException(status_code=404, detail="الطالب غير موجود")
+    dept = await _safe_dept(db, student)
+    fid = student.get("faculty_id") or (dept or {}).get("faculty_id", "")
+    if not _can_issue(current_user, fid):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    faculty = None
+    if fid:
+        try:
+            faculty = await db.faculties.find_one({"_id": ObjectId(fid)})
+        except Exception:
+            faculty = None
+    ctx = _var_ctx(student, dept, faculty, await _academic_year_display(db))
+    return {"body": _apply_vars((data.body or ""), ctx), "variables": ctx}
 
 
 class BulkIssueRequest(BaseModel):
@@ -344,6 +483,7 @@ async def verify_statement(token: str):
         "valid": True,
         "message": "إفادة صحيحة صادرة رسمياً من جامعة الأحقاف",
         "number": s.get("number_display"),
+        "statement_type": s.get("template_name") or "",
         "student_name": s.get("student_name"),
         "faculty_name": s.get("faculty_name"),
         "department_name": s.get("department_name"),
@@ -446,19 +586,36 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     status_phrase = STATUS_PHRASE.get(s.get("student_status", "active"), "ومستمراً في الدراسة")
     c.setFont("Amiri", 14)
     yy = H - 96 * mm
-    c.drawCentredString(W / 2, yy, ar(f"تفيد {s.get('faculty_name', '')} بجامعة الأحقاف"))
-    yy -= 9 * mm
-    c.drawCentredString(W / 2, yy, ar("بأن الطالب:"))
-    yy -= 10 * mm
-    c.setFont("Amiri", 17)
-    c.drawCentredString(W / 2, yy, ar(s.get("student_name", "")))
-    yy -= 11 * mm
-    c.setFont("Amiri", 14)
-    c.drawCentredString(W / 2, yy, ar(f"{s.get('nationality', '')} الجنسية، يدرس بالمستوى {level_ar} تخصص ({s.get('department_name', '')})"))
-    yy -= 9 * mm
-    c.drawCentredString(W / 2, yy, ar(f"للعام الجامعي {s.get('academic_year', '')}، يحمل رقم قيد ({s.get('enrollment_no', '')}) {status_phrase}."))
-    yy -= 12 * mm
-    c.drawCentredString(W / 2, yy, ar("أعطيت له هذه الإفادة بناءً على طلبه."))
+    if (s.get("body") or "").strip():
+        # 📝 متن مخصص من قالب أو إفادة حرة — يُلف على أسطر
+        import textwrap as _tw
+        c.drawCentredString(W / 2, yy, ar(f"تفيد {s.get('faculty_name', '')} بجامعة الأحقاف"))
+        yy -= 9 * mm
+        c.drawCentredString(W / 2, yy, ar("بأن الطالب:"))
+        yy -= 10 * mm
+        c.setFont("Amiri", 17)
+        c.drawCentredString(W / 2, yy, ar(s.get("student_name", "")))
+        yy -= 11 * mm
+        c.setFont("Amiri", 14)
+        for para in s["body"].split("\n"):
+            for line in (_tw.wrap(para, width=72) or [""]):
+                c.drawCentredString(W / 2, yy, ar(line))
+                yy -= 8 * mm
+        yy -= 4 * mm
+    else:
+        c.drawCentredString(W / 2, yy, ar(f"تفيد {s.get('faculty_name', '')} بجامعة الأحقاف"))
+        yy -= 9 * mm
+        c.drawCentredString(W / 2, yy, ar("بأن الطالب:"))
+        yy -= 10 * mm
+        c.setFont("Amiri", 17)
+        c.drawCentredString(W / 2, yy, ar(s.get("student_name", "")))
+        yy -= 11 * mm
+        c.setFont("Amiri", 14)
+        c.drawCentredString(W / 2, yy, ar(f"{s.get('nationality', '')} الجنسية، يدرس بالمستوى {level_ar} تخصص ({s.get('department_name', '')})"))
+        yy -= 9 * mm
+        c.drawCentredString(W / 2, yy, ar(f"للعام الجامعي {s.get('academic_year', '')}، يحمل رقم قيد ({s.get('enrollment_no', '')}) {status_phrase}."))
+        yy -= 12 * mm
+        c.drawCentredString(W / 2, yy, ar("أعطيت له هذه الإفادة بناءً على طلبه."))
     if s.get("purpose"):
         yy -= 9 * mm
         c.drawCentredString(W / 2, yy, ar(f"وذلك لغرض: {s['purpose']}"))

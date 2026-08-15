@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend E2E testing of the new Dynamic Statements (الإفادات) feature via Playwright on the preview URL as admin. All 7 requested scenarios passed: (1) template CRUD in /statement-settings (create 'قالب اختبار آلي', variable chips append into body, edit with label 'حفظ التعديل' + prefilled name/body, delete via window.confirm; existing 'إفادة تقديم للسفارة' untouched); (2) statement modal opens from student-details with 3 mode buttons and nationality field prefilled ('إندونيسي') in standard mode; (3) template mode picker lists the shared template, selection calls /statements/preview-body and fills body fully rendered (zero remaining {placeholders}: 'إندونيسي الجنسية، يدرس بالمستوى الأول تخصص (الشريعة والقانون) ... رقم قيد (1001) وهو مستمر في الدراسة'), edit + issue produced statement 25/2026 with PDF download (statement_25-2026.pdf) and success box; (4) free mode empty body blocked with window.alert 'اكتب متن الإفادة الحرة' and no issuance, then free text issued 26/2026 + PDF; (5) statements-log shows purple type badges '📋 إفادة تقديم للسفارة' / '📋 إفادة حرة' on 23-26/2026 and NO badge on standard 27/2026, 18/2026, 1/2026; (6) public /verify-statement?token=... (no login) shows 'نوع الإفادة' row with template name for 25/2026 and 'إفادة حرة' for the free one, and the row is correctly absent for standard 27/2026; (7) regression: standard mode issued 27/2026 with PDF. No console errors observed in any flow.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "statement-settings — templates card", "issues": ["Deleting a template gives no success feedback (template-msg is only set on error); list just refreshes silently. Consider a '✅ تم حذف القالب' message for consistency with create/update."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional (minor UX): show a success message in template-msg after a successful template delete.",
+    "Note: I added a missing testID — Field component in statement-settings.tsx now forwards testID, and the template name input has data-testid='template-name-input' (kept for future automation)."
+  ],
+  "critical_code_review_comments": [
+    "student-details.tsx is ~2742 lines — exceeds the 700-line guideline; the statement modal + issuing logic is a good candidate to extract into its own component/hook.",
+    "onSelectStatementTemplate silently falls back to the raw (un-substituted) template body if /statements/preview-body fails — the user could unknowingly issue a PDF containing {placeholders}. Consider surfacing an error instead of a silent fallback."
+  ],
+  "updated_files": ["/app/frontend/app/statement-settings.tsx"],
+  "success_rate": {"backend": "not tested (per request)", "frontend": "100% (7/7 scenarios)"},
+  "seed_data_creation": "Created + edited + deleted template 'قالب اختبار آلي'. Issued statements 25/2026 (template), 26/2026 (free), 27/2026 (standard) for student 'طالب اختبار 1' (id 698e57518cfb2f14627a285e). Verify tokens: 25→b7060a0dd16c42199e5786b17eb98acc, 26→f5b010fb6a0e49f7b5f049d94e875455, 27→1c16a6858cf14b5aa3e6a0c73c08b480.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin/admin123 from /app/memory/test_credentials.md (valid)",
+  "context_for_next_testing_agent": "Login: fill input[0]=username, input[1]=password, then click text 'تسجيل الدخول' (rendered as a div, no role=button). window.confirm/alert must be accepted with asyncio.ensure_future(dialog.accept()) — a plain lambda without awaiting hangs the click. RN Picker renders a native <select>: use select_option(label=...). Template picker option values are template ids. Student details deep link: /student-details?studentId=<id>. Statements 25/26/27 of 2026 were created by this run and can be reused or revoked.",
+  "rca_of_the_issue": "No functional defects found; the only finding is the missing success toast/message after template deletion (deleteTemplate sets tplMsg only in the catch block)."
+}

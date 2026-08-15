@@ -25,7 +25,7 @@ const EMPTY = {
   logo_base64: '',
 };
 
-const Field = ({ label, value, onChange, placeholder, ltr }: any) => (
+const Field = ({ label, value, onChange, placeholder, ltr, testID }: any) => (
   <View style={styles.fieldWrap}>
     <Text style={styles.label}>{label}</Text>
     <TextInput
@@ -34,6 +34,7 @@ const Field = ({ label, value, onChange, placeholder, ltr }: any) => (
       placeholder={placeholder}
       placeholderTextColor="#9aa4b2"
       style={[styles.input, ltr && { textAlign: 'left', direction: 'ltr' as any }]}
+      testID={testID}
     />
   </View>
 );
@@ -50,6 +51,59 @@ export default function StatementSettingsScreen() {
   const [verifyBase, setVerifyBase] = useState('');
   const [savingBase, setSavingBase] = useState(false);
   const [baseMsg, setBaseMsg] = useState('');
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [tplName, setTplName] = useState('');
+  const [tplBody, setTplBody] = useState('');
+  const [editingTplId, setEditingTplId] = useState('');
+  const [tplMsg, setTplMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [savingTpl, setSavingTpl] = useState(false);
+
+  const TPL_VARS = ['{اسم_الطالب}', '{رقم_القيد}', '{الجنسية}', '{المستوى}', '{التخصص}', '{الكلية}', '{العام_الجامعي}', '{الحالة}', '{التاريخ}'];
+
+  const loadTemplates = useCallback(async () => {
+    try {
+      const res = await api.get('/statement-templates');
+      setTemplates(res.data || []);
+    } catch {}
+  }, []);
+
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
+
+  const saveTemplate = async () => {
+    if (!tplName.trim() || !tplBody.trim()) {
+      setTplMsg({ type: 'err', text: 'اسم القالب ومتنه مطلوبان' });
+      return;
+    }
+    setSavingTpl(true);
+    setTplMsg(null);
+    try {
+      if (editingTplId) {
+        await api.put(`/statement-templates/${editingTplId}`, { name: tplName.trim(), body: tplBody.trim() });
+        setTplMsg({ type: 'ok', text: '✅ تم تحديث القالب' });
+      } else {
+        await api.post('/statement-templates', { name: tplName.trim(), body: tplBody.trim() });
+        setTplMsg({ type: 'ok', text: '✅ تم إنشاء القالب — سيظهر عند إصدار أي إفادة' });
+      }
+      setTplName(''); setTplBody(''); setEditingTplId('');
+      loadTemplates();
+    } catch (e: any) {
+      setTplMsg({ type: 'err', text: e?.response?.data?.detail || 'فشل حفظ القالب' });
+    } finally {
+      setSavingTpl(false);
+    }
+  };
+
+  const deleteTemplate = async (t: any) => {
+    if (Platform.OS === 'web' && !window.confirm(`حذف القالب «${t.name}»؟ لن يؤثر على الإفادات الصادرة سابقاً.`)) return;
+    try {
+      await api.delete(`/statement-templates/${t.id}`);
+      if (editingTplId === t.id) { setTplName(''); setTplBody(''); setEditingTplId(''); }
+      setTplMsg({ type: 'ok', text: '✅ تم حذف القالب' });
+      loadTemplates();
+    } catch (e: any) {
+      setTplMsg({ type: 'err', text: e?.response?.data?.detail || 'فشل حذف القالب' });
+    }
+  };
 
   useEffect(() => {
     if (user?.role !== 'admin') return;
@@ -301,6 +355,97 @@ export default function StatementSettingsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* قوالب الإفادات — مشتركة لكل الكليات */}
+        <View style={[styles.card, { marginTop: 14 }]} testID="statement-templates-card">
+          <Text style={styles.title}>📋 قوالب الإفادات (مشتركة لكل الكليات)</Text>
+          <Text style={styles.hint}>
+            أنشئ قوالب جاهزة بمتغيرات تُستبدل تلقائياً ببيانات الطالب عند الإصدار. القوالب متاحة عند إصدار أي إفادة من صفحة الطالب.
+          </Text>
+
+          {templates.length === 0 ? (
+            <View style={styles.logoPlaceholder}>
+              <Text style={styles.logoPlaceholderText}>لا توجد قوالب بعد — أنشئ أول قالب أدناه</Text>
+            </View>
+          ) : templates.map((t) => (
+            <View key={t.id} style={styles.tplRow} testID={`template-row-${t.id}`}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
+                <TouchableOpacity
+                  onPress={() => { setEditingTplId(t.id); setTplName(t.name); setTplBody(t.body); setTplMsg(null); }}
+                  style={styles.tplActionBtn}
+                  testID={`template-edit-btn-${t.id}`}
+                >
+                  <Ionicons name="create-outline" size={15} color="#1565c0" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => deleteTemplate(t)} style={styles.tplActionBtn} testID={`template-delete-btn-${t.id}`}>
+                  <Ionicons name="trash-outline" size={15} color="#c62828" />
+                </TouchableOpacity>
+              </View>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Text style={styles.tplName}>{t.name}</Text>
+                <Text style={styles.tplBodyPreview} numberOfLines={2}>{t.body}</Text>
+              </View>
+            </View>
+          ))}
+
+          <Text style={[styles.sectionTitle, { marginTop: 14 }]}>{editingTplId ? '✏️ تعديل القالب' : '➕ قالب جديد'}</Text>
+          <Field
+            label="اسم القالب (مثال: إفادة تقديم للسفارة)"
+            value={tplName}
+            onChange={setTplName}
+            placeholder="اسم القالب"
+            testID="template-name-input"
+          />
+          <Text style={styles.label}>متن القالب</Text>
+          <TextInput
+            value={tplBody}
+            onChangeText={setTplBody}
+            multiline
+            placeholder={'مثال: {الجنسية} الجنسية، يدرس بالمستوى {المستوى} تخصص ({التخصص}) للعام الجامعي {العام_الجامعي}، ويحمل رقم قيد ({رقم_القيد}) وهو {الحالة}.'}
+            placeholderTextColor="#9aa4b2"
+            style={[styles.input, { minHeight: 100, textAlignVertical: 'top' as any, marginBottom: 8 }]}
+            testID="template-body-input"
+          />
+          <Text style={styles.label}>المتغيرات المتاحة — اضغط لإدراجها في المتن:</Text>
+          <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 6 }}>
+            {TPL_VARS.map((v) => (
+              <TouchableOpacity key={v} onPress={() => setTplBody((p) => (p ? `${p} ${v}` : v))} style={styles.varChip} testID={`var-chip-${v}`}>
+                <Text style={styles.varChipText}>{v}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={{ fontSize: 11, color: '#8a94a6', textAlign: 'right', lineHeight: 18 }}>
+            💡 يُطبع المتن في الـ PDF بعد سطر «بأن الطالب: الاسم» مع نفس الترويسة والتوقيع ورمز QR
+          </Text>
+
+          {tplMsg && (
+            <View style={[styles.msgBox, tplMsg.type === 'ok' ? styles.msgOk : styles.msgErr]} testID="template-msg">
+              <Text style={[styles.msgText, { color: tplMsg.type === 'ok' ? '#2e7d32' : '#c62828' }]}>{tplMsg.text}</Text>
+            </View>
+          )}
+
+          <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+            <TouchableOpacity
+              onPress={saveTemplate}
+              disabled={savingTpl}
+              style={[styles.saveBtn, { flex: 1 }, savingTpl && { opacity: 0.6 }]}
+              testID="template-save-btn"
+            >
+              {savingTpl ? <ActivityIndicator size="small" color="#fff" /> : (
+                <Text style={styles.saveBtnText}>{editingTplId ? 'حفظ التعديل' : 'إنشاء القالب'}</Text>
+              )}
+            </TouchableOpacity>
+            {!!editingTplId && (
+              <TouchableOpacity
+                onPress={() => { setEditingTplId(''); setTplName(''); setTplBody(''); setTplMsg(null); }}
+                style={[styles.saveBtn, { backgroundColor: '#90a4ae', flex: 0.5 }]}
+                testID="template-cancel-edit-btn"
+              >
+                <Text style={styles.saveBtnText}>إلغاء التعديل</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         {/* رابط التحقق الأساسي — أدمن فقط */}
         {user?.role === 'admin' && (
           <View style={[styles.card, { marginTop: 14 }]}>
@@ -375,4 +520,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#00796b', borderRadius: 10, padding: 13, marginTop: 14,
   },
   saveBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  tplRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: '#e6eaf2', borderRadius: 10, padding: 10, marginBottom: 8, backgroundColor: '#fbfcfe',
+  },
+  tplName: { fontSize: 13, fontWeight: '800', color: '#1a2540', textAlign: 'right' },
+  tplBodyPreview: { fontSize: 11, color: '#7b8794', textAlign: 'right', marginTop: 2, lineHeight: 16 },
+  tplActionBtn: { padding: 6, borderRadius: 6, borderWidth: 1, borderColor: '#e6eaf2', backgroundColor: '#fff' },
+  varChip: { backgroundColor: '#ede7f6', borderRadius: 14, paddingVertical: 4, paddingHorizontal: 10 },
+  varChipText: { fontSize: 11, fontWeight: '700', color: '#5e35b1' },
 });

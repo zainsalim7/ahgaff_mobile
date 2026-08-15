@@ -42,6 +42,7 @@ export default function VerifyStatementPage() {
             <View style={{ marginTop: 16, width: '100%', backgroundColor: '#f8faf9', borderRadius: 10, padding: 14, gap: 8 }}>
               {[
                 ['رقم الإفادة', result.number],
+                ...(result.statement_type ? [['نوع الإفادة', result.statement_type]] : []),
                 ['اسم الطالب', result.student_name],
                 ['الكلية', result.faculty_name],
                 ['التخصص', result.department_name],

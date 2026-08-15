@@ -188,6 +188,11 @@ export default function StudentDetailsScreen() {
   const [statementSignatoryTitle, setStatementSignatoryTitle] = useState('');
   const [issuingStatement, setIssuingStatement] = useState(false);
   const [lastStatement, setLastStatement] = useState<any>(null);
+  const [statementMode, setStatementMode] = useState<'standard' | 'template' | 'free'>('standard');
+  const [statementTemplates, setStatementTemplates] = useState<any[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [statementBody, setStatementBody] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // 🆕 Notifications (إشعارات/إنذارات الطالب)
   const [studentNotifications, setStudentNotifications] = useState<any[]>([]);
@@ -630,8 +635,33 @@ export default function StudentDetailsScreen() {
     }
   };
 
+  useEffect(() => {
+    if (!statementModal) return;
+    api.get('/statement-templates').then((r) => setStatementTemplates(r.data || [])).catch(() => {});
+  }, [statementModal]);
+
+  const onSelectStatementTemplate = async (tid: string) => {
+    setSelectedTemplateId(tid);
+    const t = statementTemplates.find((x: any) => x.id === tid);
+    if (!t || !student) { setStatementBody(''); return; }
+    setPreviewLoading(true);
+    try {
+      const res = await api.post('/statements/preview-body', { student_id: student.id, body: t.body });
+      setStatementBody(res.data?.body || t.body);
+    } catch {
+      setStatementBody(t.body);
+      showMessage('تنبيه', 'تعذر استبدال المتغيرات ببيانات الطالب — ظهر متن القالب الخام، راجعه وعدّله قبل الإصدار');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const handleIssueStatement = async () => {
     if (!student) return;
+    if (statementMode !== 'standard' && !statementBody.trim()) {
+      showMessage('تنبيه', statementMode === 'template' ? 'اختر قالباً أولاً أو اكتب متن الإفادة' : 'اكتب متن الإفادة الحرة');
+      return;
+    }
     setIssuingStatement(true);
     try {
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
@@ -643,6 +673,10 @@ export default function StudentDetailsScreen() {
         valid_days: statementValidDays && parseInt(statementValidDays, 10) > 0 ? parseInt(statementValidDays, 10) : undefined,
         signatory_name: statementSignatoryName.trim() || undefined,
         signatory_title: statementSignatoryTitle.trim() || undefined,
+        body: statementMode !== 'standard' ? statementBody.trim() : undefined,
+        template_name: statementMode === 'template'
+          ? (statementTemplates.find((t: any) => t.id === selectedTemplateId)?.name || 'قالب')
+          : statementMode === 'free' ? 'إفادة حرة' : undefined,
       });
       setLastStatement(res.data);
       const pdfRes = await api.get(`/statements/${res.data.id}/pdf`, { responseType: 'blob' });
@@ -2092,7 +2126,8 @@ export default function StudentDetailsScreen() {
       {/* نافذة إصدار إفادة الطالب */}
       <Modal visible={statementModal} transparent animationType="fade" onRequestClose={() => setStatementModal(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 20, width: '100%', maxWidth: 480 }} testID="statement-modal">
+          <View style={{ backgroundColor: '#fff', borderRadius: 12, width: '100%', maxWidth: 480, maxHeight: '92%' as any, overflow: 'hidden' }} testID="statement-modal">
+            <ScrollView contentContainerStyle={{ padding: 20 }} showsVerticalScrollIndicator={false}>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
               <Text style={{ fontSize: 16, fontWeight: '800', color: '#1a2540', textAlign: 'right' }}>📄 إصدار إفادة طالب</Text>
               <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
@@ -2117,14 +2152,67 @@ export default function StudentDetailsScreen() {
             <Text style={{ fontSize: 12, color: '#5b6678', textAlign: 'right', marginBottom: 12, lineHeight: 20 }}>
               ستصدر إفادة رسمية برقم تسلسلي ورمز QR للتحقق باسم: {student?.full_name} — المستوى {student?.level} ({departmentName || ''})
             </Text>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الجنسية (تُجلب تلقائياً من بيانات الطالب — يمكن تعديلها)</Text>
-            <TextInput
-              value={statementNationality}
-              onChangeText={setStatementNationality}
-              placeholder="يمني"
-              style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 10, fontSize: 13 }}
-              testID="statement-nationality-input"
-            />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 6 }}>نوع الإفادة</Text>
+            <View style={{ flexDirection: 'row-reverse', gap: 6, marginBottom: 12 }}>
+              {([['standard', '📄 قياسية'], ['template', '📋 من قالب'], ['free', '✍️ نص حر']] as [typeof statementMode, string][]).map(([m, lbl]) => (
+                <TouchableOpacity
+                  key={m}
+                  onPress={() => { setStatementMode(m); setStatementBody(''); setSelectedTemplateId(''); }}
+                  style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: statementMode === m ? '#00796b' : '#dde3ec', backgroundColor: statementMode === m ? '#e0f2f1' : '#fff' }}
+                  testID={`statement-mode-${m}`}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: statementMode === m ? '#00796b' : '#5b6678' }}>{lbl}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {statementMode === 'template' && (
+              <>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>اختر القالب</Text>
+                <View style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, marginBottom: 10, overflow: 'hidden' }}>
+                  <Picker
+                    selectedValue={selectedTemplateId}
+                    onValueChange={(v) => onSelectStatementTemplate(String(v))}
+                    style={{ height: 42, width: '100%' }}
+                    testID="statement-template-picker"
+                  >
+                    <Picker.Item label={statementTemplates.length ? '— اختر قالباً —' : 'لا توجد قوالب — أنشئها من إعدادات الكليشة'} value="" />
+                    {statementTemplates.map((t: any) => <Picker.Item key={t.id} label={t.name} value={t.id} />)}
+                  </Picker>
+                </View>
+              </>
+            )}
+            {statementMode !== 'standard' && (
+              <>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>
+                  متن الإفادة {previewLoading ? '⏳ جاري استبدال المتغيرات...' : '(قابل للتعديل قبل الإصدار)'}
+                </Text>
+                <TextInput
+                  value={statementBody}
+                  onChangeText={setStatementBody}
+                  multiline
+                  placeholder={statementMode === 'free' ? 'اكتب نص الإفادة هنا... يمكنك استخدام متغيرات مثل {اسم_الطالب}' : 'سيظهر متن القالب هنا بعد اختياره'}
+                  style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 6, fontSize: 13, minHeight: 110, textAlignVertical: 'top' as any }}
+                  testID="statement-body-input"
+                />
+                <Text style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginBottom: 10, lineHeight: 17 }}>
+                  {statementMode === 'free'
+                    ? '💡 المتغيرات المتاحة (تُستبدل تلقائياً عند الإصدار): {اسم_الطالب} {رقم_القيد} {الجنسية} {المستوى} {التخصص} {الكلية} {العام_الجامعي} {الحالة} {التاريخ}'
+                    : '💡 يُطبع المتن في الـ PDF بعد سطر «بأن الطالب: الاسم» مع نفس الترويسة والتوقيع ورمز QR'}
+                </Text>
+              </>
+            )}
+            {statementMode === 'standard' && (
+              <>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الجنسية (تُجلب تلقائياً من بيانات الطالب — يمكن تعديلها)</Text>
+                <TextInput
+                  value={statementNationality}
+                  onChangeText={setStatementNationality}
+                  placeholder="يمني"
+                  style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', marginBottom: 10, fontSize: 13 }}
+                  testID="statement-nationality-input"
+                />
+              </>
+            )}
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الغرض (اختياري)</Text>
             <TextInput
               value={statementPurpose}
@@ -2170,6 +2258,7 @@ export default function StudentDetailsScreen() {
                 <Text style={{ color: '#555', fontWeight: '600', fontSize: 13 }}>إغلاق</Text>
               </TouchableOpacity>
             </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>

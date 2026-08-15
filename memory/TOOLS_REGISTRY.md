@@ -82,6 +82,8 @@
 
 ## 6) الوثائق والتحقق
 - الإفادات (statements-log, statement-settings)، البطاقات (student-card, card-settings, batch-print)، الشهادات — كلها مع تحقق عام QR: verify-statement / verify-card / verify-certificate / verify-report / verify-portal.
+- **قوالب الإفادات** (statement-settings): CRUD قوالب مشتركة لكل الكليات بمتغيرات {اسم_الطالب}...{التاريخ} — API: /api/statement-templates + معاينة POST /api/statements/preview-body
+- **إصدار إفادة بثلاثة أنماط** (نافذة الإفادة في student-details): قياسية / من قالب (معاينة مستبدلة قابلة للتعديل) / نص حر — نوع الإفادة يظهر شارةً في السجل وصفاً في صفحة التحقق.
 
 ## 7) التقارير
 report-daily, report-course, report-student, report-teacher-summary, report-teacher-delays, report-teacher-workload, report-absent-students, report-attendance-overview, report-lesson-completion, report-warnings, teaching-load-report, availability-report.

@@ -24,6 +24,7 @@ interface StatementRow {
   revoked_by_name?: string;
   revoke_reason?: string;
   verify_url?: string;
+  template_name?: string;
 }
 
 const statusOf = (s: StatementRow) => {
@@ -172,8 +173,15 @@ export default function StatementsLogScreen() {
           return (
             <View key={s.id} style={styles.card} testID={`statement-row-${s.id}`}>
               <View style={styles.cardTop}>
-                <View style={[styles.chip, { backgroundColor: st.bg }]}>
-                  <Text style={[styles.chipText, { color: st.color }]}>{st.label}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View style={[styles.chip, { backgroundColor: st.bg }]}>
+                    <Text style={[styles.chipText, { color: st.color }]}>{st.label}</Text>
+                  </View>
+                  {!!s.template_name && (
+                    <View style={[styles.chip, { backgroundColor: '#ede7f6' }]} testID={`statement-type-badge-${s.id}`}>
+                      <Text style={[styles.chipText, { color: '#5e35b1' }]}>📋 {s.template_name}</Text>
+                    </View>
+                  )}
                 </View>
                 <Text style={styles.number}>إفادة رقم {s.number_display}</Text>
               </View>
