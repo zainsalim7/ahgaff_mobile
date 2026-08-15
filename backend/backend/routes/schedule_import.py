@@ -86,6 +86,20 @@ def _extract_duration(course_txt: str):
     return course_txt[:m.start()].strip(), dur
 
 
+_PRACTICAL_RE = re.compile(r"[\s\-—ـ(]\s*\(?\s*عملي\s*\)?\s*$")
+
+
+def _extract_practical(course_txt: str):
+    """يرجع (اسم المقرر بدون وسم عملي، هل عملي؟) — يدعم: «الفقه عملي» / «الفقه - عملي» / «الفقه (عملي)»"""
+    s = (course_txt or "").strip()
+    m = _PRACTICAL_RE.search(s)
+    if m and m.start() > 0:
+        base = s[:m.start()].strip().rstrip("-—ـ(").strip()
+        if base:
+            return base, True
+    return s, False
+
+
 def _row_kind(b_label: str):
     n = _norm(b_label)
     for kind, key in ROW_KINDS:
@@ -400,6 +414,8 @@ async def import_master_schedule(
 
             # ⏱ مدة مخصصة اختيارية في نهاية اسم المقرر: "الفقه (90د)"
             course_txt, duration_minutes = _extract_duration(course_txt)
+            # 🧪 وسم المحاضرة العملية في نهاية الاسم: "الفقه عملي" / "الفقه - عملي" / "الفقه (عملي)"
+            course_txt, cell_practical = _extract_practical(course_txt)
 
             # مطابقة المقرر (مقارنة مستوى/شعبة مطبّعة + تمييز الأسماء المتطابقة بالأستاذ)
             candidates = courses_by_name.get(_norm(course_txt), [])
@@ -440,7 +456,7 @@ async def import_master_schedule(
                 new_courses.setdefault(_nk, {
                     "name": course_txt, "level": level, "section": section or "",
                     "teacher_id": str(_tc[0]["_id"]), "teacher_name": _tc[0].get("full_name", ""),
-                    "total_minutes": 0, "cells": 0,
+                    "total_minutes": 0, "cells": 0, "practical_minutes": 0,
                 })
                 course = {
                     "_id": f"__new__{level}|{nsec}|{_norm(course_txt)}",
@@ -514,7 +530,8 @@ async def import_master_schedule(
                         shared_links_add.add((ex.get("course_id", ""), department_id, level, section_val))
                         continue
                 same = (ex.get("course_id") == str(course["_id"]) and (ex.get("room_id") or "") == str(room["_id"])
-                        and (ex.get("duration_minutes") or None) == duration_minutes)
+                        and (ex.get("duration_minutes") or None) == duration_minutes
+                        and (ex.get("slot_type") or "theory") == ("practical" if cell_practical else "theory"))
                 if same:
                     skipped_existing.append(f"{loc} مطابقة تماماً للموجود في النظام — لا تغيير")
                     continue
@@ -529,6 +546,8 @@ async def import_master_schedule(
                 _nc0 = new_courses[course["_nk"]]
                 _nc0["total_minutes"] += duration_minutes or _slot_minutes(ts)
                 _nc0["cells"] += 1
+                if cell_practical:
+                    _nc0["practical_minutes"] += duration_minutes or _slot_minutes(ts)
 
             to_create.append({
                 "faculty_id": faculty_id,
@@ -540,6 +559,7 @@ async def import_master_schedule(
                 "course_id": str(course["_id"]),
                 "teacher_id": effective_tid,
                 "room_id": str(room["_id"]),
+                "slot_type": "practical" if cell_practical else "theory",
                 **({"duration_minutes": duration_minutes} if duration_minutes else {}),
                 **({"_new_course_key": course["_nk"]} if course.get("_is_new") else {}),
                 "_loc": loc,
@@ -799,7 +819,8 @@ async def import_master_schedule(
     new_courses = {k: v for k, v in new_courses.items() if v["cells"] > 0}
     new_courses_list = [
         {"name": nc["name"], "level": nc["level"], "section": nc["section"], "teacher_name": nc["teacher_name"],
-         "weekly_hours": round(nc["total_minutes"] / 60, 2), "lectures": nc["cells"]}
+         "weekly_hours": round(nc["total_minutes"] / 60, 2), "lectures": nc["cells"],
+         "practical_hours": round(nc.get("practical_minutes", 0) / 60, 2)}
         for nc in new_courses.values()
     ]
     report = {
@@ -890,12 +911,16 @@ async def import_master_schedule(
     # 🆕 إنشاء المقررات الجديدة من الملف (الساعات المعتمدة = مجموع مدد محاضراتها في الملف)
     if new_courses:
         active_sem = await db.semesters.find_one({"status": "active"})
-        for _nk, nc in new_courses.items():
+        _code_base = await db.courses.count_documents({"department_id": department_id})
+        for _ci, (_nk, nc) in enumerate(new_courses.items()):
             hours = round(nc["total_minutes"] / 60, 2)
             cdoc = {
                 "name": nc["name"], "department_id": department_id, "faculty_id": faculty_id,
-                "level": nc["level"], "term": 1, "code": "", "room": "",
+                "level": nc["level"], "term": 1,
+                "code": f"CRS-{nc['level']}{(_code_base + _ci + 1):03d}",  # 🆕 رمز تلقائي
+                "room": "",
                 "teacher_id": nc["teacher_id"], "credit_hours": hours, "weekly_hours": hours,
+                "practical_hours": round(nc.get("practical_minutes", 0) / 60, 2),  # 🧪
                 "is_active": True, "created_from_import": True,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "created_by": current_user.get("id", ""),
