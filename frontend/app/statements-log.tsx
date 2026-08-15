@@ -81,7 +81,7 @@ export default function StatementsLogScreen() {
         const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
         const a = document.createElement('a');
         a.href = url;
-        a.download = `statement_${s.number_display.replace('/', '-')}.pdf`;
+        a.download = `إفادة ${s.student_name || s.number_display.replace(/\//g, '-')}.pdf`;
         a.click();
         window.URL.revokeObjectURL(url);
       }

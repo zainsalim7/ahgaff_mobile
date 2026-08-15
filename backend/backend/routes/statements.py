@@ -503,8 +503,10 @@ async def statement_pdf(statement_id: str, current_user: dict = Depends(get_curr
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     settings = await db.statement_settings.find_one({"_id": f"faculty_{s.get('faculty_id')}"}) or {}
     pdf = _build_pdf(s, settings)
+    from urllib.parse import quote
+    fname = quote(f"إفادة {s.get('student_name', '') or s.get('serial', '')}.pdf")
     return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
-                             headers={"Content-Disposition": f"attachment; filename=statement_{s.get('serial')}.pdf"})
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
 
 
 def _build_pdf(s: dict, settings: dict) -> bytes:
@@ -656,11 +658,8 @@ def _build_pdf(s: dict, settings: dict) -> bytes:
     qr_img.save(qb, format="PNG")
     qb.seek(0)
     c.drawImage(ImageReader(qb), W - 48 * mm, 30 * mm, 26 * mm, 26 * mm)
-    c.setFont("Amiri", 8)
-    c.drawCentredString(W - 35 * mm, 26 * mm, ar("للتحقق من صحة الإفادة امسح الرمز"))
-    if s.get("expires_at"):
-        c.setFont("Amiri", 7)
-        c.drawCentredString(W - 35 * mm, 23 * mm, ar(f"صالحة حتى {str(s['expires_at'])[:10].replace('-', '/')}م"))
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(W - 35 * mm, 26 * mm, "Scan to verify")
 
     # ===== التذييل =====
     c.line(18 * mm, 22 * mm, W - 18 * mm, 22 * mm)

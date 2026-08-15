@@ -680,7 +680,7 @@ export default function StudentDetailsScreen() {
       });
       setLastStatement(res.data);
       const pdfRes = await api.get(`/statements/${res.data.id}/pdf`, { responseType: 'blob' });
-      downloadBlob(pdfRes.data, `statement_${res.data.number.replace('/', '-')}.pdf`, 'application/pdf');
+      downloadBlob(pdfRes.data, `إفادة ${student.full_name}.pdf`, 'application/pdf');
     } catch (e: any) {
       showMessage('خطأ', e?.response?.data?.detail || 'فشل إصدار الإفادة');
     } finally {
