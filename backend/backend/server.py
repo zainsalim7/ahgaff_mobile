@@ -6548,6 +6548,62 @@ async def diagnose_enrollment(
     return result
 
 
+@api_router.post("/students/sync-enrollments")
+async def sync_students_enrollments(
+    department_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """🔄 مزامنة تسجيلات الطلاب: إزالة تسجيلات الفصل النشط غير المطابقة لموقع الطالب الحالي + إضافة الناقصة"""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_courses"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    from routes.deps import _sec_matches
+    active = await db.semesters.find_one({"$or": [{"status": "active"}, {"is_active": True}]})
+    if not active:
+        raise HTTPException(status_code=400, detail="لا يوجد فصل دراسي نشط")
+    active_id = str(active["_id"])
+    courses = await db.courses.find({"semester_id": active_id, "is_active": {"$ne": False}}).to_list(3000)
+    course_map = {str(c["_id"]): c for c in courses}
+
+    def matches(course, dep, lvl, sec):
+        if course.get("department_id") == dep and course.get("level") == lvl and _sec_matches(course.get("section"), sec):
+            return True
+        return any(
+            l.get("department_id") == dep and l.get("level") == lvl and _sec_matches(l.get("section"), sec)
+            for l in (course.get("shared_links") or [])
+        )
+
+    sq = {"is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}}
+    if department_id:
+        sq["department_id"] = department_id
+    added, removed, students_fixed, processed = 0, 0, 0, 0
+    async for st in db.students.find(sq):
+        processed += 1
+        sid = str(st["_id"])
+        dep, lvl, sec = st.get("department_id"), st.get("level"), (st.get("section") or "")
+        should = {cid for cid, c in course_map.items() if matches(c, dep, lvl, sec)}
+        enrs = await db.enrollments.find({"student_id": sid}).to_list(2000)
+        # تسجيلات الفصل النشط فقط (بالحقل أو عبر فصل المقرر)
+        active_enr = [e for e in enrs if e.get("semester_id") == active_id or e.get("course_id") in course_map]
+        have = {e["course_id"] for e in active_enr}
+        stale = [e for e in active_enr if e["course_id"] not in should]
+        missing = should - have
+        if stale:
+            await db.enrollments.delete_many({"_id": {"$in": [e["_id"] for e in stale]}})
+            removed += len(stale)
+        for cid in missing:
+            await db.enrollments.insert_one({
+                "course_id": cid, "student_id": sid, "semester_id": active_id,
+                "enrolled_at": datetime.utcnow().isoformat(), "enrolled_by": "sync_tool",
+            })
+            added += 1
+        if stale or missing:
+            students_fixed += 1
+    return {
+        "message": f"🔄 تمت المزامنة: فُحص {processed} طالباً — صُحح {students_fixed} (أُزيل {removed} تسجيلاً قديماً غير مطابق وأُضيف {added} ناقصاً)",
+        "students_checked": processed, "students_fixed": students_fixed, "removed": removed, "added": added,
+    }
+
+
 @api_router.post("/courses/auto-enroll-all")
 async def auto_enroll_all_courses(
     department_id: Optional[str] = None,

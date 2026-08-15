@@ -1558,6 +1558,25 @@ export default function AddCourseScreen() {
                   <Text style={styles.menuText}>{enrollingAll ? 'جاري التسجيل...' : 'تسجيل تلقائي للكل'}</Text>
                 </TouchableOpacity>
               )}
+              <TouchableOpacity style={styles.menuItem} testID="sync-enrollments-btn" onPress={async () => {
+                setOpenMenuId(null);
+                const scope = filterDept && filterDept !== 'all' ? 'لطلاب هذا القسم' : 'لجميع الطلاب';
+                const msg = `مزامنة تسجيلات الطلاب ${scope}؟\n\n🔄 سيُزال أي تسجيل في الفصل النشط لا يطابق موقع الطالب الحالي (قسمه/مستواه/شعبته)، وتُضاف المقررات الناقصة.\n\nمفيد لتصحيح الطلاب المنقولين سابقاً العالقين بمقررات قديمة.`;
+                if (Platform.OS === 'web' && !window.confirm(msg)) return;
+                setEnrollingAll(true);
+                try {
+                  const url = filterDept && filterDept !== 'all' ? `/students/sync-enrollments?department_id=${filterDept}` : '/students/sync-enrollments';
+                  const res = await api.post(url);
+                  if (Platform.OS === 'web') window.alert(res.data.message); else Alert.alert('نتيجة', res.data.message);
+                  fetchCourses(filterDept);
+                } catch (e: any) {
+                  const errMsg = e?.response?.data?.detail || 'حدث خطأ';
+                  if (Platform.OS === 'web') window.alert(errMsg); else Alert.alert('خطأ', errMsg);
+                } finally { setEnrollingAll(false); }
+              }} disabled={enrollingAll}>
+                <Ionicons name="sync-outline" size={18} color="#7b1fa2" />
+                <Text style={styles.menuText}>مزامنة تسجيلات الطلاب</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.menuItem} testID="shared-links-integrity-btn" onPress={async () => {
                 setOpenMenuId(null); setIntegrityOpen(true); setIntegrityData(null);
                 try { const r = await api.get('/courses-tools/shared-links-integrity'); setIntegrityData(r.data); }
