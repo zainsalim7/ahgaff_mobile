@@ -1531,6 +1531,129 @@ async def get_course_shared_details(
     }
 
 
+@router.post("/courses-tools/merge-shared")
+async def merge_courses_as_shared(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """🧩 دمج مقررات شعب/مستويات متفرقة في مقرر واحد مشترك — دون فقدان طلاب أو حضور"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    course_ids = [c for c in (payload.get("course_ids") or []) if c]
+    primary_id = payload.get("primary_id") or ""
+    dry_run = bool(payload.get("dry_run", True))
+    if len(set(course_ids)) < 2:
+        raise HTTPException(status_code=400, detail="اختر مقررين على الأقل للدمج")
+    if primary_id not in course_ids:
+        raise HTTPException(status_code=400, detail="حدد المقرر الأساسي من ضمن المقررات المختارة")
+    docs = {}
+    for cid in set(course_ids):
+        try:
+            d = await db.courses.find_one({"_id": ObjectId(cid)})
+        except Exception:
+            d = None
+        if not d:
+            raise HTTPException(status_code=404, detail=f"مقرر غير موجود: {cid}")
+        docs[cid] = d
+    teachers = {(d.get("teacher_id") or "") for d in docs.values()}
+    if len(teachers) > 1 or "" in teachers:
+        raise HTTPException(status_code=400, detail="الدمج يتطلب أن تكون كل المقررات لنفس الأستاذ (وبإسناد موجود)")
+    primary = docs[primary_id]
+    secondary_ids = [c for c in set(course_ids) if c != primary_id]
+
+    all_ids = [primary_id] + secondary_ids
+    slots = await db.weekly_schedule.find({"course_id": {"$in": all_ids}}).to_list(2000)
+    # 🔗 الخانات المتزامنة (نفس اليوم/الفترة/المدرس/القاعة) => مجموعة دمج واحدة
+    groups = {}
+    for s in slots:
+        groups.setdefault((s.get("day"), s.get("slot_number"), s.get("teacher_id", ""), s.get("room_id", "")), []).append(s)
+    sync_groups = [g for g in groups.values() if len(g) > 1]
+
+    # 🎓 الطلاب: تسجيلات فريدة تنتقل للأساسي
+    sec_enr = await db.enrollments.find({"course_id": {"$in": secondary_ids}}).to_list(20000)
+    prim_students = {e["student_id"] for e in await db.enrollments.find({"course_id": primary_id}, {"student_id": 1}).to_list(20000)}
+    move_enr = [e for e in sec_enr if e["student_id"] not in prim_students and not (prim_students.add(e["student_id"]))]
+
+    # 🗓️ المحاضرات اليومية
+    sec_lectures = await db.lectures.find({"course_id": {"$in": secondary_ids}}).to_list(10000)
+    prim_lec_keys = {(l.get("date"), l.get("start_time")) for l in await db.lectures.find({"course_id": primary_id}, {"date": 1, "start_time": 1}).to_list(10000)}
+    dup_lectures = [l for l in sec_lectures if (l.get("date"), l.get("start_time")) in prim_lec_keys]
+    move_lectures = [l for l in sec_lectures if (l.get("date"), l.get("start_time")) not in prim_lec_keys]
+
+    # ⚖️ الساعات بعد الدمج: مجموع دقائق الجدول والمحاضرة المتزامنة تُحسب مرة
+    fac_times = await _faculty_slot_times(db, primary.get("faculty_id") or (slots[0].get("faculty_id", "") if slots else ""))
+    seen_k = set()
+    total_min = 0.0
+    for s in slots:
+        k = (s.get("day"), s.get("slot_number"), s.get("teacher_id", ""), s.get("room_id", ""))
+        if k in seen_k:
+            continue
+        seen_k.add(k)
+        m = s.get("duration_minutes")
+        if not m:
+            st, en = fac_times.get(s.get("slot_number"), ("", ""))
+            a, b = _t2m(st), _t2m(en)
+            m = (b - a) if (a is not None and b is not None) else 0
+        total_min += max(m or 0, 0)
+    new_hours = round(total_min / 60, 2)
+
+    plan = {
+        "primary": {"id": primary_id, "name": primary.get("name", ""), "code": primary.get("code", ""), "level": primary.get("level"), "section": primary.get("section", "") or ""},
+        "secondaries": [{"id": c, "name": docs[c].get("name", ""), "level": docs[c].get("level"), "section": docs[c].get("section", "") or ""} for c in secondary_ids],
+        "slots_to_move": sum(1 for s in slots if s.get("course_id") != primary_id),
+        "sync_groups": len(sync_groups),
+        "students_to_move": len(move_enr),
+        "lectures_to_move": len(move_lectures),
+        "lectures_to_merge": len(dup_lectures),
+        "new_weekly_hours": new_hours,
+    }
+    if dry_run:
+        return {"dry_run": True, "plan": plan}
+
+    # ===== تنفيذ فعلي =====
+    await db.weekly_schedule.update_many({"course_id": {"$in": secondary_ids}}, {"$set": {"course_id": primary_id}})
+    for g in sync_groups:
+        gid = next((x.get("merge_group_id") for x in g if x.get("merge_group_id")), None) or uuid.uuid4().hex
+        for s in g:
+            await db.weekly_schedule.update_one({"_id": s["_id"]}, {"$set": {
+                "merge_group_id": gid,
+                "merge_key": f"{gid}:{s.get('department_id', '')}:{s.get('level')}:{s.get('section', '') or ''}",
+            }})
+    for e in move_enr:
+        await db.enrollments.update_one({"_id": e["_id"]}, {"$set": {"course_id": primary_id}})
+    await db.enrollments.delete_many({"course_id": {"$in": secondary_ids}})
+    for l in move_lectures:
+        await db.lectures.update_one({"_id": l["_id"]}, {"$set": {"course_id": primary_id}})
+    for l in dup_lectures:
+        prim_l = await db.lectures.find_one({"course_id": primary_id, "date": l.get("date"), "start_time": l.get("start_time")})
+        if prim_l:
+            await db.attendance.update_many({"lecture_id": str(l["_id"])}, {"$set": {"lecture_id": str(prim_l["_id"]), "course_id": primary_id}})
+        await db.lectures.delete_one({"_id": l["_id"]})
+    await db.attendance.update_many({"course_id": {"$in": secondary_ids}}, {"$set": {"course_id": primary_id}})
+    # ⚖️ عبء واحد على الأساسي بالساعات الجديدة
+    await db.teaching_loads.delete_many({"course_id": {"$in": secondary_ids}})
+    _load = await db.teaching_loads.find_one({"course_id": primary_id})
+    if _load:
+        await db.teaching_loads.update_one({"_id": _load["_id"]}, {"$set": {"weekly_hours": new_hours, "updated_at": datetime.now(timezone.utc)}})
+    else:
+        await db.teaching_loads.insert_one({
+            "teacher_id": primary.get("teacher_id"), "course_id": primary_id, "weekly_hours": new_hours,
+            "created_by": current_user.get("id", ""), "created_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+            **({"semester_id": primary.get("semester_id")} if primary.get("semester_id") else {}),
+        })
+    await db.courses.update_one({"_id": primary["_id"]}, {"$set": {"credit_hours": new_hours, "weekly_hours": new_hours}})
+    await db.courses.delete_many({"_id": {"$in": [ObjectId(c) for c in secondary_ids]}})
+    await _sync_course_shared_links(db, primary_id)
+    return {
+        "dry_run": False,
+        "message": f"🧩 تم الدمج في '{primary.get('name', '')}' — نُقلت {plan['slots_to_move']} خانة و{plan['students_to_move']} طالباً"
+                   + (f" و{plan['lectures_to_move'] + plan['lectures_to_merge']} محاضرة" if (plan['lectures_to_move'] + plan['lectures_to_merge']) else "")
+                   + f" • الساعات الموحدة: {new_hours}",
+        "plan": plan,
+    }
+
+
 @router.get("/courses-tools/shared-links-integrity")
 async def shared_links_integrity(current_user: dict = Depends(get_current_user)):
     """🩺 فحص سلامة روابط المشاركة: كل رابطة يجب أن تدعمها خانات جدول حقيقية"""

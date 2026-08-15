@@ -115,6 +115,11 @@ export default function AddCourseScreen() {
   const [integrityOpen, setIntegrityOpen] = useState(false);
   const [integrityData, setIntegrityData] = useState<any>(null);
   const [fixingLinks, setFixingLinks] = useState(false);
+  const [mergeSel, setMergeSel] = useState<string[]>([]);
+  const [mergeModal, setMergeModal] = useState(false);
+  const [mergePrimary, setMergePrimary] = useState<string>('');
+  const [mergePlan, setMergePlan] = useState<any>(null);
+  const [merging, setMerging] = useState(false);
   const [activeSemester, setActiveSemester] = useState<any>(null);
   const [allSemesters, setAllSemesters] = useState<any[]>([]);
   
@@ -799,6 +804,13 @@ export default function AddCourseScreen() {
                   <Text style={{ fontSize: 8.5, color: '#fff', fontWeight: '800' }}>🧪 {(item as any).practical_hours}ع</Text>
                 </View>
               )}
+              <TouchableOpacity
+                onPress={() => setMergeSel(prev => prev.includes(item.id) ? prev.filter(x => x !== item.id) : [...prev, item.id])}
+                style={{ width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: mergeSel.includes(item.id) ? '#7b1fa2' : '#c3ccda', backgroundColor: mergeSel.includes(item.id) ? '#7b1fa2' : '#fff', alignItems: 'center', justifyContent: 'center' }}
+                testID={`merge-select-${item.id}`}
+              >
+                {mergeSel.includes(item.id) && <Ionicons name="checkmark" size={11} color="#fff" />}
+              </TouchableOpacity>
               {(((item as any).shared_here) || (((item as any).shared_links || []).length > 0)) && (
                 <TouchableOpacity
                   style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
@@ -1561,6 +1573,104 @@ export default function AddCourseScreen() {
         </Modal>
       )}
       
+      {/* 🧩 شريط دمج المقررات المحددة */}
+      {mergeSel.length >= 2 && (
+        <TouchableOpacity
+          style={{ position: 'absolute', bottom: 20, alignSelf: 'center', backgroundColor: '#7b1fa2', borderRadius: 24, paddingHorizontal: 20, paddingVertical: 12, flexDirection: 'row-reverse', alignItems: 'center', gap: 8, elevation: 6, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8 }}
+          onPress={() => { setMergePrimary(mergeSel[0]); setMergePlan(null); setMergeModal(true); }}
+          testID="merge-courses-btn"
+        >
+          <Ionicons name="git-merge-outline" size={18} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>دمج كمقرر مشترك ({mergeSel.length})</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* 🧩 نافذة دمج المقررات */}
+      {mergeModal && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setMergeModal(false)}>
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setMergeModal(false)} />
+            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 18, width: '92%', maxWidth: 540, maxHeight: '88%' }} testID="merge-modal">
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>🧩 دمج كمقرر مشترك</Text>
+              <Text style={{ fontSize: 11.5, color: '#5b6678', textAlign: 'right', marginBottom: 10, lineHeight: 18 }}>
+                اختر المقرر الأساسي (يُعتمد اسمه ورمزه) — تنتقل إليه خانات الجدول والطلاب والمحاضرات والحضور، وتُحذف المقررات الأخرى بعد نقل كل شيء.
+              </Text>
+              <ScrollView style={{ maxHeight: 400 }}>
+                {mergeSel.map(id => {
+                  const c = courses.find(x => x.id === id);
+                  if (!c) return null;
+                  const isPrim = mergePrimary === id;
+                  return (
+                    <TouchableOpacity key={id} onPress={() => { setMergePrimary(id); setMergePlan(null); }}
+                      style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, borderWidth: isPrim ? 2 : 1, borderColor: isPrim ? '#7b1fa2' : '#e3e9f2', backgroundColor: isPrim ? '#f7f0fb' : '#fafbfd', borderRadius: 10, padding: 10, marginBottom: 6 }}
+                      testID={`merge-primary-${id}`}
+                    >
+                      <View style={{ width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: isPrim ? '#7b1fa2' : '#c3ccda', backgroundColor: isPrim ? '#7b1fa2' : '#fff' }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#1a2540', textAlign: 'right' }}>{c.name}</Text>
+                        <Text style={{ fontSize: 11, color: '#5b6678', textAlign: 'right' }}>م{c.level}{c.section ? ` · شعبة ${c.section}` : ''}{(c as any).code ? ` · ${(c as any).code}` : ''}</Text>
+                      </View>
+                      {isPrim && <Text style={{ fontSize: 10, color: '#7b1fa2', fontWeight: '800' }}>الأساسي</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
+                {mergePlan && !mergePlan.error && (
+                  <View style={{ backgroundColor: '#f2fbfa', borderWidth: 1, borderColor: '#b2dfdb', borderRadius: 10, padding: 10, marginTop: 4 }} testID="merge-plan-box">
+                    <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#00695c', textAlign: 'right', marginBottom: 4 }}>📋 المعاينة قبل التنفيذ</Text>
+                    <Text style={{ fontSize: 11.5, color: '#37455c', textAlign: 'right', lineHeight: 20 }}>
+                      • خانات جدول ستنتقل: {mergePlan.plan.slots_to_move}{'\n'}
+                      • مجموعات محاضرات متزامنة ستُدمج: {mergePlan.plan.sync_groups}{'\n'}
+                      • طلاب سينضمون للمقرر الأساسي: {mergePlan.plan.students_to_move}{'\n'}
+                      • محاضرات يومية ستنتقل: {mergePlan.plan.lectures_to_move} (ودمج {mergePlan.plan.lectures_to_merge} مكررة بحضورها){'\n'}
+                      • الساعات الأسبوعية الموحدة: {mergePlan.plan.new_weekly_hours}
+                    </Text>
+                  </View>
+                )}
+                {mergePlan?.error && <Text style={{ color: '#c62828', fontSize: 12, textAlign: 'right', marginTop: 6 }} testID="merge-error">{mergePlan.error}</Text>}
+              </ScrollView>
+              <View style={{ flexDirection: 'row-reverse', gap: 8, marginTop: 12 }}>
+                {!mergePlan || mergePlan.error ? (
+                  <TouchableOpacity style={{ flex: 1, backgroundColor: '#7b1fa2', borderRadius: 10, padding: 12, alignItems: 'center' }} disabled={merging}
+                    onPress={async () => {
+                      setMerging(true);
+                      try {
+                        const r = await api.post('/courses-tools/merge-shared', { course_ids: mergeSel, primary_id: mergePrimary, dry_run: true });
+                        setMergePlan(r.data);
+                      } catch (e: any) { setMergePlan({ error: e?.response?.data?.detail || 'فشلت المعاينة' }); }
+                      finally { setMerging(false); }
+                    }}
+                    testID="merge-preview-btn"
+                  >
+                    {merging ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>معاينة الدمج</Text>}
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={{ flex: 1, backgroundColor: '#2e7d32', borderRadius: 10, padding: 12, alignItems: 'center' }} disabled={merging}
+                    onPress={async () => {
+                      if (Platform.OS === 'web' && !window.confirm('تنفيذ الدمج الآن؟ ستُحذف المقررات الثانوية بعد نقل كل بياناتها للمقرر الأساسي.')) return;
+                      setMerging(true);
+                      try {
+                        const r = await api.post('/courses-tools/merge-shared', { course_ids: mergeSel, primary_id: mergePrimary, dry_run: false });
+                        if (Platform.OS === 'web') window.alert(r.data.message);
+                        setMergeModal(false); setMergeSel([]); setMergePlan(null);
+                        fetchCourses(filterDept);
+                      } catch (e: any) {
+                        setMergePlan({ error: e?.response?.data?.detail || 'فشل الدمج' });
+                      } finally { setMerging(false); }
+                    }}
+                    testID="merge-confirm-btn"
+                  >
+                    {merging ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>✅ تأكيد الدمج</Text>}
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity style={{ paddingHorizontal: 16, justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: '#e3e9f2' }} onPress={() => setMergeModal(false)} testID="merge-cancel-btn">
+                  <Text style={{ color: '#5b6678', fontSize: 12.5 }}>إلغاء</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* 🔍 نافذة تفاصيل المشاركة */}
       {sharedDetailCourse && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setSharedDetailCourse(null)}>
