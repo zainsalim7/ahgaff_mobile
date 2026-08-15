@@ -184,13 +184,11 @@ async def _issue_core(db, student: dict, current_user: dict, nationality, purpos
     )
     seq = counter["seq"]
     # 🔢 صيغة رقم المرجع قابلة للضبط من إعدادات الإفادات: {seq} {year} {yy} {enrollment_no}
+    DEFAULT_REF_FORMAT = "{seq} /7/2/ت ك ش ق /27/26"
     _st = await db.statement_settings.find_one({"_id": f"faculty_{faculty_id}"}) or {}
-    _fmt = (_st.get("reference_format") or "").strip()
-    if _fmt:
-        number_display = (_fmt.replace("{seq}", str(seq)).replace("{year}", str(year))
-                          .replace("{yy}", str(year % 100)).replace("{enrollment_no}", str(student.get("student_id", ""))))
-    else:
-        number_display = f"{seq}/{year}"
+    _fmt = (_st.get("reference_format") or "").strip() or DEFAULT_REF_FORMAT
+    number_display = (_fmt.replace("{seq}", str(seq)).replace("{year}", str(year))
+                      .replace("{yy}", str(year % 100)).replace("{enrollment_no}", str(student.get("student_id", ""))))
 
     token = uuid.uuid4().hex
     verify_base = (await get_verify_base(db)) or (base_url or "").rstrip("/")

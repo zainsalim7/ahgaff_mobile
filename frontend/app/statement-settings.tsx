@@ -298,7 +298,7 @@ export default function StatementSettingsScreen() {
             label="صيغة رقم المرجع — {seq} = الرقم التسلسلي، {year} = السنة، {yy} = آخر رقمين"
             value={form.reference_format}
             onChange={(t: string) => setForm((p) => ({ ...p, reference_format: t }))}
-            placeholder="مثال: {seq}/2/7/ت ك ش ق /27/26 — اتركه فارغاً للصيغة الافتراضية رقم/سنة"
+            placeholder="اتركه فارغاً للصيغة الأساسية: {seq} /7/2/ت ك ش ق /27/26"
           />
 
           {/* التذييل */}
