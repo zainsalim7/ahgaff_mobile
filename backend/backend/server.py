@@ -32,6 +32,13 @@ def get_yemen_time():
     """الحصول على الوقت الحالي بتوقيت اليمن (UTC+3)"""
     return datetime.now(YEMEN_TIMEZONE)
 
+def yemen_day_utc_bounds(date_obj: datetime):
+    """🕐 حدود اليوم اليمني (00:00 → 24:00) محولة إلى UTC — لإصلاح خلل توقيت الفجر (12–3 صباحاً)"""
+    start_yemen = date_obj.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=YEMEN_TIMEZONE)
+    end_yemen = start_yemen + timedelta(days=1)
+    return (start_yemen.astimezone(timezone.utc).replace(tzinfo=None),
+            end_yemen.astimezone(timezone.utc).replace(tzinfo=None))
+
 def get_yemen_date_start():
     """الحصول على بداية اليوم بتوقيت اليمن"""
     now = get_yemen_time()
@@ -10202,7 +10209,7 @@ async def record_attendance_session(
             "course_id": lecture["course_id"],
             "student_id": record.student_id,
             "status": record.status,
-            "date": get_yemen_time(),
+            "date": check_time,
             "recorded_by": current_user["id"],
             "method": "manual",
             "notes": session.notes,
@@ -10301,10 +10308,8 @@ async def get_course_attendance(
     
     if date:
         date_obj = datetime.fromisoformat(date)
-        query["date"] = {
-            "$gte": date_obj.replace(hour=0, minute=0, second=0),
-            "$lt": date_obj.replace(hour=23, minute=59, second=59)
-        }
+        day_start_utc, day_end_utc = yemen_day_utc_bounds(date_obj)
+        query["date"] = {"$gte": day_start_utc, "$lt": day_end_utc}
     
     records = await db.attendance.find(query).sort("date", -1).to_list(1000)
     
@@ -10582,7 +10587,16 @@ async def sync_offline_attendance(
     
     synced = 0
     errors = []
-    
+
+    # 🔐 معرف سجل المعلم لفحص ملكية المقرر
+    teacher_record_id = None
+    if current_user["role"] == UserRole.TEACHER:
+        user_doc = await db.users.find_one({"_id": ObjectId(current_user["id"])})
+        teacher_record_id = user_doc.get("teacher_record_id") if user_doc else None
+
+    course_owner_cache = {}
+    completed_lecture_ids = set()
+
     for record in data.attendance_records:
         try:
             # Check if already synced (using local_id if provided)
@@ -10590,9 +10604,31 @@ async def sync_offline_attendance(
                 existing = await db.attendance.find_one({"local_id": record["local_id"]})
                 if existing:
                     continue
-            
+
+            course_id = record["course_id"]
+
+            # 🔐 تحقق ملكية المقرر للأستاذ (user_id أو teacher_record_id)
+            if current_user["role"] == UserRole.TEACHER:
+                if course_id not in course_owner_cache:
+                    try:
+                        _course = await db.courses.find_one({"_id": ObjectId(course_id)})
+                    except Exception:
+                        _course = None
+                    course_owner_cache[course_id] = (_course or {}).get("teacher_id")
+                owner = course_owner_cache[course_id]
+                if owner != current_user["id"] and owner != teacher_record_id:
+                    errors.append(f"غير مصرح لك بمزامنة حضور المقرر {course_id}")
+                    continue
+
+            lecture_id = record.get("lecture_id")
+
+            # 🧹 منع التكرار: حذف أي سجل سابق لنفس (المحاضرة، الطالب)
+            if lecture_id:
+                await db.attendance.delete_many({"lecture_id": lecture_id, "student_id": record["student_id"]})
+
             att_record = {
-                "course_id": record["course_id"],
+                "lecture_id": lecture_id,
+                "course_id": course_id,
                 "student_id": record["student_id"],
                 "status": record.get("status", AttendanceStatus.PRESENT),
                 "date": datetime.fromisoformat(record["date"]) if record.get("date") else get_yemen_time(),
@@ -10603,12 +10639,26 @@ async def sync_offline_attendance(
                 "created_at": get_yemen_time(),
                 "synced_at": get_yemen_time()
             }
-            
+
             await db.attendance.insert_one(att_record)
             synced += 1
+            if lecture_id:
+                completed_lecture_ids.add(lecture_id)
         except Exception as e:
             errors.append(str(e))
-    
+
+    # ✅ تحديث حالة المحاضرات المُزامنة إلى مكتملة (إن لم تكن ملغاة)
+    for lid in completed_lecture_ids:
+        try:
+            await db.lectures.update_one(
+                {"_id": ObjectId(lid),
+                 "status": {"$ne": LectureStatus.CANCELLED},
+                 "is_cancelled": {"$ne": True}},
+                {"$set": {"status": LectureStatus.COMPLETED}}
+            )
+        except Exception:
+            pass
+
     return {
         "synced": synced,
         "errors": errors,
@@ -10642,15 +10692,16 @@ async def get_department_report(
         active_ids = await get_active_lecture_ids(cid)
         all_active_lecture_ids.update(active_ids)
     
-    # Build query
+    # Build query — حدود الأيام بتوقيت اليمن محولة إلى UTC
     query = {"course_id": {"$in": course_ids}}
     if start_date:
-        query["date"] = {"$gte": datetime.fromisoformat(start_date)}
+        query["date"] = {"$gte": yemen_day_utc_bounds(datetime.fromisoformat(start_date))[0]}
     if end_date:
+        end_bound = yemen_day_utc_bounds(datetime.fromisoformat(end_date))[1]
         if "date" in query:
-            query["date"]["$lte"] = datetime.fromisoformat(end_date)
+            query["date"]["$lt"] = end_bound
         else:
-            query["date"] = {"$lte": datetime.fromisoformat(end_date)}
+            query["date"] = {"$lt": end_bound}
     
     records = await db.attendance.find(query).to_list(10000)
     
@@ -11003,10 +11054,10 @@ async def get_daily_report(
     courses = await db.courses.find(course_query).to_list(100)
     course_ids = [str(c["_id"]) for c in courses]
     
-    # جلب المحاضرات في هذا اليوم
+    # جلب المحاضرات في هذا اليوم — التواريخ مخزنة كنص YYYY-MM-DD
     lectures = await db.lectures.find({
         "course_id": {"$in": course_ids},
-        "date": {"$gte": day_start, "$lt": day_end},
+        "date": report_date.strftime("%Y-%m-%d"),
         "is_cancelled": {"$ne": True},
         "status": {"$ne": LectureStatus.CANCELLED}
     }).to_list(100)
