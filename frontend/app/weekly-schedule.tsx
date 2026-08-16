@@ -1165,13 +1165,38 @@ export default function WeeklySchedulePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {DAYS.map((day, di) => (
+                    {DAYS.map((day, di) => {
+                      // 🕐 حساب تمدد الخلايا: مقرر بوقت ممتد يندمج مع الفترات التالية الفارغة
+                      const skipSlots = new Set<number>();
+                      const spanMap: Record<number, number> = {};
+                      timeSlots.forEach((ts, i) => {
+                        if (skipSlots.has(ts.slot_number)) return;
+                        const items = grid[day]?.[ts.slot_number] || [];
+                        if (!items.length) return;
+                        let maxEnd = '';
+                        items.forEach((it: any) => {
+                          const en = it.computed_end_time || ts.end_time;
+                          if (en && en > maxEnd) maxEnd = en;
+                        });
+                        let extra = 0; let k = i;
+                        while (k + 1 < timeSlots.length) {
+                          const nxt = timeSlots[k + 1];
+                          const nxtItems = grid[day]?.[nxt.slot_number] || [];
+                          if (maxEnd && nxt.start_time && maxEnd > nxt.start_time && nxtItems.length === 0) {
+                            extra++; k++; skipSlots.add(nxt.slot_number);
+                          } else break;
+                        }
+                        if (extra > 0) spanMap[ts.slot_number] = extra + 1;
+                      });
+                      return (
                       <tr key={day} style={{ backgroundColor: di % 2 === 0 ? '#fafafa' : '#fff' }}>
                         <td style={{ padding: 10, fontWeight: 600, fontSize: 13, borderLeft: '1px solid #eee', textAlign: 'center', backgroundColor: '#f5f5f5' }}>{day}</td>
                         {timeSlots.map(ts => {
+                          if (skipSlots.has(ts.slot_number)) return null;
                           const items = grid[day]?.[ts.slot_number] || [];
+                          const colSpan = spanMap[ts.slot_number] || 1;
                           return (
-                            <td key={ts.slot_number} style={{ padding: 4, borderLeft: '1px solid #eee', verticalAlign: 'top', minWidth: 140 }}>
+                            <td key={ts.slot_number} colSpan={colSpan} data-testid={colSpan > 1 ? `extended-cell-${day}-${ts.slot_number}` : undefined} style={{ padding: 4, borderLeft: '1px solid #eee', verticalAlign: 'top', minWidth: 140, backgroundColor: colSpan > 1 ? '#fffde7' : undefined }}>
                               {items.map((item: any, idx: number) => {
                                 const isConflict = conflicts.conflicting_slot_ids?.includes(item.id);
                                 return (
@@ -1202,6 +1227,11 @@ export default function WeeklySchedulePage() {
                                   <div style={{ fontSize: 10, color: '#666', textAlign: 'right' }}>{item.course_code}</div>
                                   <div style={{ fontSize: 10, color: '#1565c0', textAlign: 'right' }}>{item.teacher_name}</div>
                                   <div style={{ fontSize: 10, color: '#888', textAlign: 'right' }}>{item.room_name} | {item.department_name} م{item.level}{item.section ? ` ${item.section}` : ''}</div>
+                                  {(item.computed_start_time || item.computed_end_time) && (
+                                    <div data-testid={`custom-time-${item.id}`} style={{ fontSize: 10, color: '#e65100', fontWeight: 700, textAlign: 'right' }}>
+                                      ⏱ {item.computed_start_time || ts.start_time} - {item.computed_end_time || ts.end_time}
+                                    </div>
+                                  )}
                                   {item.merged_with?.length > 0 && (
                                     <div style={{ fontSize: 9.5, color: '#2e7d32', fontWeight: 700, textAlign: 'right', backgroundColor: '#e8f5e9', borderRadius: 4, padding: '1px 4px', marginTop: 2 }}>
                                       🔗 مشتركة مع: {item.merged_with.join('، ')}
@@ -1215,7 +1245,8 @@ export default function WeeklySchedulePage() {
                           );
                         })}
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

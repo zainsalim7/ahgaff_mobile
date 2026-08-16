@@ -186,6 +186,30 @@ def _effective_times(s: dict, st_def: str, en_def: str):
     return st, en, (st != st_def or en != en_def)
 
 
+def _cell_extra_span(cell_map: dict, day: str, ts_idx: int, time_slots_cfg: list) -> int:
+    """🕐 كم فترة تالية (فارغة) تمتد إليها محاضرات هذه الخلية بسبب وقتها الممتد"""
+    ts = time_slots_cfg[ts_idx]
+    cell_slots = cell_map.get((day, ts.get("slot_number")), [])
+    if not cell_slots:
+        return 0
+    max_end = ""
+    for s in cell_slots:
+        _st, _en, _ = _effective_times(s, ts.get("start_time", ""), ts.get("end_time", ""))
+        if _en and _en > max_end:
+            max_end = _en
+    extra = 0
+    k = ts_idx
+    while k + 1 < len(time_slots_cfg):
+        nxt = time_slots_cfg[k + 1]
+        nxt_start = nxt.get("start_time", "")
+        if max_end and nxt_start and max_end > nxt_start and not cell_map.get((day, nxt.get("slot_number"))):
+            extra += 1
+            k += 1
+        else:
+            break
+    return extra
+
+
 def _shift_summary(shifted: list) -> str:
     if not shifted:
         return ""
@@ -2571,7 +2595,10 @@ async def export_visual_pdf(
         # PDF يرسم الأعمدة من اليسار → نعكس ترتيب الفترات ونضع عمود اليوم آخراً (أقصى اليمين)
         header_row = period_headers[::-1] + [ar("اليوم")]
         table_data = [header_row]
-        for day in working_days:
+        span_cmds = []
+        grey_skip = set()
+        n_slots = len(time_slots_cfg)
+        for r_i, day in enumerate(working_days, start=1):
             cells = []
             for ts in time_slots_cfg:
                 slot_num = ts.get("slot_number")
@@ -2597,7 +2624,20 @@ async def export_visual_pdf(
                             line += f" - شعبة {sec}"
                         parts.append(ar(line))
                     cells.append("\n\n".join(parts))
-            table_data.append(cells[::-1] + [ar(day)])
+            # 🕐 تمدد الخلايا: المقرر الممتد وقته يندمج مع الفترات التالية الفارغة
+            reversed_cells = cells[::-1]
+            for i in range(n_slots):
+                extra = _cell_extra_span(cell_map, day, i, time_slots_cfg)
+                if extra > 0:
+                    start_col = n_slots - 1 - (i + extra)
+                    end_col = n_slots - 1 - i
+                    reversed_cells[start_col] = reversed_cells[end_col]
+                    reversed_cells[end_col] = ""
+                    span_cmds.append(("SPAN", (start_col, r_i), (end_col, r_i)))
+                    span_cmds.append(("BACKGROUND", (start_col, r_i), (end_col, r_i), colors.HexColor("#fffde7")))
+                    for cc in range(start_col, end_col + 1):
+                        grey_skip.add((cc, r_i))
+            table_data.append(reversed_cells + [ar(day)])
 
         num_cols = len(header_row)
         col_widths = [(27 - 3) / (num_cols - 1) * cm] * (num_cols - 1) + [3*cm]
@@ -2624,8 +2664,9 @@ async def export_visual_pdf(
         ]
         for row_idx in range(1, len(table_data)):
             for col_idx in range(0, num_cols - 1):
-                if not table_data[row_idx][col_idx]:
+                if not table_data[row_idx][col_idx] and (col_idx, row_idx) not in grey_skip:
                     base_style.append(("BACKGROUND", (col_idx, row_idx), (col_idx, row_idx), colors.HexColor("#f5f5f5")))
+        base_style.extend(span_cmds)
         tbl.setStyle(TableStyle(base_style))
         return tbl
 
@@ -2831,6 +2872,14 @@ async def export_visual_excel(
                 c.alignment = center
                 c.border = border
                 c.font = Font(size=10)
+            # 🕐 دمج خلايا المقررات ذات الوقت الممتد مع الفترات التالية الفارغة
+            span_fill = PatternFill(start_color="fffde7", end_color="fffde7", fill_type="solid")
+            for i, ts in enumerate(time_slots_cfg):
+                extra = _cell_extra_span(cell_map, day, i, time_slots_cfg)
+                if extra > 0:
+                    ws.merge_cells(start_row=r_idx, start_column=2 + i, end_row=r_idx, end_column=2 + i + extra)
+                    mc = ws.cell(row=r_idx, column=2 + i)
+                    mc.fill = span_fill
             ws.row_dimensions[r_idx].height = max(60, min(400, max_lines * 15))
 
         ws.column_dimensions["A"].width = 12
