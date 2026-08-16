@@ -255,7 +255,10 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
-      a.href = url; a.download = 'schedule_import_template.xlsx'; a.click();
+      a.href = url;
+      const xf = res.headers?.['x-filename'];
+      a.download = xf ? decodeURIComponent(xf) : 'schedule_import_template.xlsx';
+      a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
       let m = 'فشل تحميل القالب';

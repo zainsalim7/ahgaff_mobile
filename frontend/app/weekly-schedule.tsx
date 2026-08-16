@@ -531,7 +531,8 @@ export default function WeeklySchedulePage() {
       const objUrl = URL.createObjectURL(res.data);
       const link = document.createElement('a');
       link.href = objUrl;
-      link.download = `weekly_schedule.${exportFormat === 'pdf' ? 'pdf' : 'xlsx'}`;
+      const xf = res.headers?.['x-filename'];
+      link.download = xf ? decodeURIComponent(xf) : `weekly_schedule.${exportFormat === 'pdf' ? 'pdf' : 'xlsx'}`;
       link.click();
       URL.revokeObjectURL(objUrl);
       setShowExportModal(false);

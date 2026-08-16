@@ -2408,6 +2408,39 @@ async def compare_draft(draft_id: str, current_user: dict = Depends(get_current_
 # Visual Export - تصدير مرئي للجدول (PDF + Excel)
 # ============================================================
 
+async def _weekly_export_filename(db, department_id, level, section, teacher_id, room_id, ext: str) -> str:
+    """📁 اسم ملف تصدير الجدول الأسبوعي: القسم - المستوى - الشعبة - التاريخ"""
+    from urllib.parse import quote
+    parts = ["الجدول الأسبوعي"]
+    if teacher_id:
+        try:
+            t = await db.teachers.find_one({"_id": ObjectId(teacher_id)})
+            if t:
+                parts.append(f"الأستاذ {(t.get('full_name') or '').strip()}")
+        except Exception:
+            pass
+    if room_id:
+        try:
+            r = await db.rooms.find_one({"_id": ObjectId(room_id)})
+            if r:
+                parts.append(f"قاعة {(r.get('name') or '').strip()}")
+        except Exception:
+            pass
+    if department_id:
+        try:
+            d = await db.departments.find_one({"_id": ObjectId(department_id)})
+            if d:
+                parts.append((d.get("name") or "").strip())
+        except Exception:
+            pass
+    if level is not None:
+        parts.append(f"المستوى {level}")
+    if section:
+        parts.append(f"شعبة {section}")
+    parts.append(datetime.now().strftime("%Y-%m-%d"))
+    return quote((" - ".join([p for p in parts if p])) + f".{ext}")
+
+
 @router.get("/weekly-schedule/export-visual/pdf")
 async def export_visual_pdf(
     faculty_id: Optional[str] = None,
@@ -2657,11 +2690,11 @@ async def export_visual_pdf(
     except Exception as build_err:
         raise HTTPException(status_code=400, detail=f"تعذر بناء ملف PDF: {str(build_err)[:150]}")
     buf.seek(0)
-    filename = f"weekly_schedule_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    fname = await _weekly_export_filename(db, department_id, level, section, teacher_id, room_id, "pdf")
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}", "X-Filename": fname},
     )
 
 
@@ -2881,11 +2914,11 @@ async def export_visual_excel(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"weekly_schedule_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    fname = await _weekly_export_filename(db, department_id, level, section, teacher_id, room_id, "xlsx")
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}", "X-Filename": fname},
     )
 
 

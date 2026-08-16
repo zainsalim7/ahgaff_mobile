@@ -267,11 +267,27 @@ async def download_import_template(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"schedule_import_template_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    # 📁 اسم القالب: قالب استيراد الجدول - الكلية - القسم - التاريخ
+    from urllib.parse import quote
+    parts = ["قالب استيراد الجدول"]
+    try:
+        fac = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
+        if fac:
+            parts.append((fac.get("name") or "").strip())
+    except Exception:
+        pass
+    try:
+        dept = await db.departments.find_one({"_id": ObjectId(department_id)})
+        if dept:
+            parts.append((dept.get("name") or "").strip())
+    except Exception:
+        pass
+    parts.append(datetime.now().strftime("%Y-%m-%d"))
+    fname = quote((" - ".join([p for p in parts if p])) + ".xlsx")
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}", "X-Filename": fname},
     )
 
 
