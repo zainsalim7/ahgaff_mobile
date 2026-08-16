@@ -4319,6 +4319,26 @@ def _short_teacher(full: str) -> str:
     return f"{parts[0]} {parts[-1]}"
 
 
+async def _master_export_filename(db, faculty_id: str, department_id, ext: str) -> str:
+    """📁 اسم ملف التصدير: الجدول الشامل - الكلية - القسم - التاريخ"""
+    from urllib.parse import quote
+    try:
+        fac = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
+    except Exception:
+        fac = None
+    parts = ["الجدول الشامل", ((fac or {}).get("name") or "").strip()]
+    if department_id:
+        try:
+            dept = await db.departments.find_one({"_id": ObjectId(department_id)})
+            if dept:
+                parts.append((dept.get("name") or "").strip())
+        except Exception:
+            pass
+    parts.append(datetime.now().strftime("%Y-%m-%d"))
+    label = " - ".join([p for p in parts if p])
+    return quote(f"{label}.{ext}")
+
+
 @router.get("/weekly-schedule/master-view/export/pdf")
 async def export_master_pdf(
     faculty_id: str,
@@ -4507,11 +4527,11 @@ async def export_master_pdf(
     except Exception as build_err:
         raise HTTPException(status_code=400, detail=f"تعذر بناء ملف PDF: {str(build_err)[:150]}")
     buf.seek(0)
-    filename = f"master_schedule_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    fname = await _master_export_filename(db, faculty_id, department_id, "pdf")
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}", "X-Filename": fname},
     )
 
 
@@ -4663,11 +4683,11 @@ async def export_master_excel(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    filename = f"master_schedule_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    fname = await _master_export_filename(db, faculty_id, department_id, "xlsx")
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}", "X-Filename": fname},
     )
 
 

@@ -571,7 +571,8 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       const objUrl = URL.createObjectURL(res.data);
       const link = document.createElement('a');
       link.href = objUrl;
-      link.download = `master_schedule.${fmt === 'pdf' ? 'pdf' : 'xlsx'}`;
+      const xf = res.headers?.['x-filename'];
+      link.download = xf ? decodeURIComponent(xf) : `master_schedule.${fmt === 'pdf' ? 'pdf' : 'xlsx'}`;
       link.click();
       URL.revokeObjectURL(objUrl);
       showMsg('success', `✅ تم تصدير ${fmt === 'pdf' ? 'PDF' : 'Excel'} بنجاح`);
