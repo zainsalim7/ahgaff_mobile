@@ -16,7 +16,26 @@ from .statements import _can_issue as _can_manage, get_verify_base
 
 router = APIRouter()
 
-TEMPLATES = ("green", "dark", "horizontal", "official")
+TEMPLATES = ("green", "dark", "horizontal", "official", "custom")
+
+# 📐 المواضع الافتراضية لعناصر القالب المخصص (نسب مئوية من أبعاد البطاقة)
+DEFAULT_CUSTOM_LAYOUT = {
+    "photo": {"x": 66, "y": 16, "w": 26, "h": 24},
+    "qr": {"x": 8, "y": 66, "w": 18},
+    "name": {"x": 50, "y": 46, "size": 34, "color": "#1a2540"},
+    "enrollment": {"x": 50, "y": 55, "size": 26, "color": "#1a2540"},
+    "dept": {"x": 50, "y": 62, "size": 24, "color": "#1a2540"},
+    "year": {"x": 50, "y": 69, "size": 22, "color": "#455a64"},
+}
+
+
+def _payload_portrait(p: dict) -> bool:
+    t = p.get("template", "green")
+    if t == "horizontal":
+        return False
+    if t == "custom":
+        return p.get("custom_orientation") != "landscape"
+    return True
 LEVEL_AR = {1: "الأول", 2: "الثاني", 3: "الثالث", 4: "الرابع", 5: "الخامس", 6: "السادس", 7: "السابع", 8: "الثامن"}
 
 
@@ -72,6 +91,8 @@ async def _resolve_faculty(db, student: dict):
 # ==================== إعدادات التصميم لكل كلية ====================
 class CardSettings(BaseModel):
     template: str = "green"
+    custom_bg_base64: Optional[str] = None
+    custom_layout: Optional[dict] = None
 
 
 @router.get("/cards/settings/{faculty_id}")
@@ -80,7 +101,12 @@ async def get_card_settings(faculty_id: str, current_user: dict = Depends(get_cu
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     db = get_db()
     doc = await db.card_settings.find_one({"_id": f"faculty_{faculty_id}"}) or {}
-    return {"template": doc.get("template", "green")}
+    return {
+        "template": doc.get("template", "green"),
+        "custom_bg_base64": doc.get("custom_bg_base64", ""),
+        "custom_layout": doc.get("custom_layout") or DEFAULT_CUSTOM_LAYOUT,
+        "custom_orientation": doc.get("custom_orientation", "portrait"),
+    }
 
 
 @router.put("/cards/settings/{faculty_id}")
@@ -90,7 +116,24 @@ async def update_card_settings(faculty_id: str, data: CardSettings, current_user
     if data.template not in TEMPLATES:
         raise HTTPException(status_code=400, detail="قالب غير معروف")
     db = get_db()
-    await db.card_settings.update_one({"_id": f"faculty_{faculty_id}"}, {"$set": {"template": data.template}}, upsert=True)
+    update = {"template": data.template}
+    if data.custom_layout is not None:
+        update["custom_layout"] = data.custom_layout
+    if data.custom_bg_base64:
+        raw = data.custom_bg_base64.split(",")[-1]
+        try:
+            import base64 as _b
+            from PIL import Image as _I
+            im = _I.open(io.BytesIO(_b.b64decode(raw)))
+            update["custom_orientation"] = "landscape" if im.width > im.height else "portrait"
+            update["custom_bg_base64"] = raw
+        except Exception:
+            raise HTTPException(status_code=400, detail="تعذر قراءة صورة التصميم — ارفع PNG أو JPG صالحة")
+    if data.template == "custom":
+        existing = await db.card_settings.find_one({"_id": f"faculty_{faculty_id}"}) or {}
+        if not (data.custom_bg_base64 or existing.get("custom_bg_base64")):
+            raise HTTPException(status_code=400, detail="ارفع صورة تصميم البطاقة أولاً")
+    await db.card_settings.update_one({"_id": f"faculty_{faculty_id}"}, {"$set": update}, upsert=True)
     return {"message": "تم حفظ تصميم البطاقة"}
 
 
@@ -114,6 +157,9 @@ async def _card_payload(db, student: dict, base_url: str) -> dict:
         "department_name": dept_name,
         "academic_year": card["academic_year"],
         "template": settings.get("template", "green"),
+        "custom_bg_base64": settings.get("custom_bg_base64", ""),
+        "custom_layout": settings.get("custom_layout") or {},
+        "custom_orientation": settings.get("custom_orientation", "portrait"),
         "photo_path": student.get("photo_path", ""),
         "pending_photo_path": student.get("pending_photo_path", ""),
         "card_token": card["token"],
@@ -365,10 +411,11 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
             if not _can_manage(current_user, fid_s):
                 raise HTTPException(status_code=403, detail=f"غير مصرح لك بطباعة بطاقات كلية الطالب {s.get('full_name', '')}")
             if fid_s not in tpl_map:
-                tpl_map[fid_s] = (await db.card_settings.find_one({"_id": f"faculty_{fid_s}"}) or {}).get("template", "green")
+                tpl_map[fid_s] = await db.card_settings.find_one({"_id": f"faculty_{fid_s}"}) or {}
             s["_fid"], s["_fac_name"], s["_dept_name"] = fid_s, fac_name_s, dept_name_s
         fid = students[0].get("_fid", "")
-        tpl = tpl_map.get(fid, "green")
+        tpl_settings = tpl_map.get(fid, {})
+        tpl = tpl_settings.get("template", "green")
     else:
         if not data.department_id:
             raise HTTPException(status_code=400, detail="اختر القسم أو حدد طلاباً")
@@ -408,14 +455,16 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
     faculty = await db.faculties.find_one({"_id": ObjectId(fid)}) if fid and not ids_mode else None
     faculty_name = (faculty or {}).get("name", "")
     if not ids_mode:
-        tpl = (await db.card_settings.find_one({"_id": f"faculty_{fid}"}) or {}).get("template", "green")
+        tpl_settings = await db.card_settings.find_one({"_id": f"faculty_{fid}"}) or {}
+        tpl = tpl_settings.get("template", "green")
     year = await _active_academic_year(db)
     base = (await get_verify_base(db)) or (data.base_url or "").rstrip("/")
 
     from services.storage_service import get_object
 
     def make_payload(s, card):
-        s_tpl = tpl_map.get(s.get("_fid"), "green") if ids_mode else tpl
+        s_settings = (tpl_map.get(s.get("_fid"), {}) if ids_mode else tpl_settings) or {}
+        s_tpl = s_settings.get("template", "green")
         return {
             "student_name": s.get("full_name", ""),
             "enrollment_no": s.get("student_id", ""),
@@ -427,6 +476,9 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
             "faculty_name": s.get("_fac_name", "") if ids_mode else faculty_name,
             "academic_year": card["academic_year"],
             "template": s_tpl,
+            "custom_bg_base64": s_settings.get("custom_bg_base64", ""),
+            "custom_layout": s_settings.get("custom_layout") or {},
+            "custom_orientation": s_settings.get("custom_orientation", "portrait"),
         }
 
     pngs = []
@@ -440,7 +492,7 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
             except Exception:
                 photo_bytes = None
         payload = make_payload(s, card)
-        pngs.append((_render_card_png(payload, photo_bytes, verify_url), payload["template"] != "horizontal"))
+        pngs.append((_render_card_png(payload, photo_bytes, verify_url), _payload_portrait(payload)))
 
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -449,7 +501,7 @@ async def batch_print_cards(data: BatchPrintRequest, current_user: dict = Depend
 
     W, H = A4
     # اتجاه الإخراج: auto = حسب القالب، أو فرض عمودي/أفقي مع تدوير البطاقة عند الحاجة
-    template_portrait = tpl != "horizontal"
+    template_portrait = _payload_portrait({"template": tpl, "custom_orientation": (tpl_settings or {}).get("custom_orientation", "portrait")})
     if orientation == "auto":
         out_portrait = template_portrait
     else:
@@ -578,6 +630,39 @@ def _render_card_png(p: dict, photo_bytes: Optional[bytes], verify_url: str) -> 
     if (p.get("section") or "").strip():
         rows.append(("الشعبة", str(p["section"]).strip()))
     rows.append(("الجنسية", p.get("nationality", "")))
+
+    if template == "custom" and p.get("custom_bg_base64"):
+        import base64 as _b64
+        try:
+            bg = Image.open(io.BytesIO(_b64.b64decode(str(p["custom_bg_base64"]).split(",")[-1]))).convert("RGB")
+        except Exception:
+            bg = None
+        if bg is not None:
+            W, H = (1010, 640) if bg.width > bg.height else (640, 1010)
+            img = fit_photo(bg, W, H)
+            d = ImageDraw.Draw(img)
+            L = {**DEFAULT_CUSTOM_LAYOUT, **{k: v for k, v in (p.get("custom_layout") or {}).items() if isinstance(v, dict)}}
+            if photo:
+                ph = L["photo"]
+                pw, phh = int(ph.get("w", 26) / 100 * W), int(ph.get("h", 24) / 100 * H)
+                pxp, pyp = int(ph.get("x", 66) / 100 * W), int(ph.get("y", 16) / 100 * H)
+                img.paste(fit_photo(photo, pw, phh), (pxp, pyp))
+                d.rectangle([pxp, pyp, pxp + pw, pyp + phh], outline=(255, 255, 255), width=3)
+            q = L["qr"]
+            qs = max(40, int(q.get("w", 18) / 100 * W))
+            img.paste(qr_img.resize((qs, qs)), (int(q.get("x", 8) / 100 * W), int(q.get("y", 66) / 100 * H)))
+
+            def _txt(key, value):
+                el = L.get(key) or DEFAULT_CUSTOM_LAYOUT[key]
+                center(d, int(el.get("x", 50) / 100 * W), int(el.get("y", 50) / 100 * H), value, F(int(el.get("size", 24))), el.get("color", "#1a2540"))
+
+            _txt("name", p.get("student_name", ""))
+            _txt("enrollment", f"رقم القيد: {p.get('enrollment_no', '')}")
+            _txt("dept", f"{p.get('department_name', '')} — المستوى {level_ar}")
+            _txt("year", f"العام الجامعي: {p.get('academic_year', '')}")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
 
     if template == "official":
         DG = (27, 94, 32)
