@@ -764,10 +764,12 @@ async def export_alumni_excel(
     out = BytesIO()
     wb.save(out)
     out.seek(0)
+    from urllib.parse import quote as _q
+    _fn = _q(f"الخريجون{f' - دفعة {year}' if year else ''} - {datetime.now().strftime('%Y-%m-%d')}.xlsx")
     return StreamingResponse(
         out,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=alumni.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_fn}", "X-Filename": _fn},
     )
 
 
@@ -890,8 +892,10 @@ async def export_alumni_pdf(
 
     doc.build(elements)
     buf.seek(0)
+    from urllib.parse import quote as _q
+    _fn = _q(f"الخريجون{f' - دفعة {year}' if year else ''} - {datetime.now().strftime('%Y-%m-%d')}.pdf")
     return StreamingResponse(
         buf,
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=alumni.pdf"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_fn}", "X-Filename": _fn},
     )

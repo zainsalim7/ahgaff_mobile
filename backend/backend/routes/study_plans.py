@@ -233,7 +233,7 @@ async def get_study_plan_template(current_user: dict = Depends(get_current_user)
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=study_plan_template.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{__import__('urllib.parse', fromlist=['quote']).quote('قالب الخطة الدراسية.xlsx')}", "X-Filename": __import__('urllib.parse', fromlist=['quote']).quote('قالب الخطة الدراسية.xlsx')},
     )
 
 

@@ -64,7 +64,8 @@ export default function DailyReport() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `daily_report_${selectedDate}.xlsx`;
+        const xf = (response.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : `daily_report_${selectedDate}.xlsx`;
         a.click();
       } else {
         const filename = `${FileSystem.documentDirectory}daily_report_${selectedDate}.xlsx`;

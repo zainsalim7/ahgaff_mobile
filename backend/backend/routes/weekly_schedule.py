@@ -388,8 +388,10 @@ async def download_rooms_template(current_user: dict = Depends(get_current_user)
     output = BytesIO()
     wb.save(output)
     output.seek(0)
+    from urllib.parse import quote as _q
+    _fn = _q("قالب القاعات.xlsx")
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers={"Content-Disposition": "attachment; filename=rooms_template.xlsx"})
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_fn}", "X-Filename": _fn})
 
 
 @router.post("/rooms/import")
@@ -2432,10 +2434,17 @@ async def compare_draft(draft_id: str, current_user: dict = Depends(get_current_
 # Visual Export - تصدير مرئي للجدول (PDF + Excel)
 # ============================================================
 
-async def _weekly_export_filename(db, department_id, level, section, teacher_id, room_id, ext: str) -> str:
-    """📁 اسم ملف تصدير الجدول الأسبوعي: القسم - المستوى - الشعبة - التاريخ"""
+async def _weekly_export_filename(db, faculty_id, department_id, level, section, teacher_id, room_id, ext: str) -> str:
+    """📁 اسم ملف تصدير الجدول الأسبوعي: الكلية - القسم - المستوى - الشعبة - التاريخ"""
     from urllib.parse import quote
     parts = ["الجدول الأسبوعي"]
+    if faculty_id:
+        try:
+            _f = await db.faculties.find_one({"_id": ObjectId(faculty_id)})
+            if _f:
+                parts.append((_f.get("name") or "").strip())
+        except Exception:
+            pass
     if teacher_id:
         try:
             t = await db.teachers.find_one({"_id": ObjectId(teacher_id)})
@@ -2731,7 +2740,7 @@ async def export_visual_pdf(
     except Exception as build_err:
         raise HTTPException(status_code=400, detail=f"تعذر بناء ملف PDF: {str(build_err)[:150]}")
     buf.seek(0)
-    fname = await _weekly_export_filename(db, department_id, level, section, teacher_id, room_id, "pdf")
+    fname = await _weekly_export_filename(db, faculty_id, department_id, level, section, teacher_id, room_id, "pdf")
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/pdf",
@@ -2963,7 +2972,7 @@ async def export_visual_excel(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    fname = await _weekly_export_filename(db, department_id, level, section, teacher_id, room_id, "xlsx")
+    fname = await _weekly_export_filename(db, faculty_id, department_id, level, section, teacher_id, room_id, "xlsx")
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

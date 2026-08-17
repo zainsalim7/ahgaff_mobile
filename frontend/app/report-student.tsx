@@ -241,7 +241,8 @@ export default function StudentReport() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `student_report_${studentData.student.student_id}.xlsx`;
+        const xf = (response.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : `student_report_${studentData.student.student_id}.xlsx`;
         a.click();
       } else {
         const filename = `${FileSystem.documentDirectory}student_report_${studentData.student.student_id}.xlsx`;

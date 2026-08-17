@@ -39,6 +39,27 @@ def yemen_day_utc_bounds(date_obj: datetime):
     return (start_yemen.astimezone(timezone.utc).replace(tzinfo=None),
             end_yemen.astimezone(timezone.utc).replace(tzinfo=None))
 
+
+def ar_export_filename(*parts, ext: str) -> str:
+    """📁 اسم ملف تصدير عربي: الأجزاء - التاريخ.امتداد"""
+    from urllib.parse import quote as _q
+    label = " - ".join([str(p).strip() for p in parts if p and str(p).strip()])
+    return _q(f"{label} - {get_yemen_time().strftime('%Y-%m-%d')}.{ext}")
+
+
+def ar_export_headers(fname: str) -> dict:
+    return {"Content-Disposition": f"attachment; filename*=UTF-8''{fname}", "X-Filename": fname}
+
+
+async def _dept_name_for_export(department_id) -> str:
+    if not department_id:
+        return ""
+    try:
+        d = await db.departments.find_one({"_id": ObjectId(department_id)})
+        return ((d or {}).get("name") or "").strip()
+    except Exception:
+        return ""
+
 def get_yemen_date_start():
     """الحصول على بداية اليوم بتوقيت اليمن"""
     now = get_yemen_time()
@@ -3135,7 +3156,7 @@ async def get_department_final_results_template(current_user: dict = Depends(get
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=department_final_results_template.xlsx"},
+        headers=ar_export_headers(__import__("urllib.parse", fromlist=["quote"]).quote("قالب النتائج النهائية للقسم.xlsx")),
     )
 
 
@@ -3369,7 +3390,7 @@ async def get_final_results_template(current_user: dict = Depends(get_current_us
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=final_results_template.xlsx"},
+        headers=ar_export_headers(__import__("urllib.parse", fromlist=["quote"]).quote("قالب النتائج النهائية.xlsx")),
     )
 
 @api_router.get("/students/{student_id}/notifications")
@@ -7388,7 +7409,7 @@ async def export_lesson_completion_excel(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=lesson_completion_report.xlsx"}
+        headers=ar_export_headers(ar_export_filename("تقرير اكتمال المحاضرات", ext="xlsx"))
     )
 
 @api_router.get("/reports/lesson-completion/{course_id}/comparison")
@@ -11482,11 +11503,11 @@ async def export_teacher_summary_excel(
             pd.DataFrame(courses_data).to_excel(writer, sheet_name="المقررات", index=False)
     
     output.seek(0)
-    teacher_name = report["teacher"]["full_name"].replace(" ", "_")
+    _fn = ar_export_filename("ملخص الأستاذ", report["teacher"]["full_name"], ext="xlsx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=teacher_summary_{teacher_name}.xlsx"}
+        headers=ar_export_headers(_fn)
     )
 
 
@@ -11709,7 +11730,7 @@ async def export_teacher_delays_report(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=teacher_delays_report.xlsx"}
+        headers=ar_export_headers(ar_export_filename("تقرير تأخر الأساتذة", ext="xlsx"))
     )
 
 
@@ -11914,10 +11935,11 @@ async def export_warnings_excel(
     df.to_excel(output, index=False, engine='openpyxl')
     output.seek(0)
     
+    _fn = ar_export_filename("تقرير الإنذارات والحرمان", await _dept_name_for_export(department_id), ext="xlsx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=warnings_report.xlsx"}
+        headers=ar_export_headers(_fn)
     )
 
 @api_router.get("/export/report/absent-students/excel")
@@ -11953,10 +11975,11 @@ async def export_absent_students_excel(
     df.to_excel(output, index=False, engine='openpyxl')
     output.seek(0)
     
+    _fn = ar_export_filename("تقرير الطلاب المتغيبين", await _dept_name_for_export(department_id), ext="xlsx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=absent_students.xlsx"}
+        headers=ar_export_headers(_fn)
     )
 
 @api_router.get("/export/report/teacher-workload/excel")
@@ -12051,11 +12074,12 @@ async def export_teacher_workload_excel(
                 df.to_excel(writer, index=False, sheet_name=label[:31])
 
     output.seek(0)
-    filename = "teacher_workload_monthly.xlsx" if months_to_export else "teacher_workload.xlsx"
+    _fn = ar_export_filename("نصاب المدرسين الشهري" if months_to_export else "نصاب المدرسين",
+                             await _dept_name_for_export(department_id), ext="xlsx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers=ar_export_headers(_fn)
     )
 
 @api_router.get("/export/report/daily/excel")
@@ -12093,10 +12117,12 @@ async def export_daily_excel(
     output.seek(0)
     
     report_date = date or get_yemen_time().strftime("%Y-%m-%d")
+    from urllib.parse import quote as _q
+    _fn = _q(f"التقرير اليومي - {report_date}.xlsx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=daily_report_{report_date}.xlsx"}
+        headers=ar_export_headers(_fn)
     )
 
 @api_router.get("/export/report/student/{student_id}/excel")
@@ -12156,7 +12182,7 @@ async def export_student_report_excel(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=student_{student_info['student_id']}_report.xlsx"}
+        headers=ar_export_headers(ar_export_filename("تقرير الطالب", student_info.get("full_name") or student_info.get("student_id", ""), ext="xlsx"))
     )
 
 
@@ -12242,8 +12268,11 @@ async def export_student_report_pdf(
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=student_{student_info.get('student_id', student_id)}_report.pdf"}
+        headers=ar_export_headers(ar_export_filename("تقرير الطالب", student_info.get("full_name") or student_info.get("student_id", ""), ext="pdf"))
     )
+
+
+@api_router.get("/export/report/course/{course_id}/excel")
 async def export_course_report_excel(
     course_id: str,
     current_user: dict = Depends(get_current_user)
@@ -12292,7 +12321,7 @@ async def export_course_report_excel(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=course_{report['course']['code']}_report.xlsx"}
+        headers=ar_export_headers(ar_export_filename("تقرير مقرر", report["course"].get("name") or report["course"].get("code", ""), ext="xlsx"))
     )
 
 @api_router.get("/export/report/attendance-overview/excel")
@@ -12330,7 +12359,7 @@ async def export_attendance_overview_excel(
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=attendance_overview.xlsx"}
+        headers=ar_export_headers(ar_export_filename("النظرة العامة للحضور", await _dept_name_for_export(department_id), ext="xlsx"))
     )
 
 # ==================== Semester Report PDF ====================

@@ -255,7 +255,8 @@ export default function LessonCompletionReport() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'lesson_completion_report.xlsx';
+        const xf = (res.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : 'lesson_completion_report.xlsx';
         a.click();
         URL.revokeObjectURL(url);
       }

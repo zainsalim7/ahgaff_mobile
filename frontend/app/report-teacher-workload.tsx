@@ -242,7 +242,8 @@ export default function TeacherWorkloadReport() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename;
+        const xf = (response.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : filename;
         a.click();
       } else {
         const filepath = `${FileSystem.documentDirectory}${filename}`;

@@ -75,7 +75,8 @@ export default function TeacherDelaysReport() {
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'teacher_delays_report.xlsx';
+        const xf = (response.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : 'teacher_delays_report.xlsx';
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(url);

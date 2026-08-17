@@ -74,7 +74,8 @@ export default function CourseDetailedReport() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename;
+        const xf = (response.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : filename;
         a.click();
       } else {
         const filePath = `${FileSystem.documentDirectory}${filename}`;

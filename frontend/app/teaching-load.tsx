@@ -680,7 +680,8 @@ export default function TeachingLoadPage() {
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
-        a.download = format === 'excel' ? 'teaching_load.xlsx' : 'teaching_load.pdf';
+        const xf = response.headers.get('x-filename');
+        a.download = xf ? decodeURIComponent(xf) : (format === 'excel' ? 'teaching_load.xlsx' : 'teaching_load.pdf');
         a.click();
         window.URL.revokeObjectURL(blobUrl);
       }

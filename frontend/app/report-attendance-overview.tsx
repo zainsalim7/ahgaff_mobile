@@ -50,7 +50,8 @@ export default function AttendanceOverviewReport() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'attendance_overview.xlsx';
+        const xf = (response.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : 'attendance_overview.xlsx';
         a.click();
       } else {
         const filename = `${FileSystem.documentDirectory}attendance_overview.xlsx`;

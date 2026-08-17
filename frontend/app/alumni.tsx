@@ -288,7 +288,8 @@ export default function AlumniScreen() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = kind === 'excel' ? `alumni-${Date.now()}.xlsx` : `alumni-${Date.now()}.pdf`;
+      const xf = (res.headers as any)?.['x-filename'];
+      a.download = xf ? decodeURIComponent(xf) : (kind === 'excel' ? `alumni-${Date.now()}.xlsx` : `alumni-${Date.now()}.pdf`);
       document.body.appendChild(a);
       a.click();
       a.remove();

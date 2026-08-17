@@ -51,7 +51,8 @@ export default function WarningsReport() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'warnings_report.xlsx';
+        const xf = (response.headers as any)?.['x-filename'];
+        a.download = xf ? decodeURIComponent(xf) : 'warnings_report.xlsx';
         a.click();
       } else {
         const filename = `${FileSystem.documentDirectory}warnings_report.xlsx`;

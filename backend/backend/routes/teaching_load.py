@@ -1600,10 +1600,12 @@ async def export_teaching_load_excel(
     wb.save(output)
     output.seek(0)
 
+    from urllib.parse import quote as _q
+    _fn = _q(f"العبء التدريسي - {datetime.now().strftime('%Y-%m-%d')}.xlsx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=teaching_load.xlsx"}
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_fn}", "X-Filename": _fn}
     )
 
 
@@ -1904,10 +1906,12 @@ async def export_teaching_load_pdf(
     doc.build(elements)
     buffer.seek(0)
 
+    from urllib.parse import quote as _q
+    _fn = _q(f"العبء التدريسي - {datetime.now().strftime('%Y-%m-%d')}.pdf")
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=teaching_load.pdf"}
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_fn}", "X-Filename": _fn}
     )
 
 

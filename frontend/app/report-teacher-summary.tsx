@@ -167,7 +167,8 @@ export default function ReportTeacherSummary() {
         const downloadUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = `teacher_summary.xlsx`;
+        const xf = response.headers.get('x-filename');
+        a.download = xf ? decodeURIComponent(xf) : `teacher_summary.xlsx`;
         document.body.appendChild(a);
         a.click();
         a.remove();
