@@ -7015,6 +7015,19 @@ async def update_course(course_id: str, data: CourseUpdate, current_user: dict =
                 await db.weekly_schedule.update_many({"course_id": course_id}, {"$unset": {"teacher_id": ""}})
         except DuplicateKeyError:
             pass
+        # 🧾 حفظ سجل التنفيذ: المحاضرات الماضية/المكتملة تبقى محسوبة للمعلم القديم
+        _today = get_yemen_time().strftime("%Y-%m-%d")
+        if old_teacher_id:
+            await db.lectures.update_many(
+                {"course_id": course_id,
+                 "teacher_id": None,
+                 "$or": [{"date": {"$lt": _today}}, {"status": LectureStatus.COMPLETED}]},
+                {"$set": {"teacher_id": old_teacher_id}})
+        if new_teacher_id:
+            await db.lectures.update_many(
+                {"course_id": course_id, "date": {"$gte": _today},
+                 "status": {"$ne": LectureStatus.COMPLETED}},
+                {"$set": {"teacher_id": new_teacher_id}})
         # حذف عبء المعلم القديم لهذا المقرر
         if old_teacher_id:
             await db.teaching_loads.delete_many({
@@ -10252,6 +10265,11 @@ async def record_attendance_session(
         lecture_update["lesson_title"] = session.lesson_title
     if session.plan_topic_id:
         lecture_update["plan_topic_id"] = session.plan_topic_id
+    # 🧾 ختم منفذ المحاضرة (معلم المقرر وقت التنفيذ) — يحمي ساعاته عند تغيير الإسناد لاحقاً
+    if not lecture.get("teacher_id"):
+        _c = await db.courses.find_one({"_id": ObjectId(lecture["course_id"])})
+        if _c and _c.get("teacher_id"):
+            lecture_update["teacher_id"] = _c["teacher_id"]
     
     await db.lectures.update_one(
         {"_id": ObjectId(session.lecture_id)},
@@ -10671,11 +10689,17 @@ async def sync_offline_attendance(
     # ✅ تحديث حالة المحاضرات المُزامنة إلى مكتملة (إن لم تكن ملغاة)
     for lid in completed_lecture_ids:
         try:
+            _upd = {"status": LectureStatus.COMPLETED}
+            _lec = await db.lectures.find_one({"_id": ObjectId(lid)})
+            if _lec and not _lec.get("teacher_id"):
+                _c = await db.courses.find_one({"_id": ObjectId(_lec["course_id"])})
+                if _c and _c.get("teacher_id"):
+                    _upd["teacher_id"] = _c["teacher_id"]
             await db.lectures.update_one(
                 {"_id": ObjectId(lid),
                  "status": {"$ne": LectureStatus.CANCELLED},
                  "is_cancelled": {"$ne": True}},
-                {"$set": {"status": LectureStatus.COMPLETED}}
+                {"$set": _upd}
             )
         except Exception:
             pass
@@ -11784,8 +11808,18 @@ async def get_teacher_workload_report(
         # الساعات المطلوبة = النصاب الأسبوعي × عدد الأسابيع
         required_hours = round(weekly_hours * total_weeks, 2)
         
-        # جلب المقررات
+        # جلب المقررات الحالية + مقررات سابقة نفّذ فيها محاضرات (سجل lecture.teacher_id)
         courses = await db.courses.find({"teacher_id": tid, "is_active": True}).to_list(50)
+        _cur_ids = {str(c["_id"]) for c in courses}
+        for _hc in await db.lectures.distinct("course_id", {"teacher_id": tid}):
+            if _hc not in _cur_ids:
+                try:
+                    _cdoc = await db.courses.find_one({"_id": ObjectId(_hc)})
+                except Exception:
+                    _cdoc = None
+                if _cdoc:
+                    _cdoc["_hist_only"] = True
+                    courses.append(_cdoc)
         
         total_scheduled_hours = 0
         total_actual_hours = 0
@@ -11801,11 +11835,16 @@ async def get_teacher_workload_report(
 
             # المحاضرات المجدولة في الفترة (دعم date كنص أو datetime)
             # 🔧 استبعاد الملغاة: الإلغاء يضبط status=cancelled (حقل is_cancelled قديم يُبقى للتوافق)
+            # 🧾 الإسناد الفعلي: المختومة لهذا المعلم + غير المختومة على مقرره الحالي فقط
+            _attr = [{"teacher_id": tid}] if course.get("_hist_only") else [{"teacher_id": tid}, {"teacher_id": None}]
             scheduled_lectures = await db.lectures.find({
                 "course_id": cid,
-                "$or": [
-                    {"date": {"$gte": start_str, "$lte": end_str}},
-                    {"date": {"$gte": start, "$lte": end}}
+                "$and": [
+                    {"$or": [
+                        {"date": {"$gte": start_str, "$lte": end_str}},
+                        {"date": {"$gte": start, "$lte": end}}
+                    ]},
+                    {"$or": _attr},
                 ],
                 "is_cancelled": {"$ne": True},
                 "status": {"$ne": LectureStatus.CANCELLED}
