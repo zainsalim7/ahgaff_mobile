@@ -157,6 +157,9 @@ async def _card_payload(db, student: dict, base_url: str) -> dict:
         "department_name": dept_name,
         "academic_year": card["academic_year"],
         "template": settings.get("template", "green"),
+        "photo_upload_used": bool(student.get("photo_upload_used")),
+        "photo_upload_allowed": bool(student.get("photo_upload_allowed")),
+        "can_upload_photo": (not student.get("photo_upload_used")) or bool(student.get("photo_upload_allowed")),
         "custom_bg_base64": settings.get("custom_bg_base64", ""),
         "custom_layout": settings.get("custom_layout") or {},
         "custom_orientation": settings.get("custom_orientation", "portrait"),
@@ -209,11 +212,15 @@ async def upload_my_photo(file: UploadFile = File(...), current_user: dict = Dep
     student = await db.students.find_one({"user_id": current_user.get("id")})
     if not student:
         raise HTTPException(status_code=404, detail="لا يوجد ملف طالب مرتبط بحسابك")
+    # 🔒 حد الرفع: مرة واحدة فقط — الرفع الثاني بإذن الإدارة
+    if student.get("photo_upload_used") and not student.get("photo_upload_allowed"):
+        raise HTTPException(status_code=403, detail="لقد استخدمت فرصة رفع الصورة المتاحة — لتغيير صورتك راجع إدارة الكلية للسماح برفع جديد")
     path = await _store_photo(file)
     await db.students.update_one({"_id": student["_id"]}, {"$set": {
         "pending_photo_path": path,
         "pending_photo_at": datetime.now(timezone.utc).isoformat(),
-    }})
+        "photo_upload_used": True,
+    }, "$unset": {"photo_upload_allowed": ""}})
     return {"message": "تم رفع صورتك — بانتظار اعتماد المسجل", "pending_photo_path": path}
 
 
@@ -311,11 +318,36 @@ async def reject_student_photo(student_id: str, current_user: dict = Depends(get
     fid, _, _ = await _resolve_faculty(db, student)
     if not _can_manage(current_user, fid):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
-    await db.students.update_one({"_id": student["_id"]}, {"$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
+    # الرفض يعيد فتح فرصة الرفع للطالب تلقائياً ليرفع صورة أفضل
+    await db.students.update_one({"_id": student["_id"]}, {"$set": {"photo_upload_allowed": True}, "$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
     await log_activity(current_user, "reject_student_photo", "student", str(student["_id"]), student.get("full_name", ""), {})
     if student.get("pending_photo_path"):
         await _notify_photo_decision(db, student, approved=False)
     return {"message": "تم رفض الصورة المعلقة"}
+
+
+@router.post("/students/{student_id}/photo/allow-upload")
+async def allow_photo_upload(student_id: str, current_user: dict = Depends(get_current_user)):
+    """🔓 الإدارة تسمح للطالب برفع صورة جديدة (فرصة واحدة تُستهلك عند الرفع)."""
+    db = get_db()
+    student = await _student_or_404(db, student_id)
+    fid, _, _ = await _resolve_faculty(db, student)
+    if not _can_manage(current_user, fid):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    await db.students.update_one({"_id": student["_id"]}, {"$set": {"photo_upload_allowed": True}})
+    await log_activity(current_user, "allow_photo_upload", "student", str(student["_id"]), student.get("full_name", ""), {})
+    if student.get("user_id"):
+        from datetime import timedelta as _td
+        await db.notifications.insert_one({
+            "student_id": str(student["_id"]),
+            "user_id": student["user_id"],
+            "title": "🔓 سُمح لك برفع صورة جديدة",
+            "message": "سمحت لك إدارة الكلية برفع صورة شخصية جديدة لبطاقتك — ارفعها من شاشة البطاقة (فرصة واحدة).",
+            "type": "photo_upload_allowed",
+            "is_read": False,
+            "created_at": datetime.now(timezone(_td(hours=3))).isoformat(),
+        })
+    return {"message": "تم السماح للطالب برفع صورة جديدة"}
 
 
 # ==================== التحقق العام ====================

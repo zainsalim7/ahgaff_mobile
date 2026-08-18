@@ -91,7 +91,20 @@ export default function StudentCardScreen() {
     setBusy(action);
     try {
       await api.post(`/students/${studentId}/photo/${action}`);
-      setMsg(action === 'approve' ? '✅ اعتُمدت صورة الطالب' : 'رُفضت الصورة المعلقة');
+      setMsg(action === 'approve' ? '✅ اعتُمدت صورة الطالب' : 'رُفضت الصورة المعلقة — سُمح للطالب برفع صورة جديدة تلقائياً');
+      fetchCard();
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || 'فشل الإجراء');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const allowUpload = async () => {
+    setBusy('allow');
+    try {
+      const res = await api.post(`/students/${studentId}/photo/allow-upload`);
+      setMsg(`🔓 ${res.data?.message || 'تم السماح للطالب برفع صورة جديدة'}`);
       fetchCard();
     } catch (e: any) {
       setMsg(e?.response?.data?.detail || 'فشل الإجراء');
@@ -289,7 +302,20 @@ export default function StudentCardScreen() {
             <Ionicons name="color-palette-outline" size={16} color="#1565c0" />
             <Text style={[styles.actionText, { color: '#1565c0' }]}>تصميم البطاقة</Text>
           </TouchableOpacity>
+          {card.photo_upload_used && !card.photo_upload_allowed && (
+            <TouchableOpacity onPress={allowUpload} disabled={!!busy} style={[styles.actionBtn, { borderColor: '#ffcc80', backgroundColor: '#fff8e1' }]} testID="allow-photo-upload-btn">
+              {busy === 'allow' ? <ActivityIndicator size="small" color="#e65100" /> : <Ionicons name="lock-open-outline" size={16} color="#e65100" />}
+              <Text style={[styles.actionText, { color: '#e65100' }]}>السماح برفع صورة جديدة</Text>
+            </TouchableOpacity>
+          )}
         </View>
+        {card.photo_upload_used && (
+          <Text style={{ fontSize: 11.5, color: card.photo_upload_allowed ? '#2e7d32' : '#8a94a6', textAlign: 'center', marginTop: 8 }} testID="photo-upload-status">
+            {card.photo_upload_allowed
+              ? '🔓 مسموح للطالب برفع صورة جديدة (فرصة واحدة تُستهلك عند الرفع)'
+              : '🔒 الطالب استخدم فرصة رفع الصورة — الرفع الجديد يتطلب سماح الإدارة'}
+          </Text>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
