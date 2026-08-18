@@ -116,6 +116,11 @@ export default function AddCourseScreen() {
   const [integrityData, setIntegrityData] = useState<any>(null);
   const [fixingLinks, setFixingLinks] = useState(false);
   const [mergeSel, setMergeSel] = useState<string[]>([]);
+  const [reassignCourse, setReassignCourse] = useState<any>(null);
+  const [reassignTeacher, setReassignTeacher] = useState('');
+  const [reassignUntil, setReassignUntil] = useState('');
+  const [reassignPreview, setReassignPreview] = useState<any>(null);
+  const [reassignBusy, setReassignBusy] = useState(false);
   const [mergeModal, setMergeModal] = useState(false);
   const [mergePrimary, setMergePrimary] = useState<string>('');
   const [mergePlan, setMergePlan] = useState<any>(null);
@@ -1498,6 +1503,12 @@ export default function AddCourseScreen() {
                   </TouchableOpacity>
                 )}
                 {canEdit && (
+                  <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); setReassignCourse(c); setReassignTeacher(''); setReassignUntil(''); setReassignPreview(null); }} testID={`reassign-history-btn-${c.id}`}>
+                    <Ionicons name="time-outline" size={18} color="#00838f" />
+                    <Text style={styles.menuText}>استرجاع إسناد المحاضرات</Text>
+                  </TouchableOpacity>
+                )}
+                {canEdit && (
                   <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); handleEdit(c); }}>
                     <Ionicons name="pencil-outline" size={18} color="#ff9800" />
                     <Text style={styles.menuText}>تعديل</Text>
@@ -1516,6 +1527,63 @@ export default function AddCourseScreen() {
       })()}
 
       {/* قائمة "المزيد" - أدوات إضافية */}
+      {reassignCourse && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setReassignCourse(null)}>
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setReassignCourse(null)} />
+            <View style={[styles.menuModalCard, { maxWidth: 440, padding: 16 }]} testID="reassign-history-modal">
+              <Text style={[styles.menuModalTitle, { marginBottom: 4 }]}>🧾 استرجاع إسناد المحاضرات</Text>
+              <Text style={{ fontSize: 12, color: '#5b6678', textAlign: 'right', lineHeight: 19, marginBottom: 10 }}>
+                يختم محاضرات «{reassignCourse.name}» السابقة باسم المعلم المختار لتعود إلى نصابه — يُستخدم عند تغيير معلم المقرر بعد أن نفّذ محاضرات.
+              </Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>المعلم (السابق) صاحب الساعات</Text>
+              <View style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, marginBottom: 10, overflow: 'hidden' }}>
+                <Picker selectedValue={reassignTeacher} onValueChange={(v) => { setReassignTeacher(String(v)); setReassignPreview(null); }} style={{ height: 42 }} testID="reassign-teacher-picker">
+                  <Picker.Item label="— اختر المعلم —" value="" />
+                  {teachers.map((t: any) => <Picker.Item key={t.id} label={t.full_name} value={t.id} />)}
+                </Picker>
+              </View>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>حتى تاريخ (آخر يوم درّس فيه — YYYY-MM-DD، فارغ = اليوم)</Text>
+              <TextInput
+                value={reassignUntil}
+                onChangeText={(t) => { setReassignUntil(t); setReassignPreview(null); }}
+                placeholder="2026-08-01"
+                style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13, marginBottom: 10 }}
+                testID="reassign-until-input"
+              />
+              {reassignPreview && (
+                <View style={{ backgroundColor: '#e0f7fa', borderRadius: 8, padding: 10, marginBottom: 10 }} testID="reassign-preview-box">
+                  <Text style={{ fontSize: 12.5, color: '#006064', textAlign: 'right', lineHeight: 20 }}>
+                    سيُختم <Text style={{ fontWeight: '800' }}>{reassignPreview.will_reassign}</Text> محاضرة (منها {reassignPreview.executed_among_them} منفذة) باسم {reassignPreview.teacher_name} حتى {reassignPreview.until_date}
+                  </Text>
+                </View>
+              )}
+              <View style={{ flexDirection: 'row-reverse', gap: 8 }}>
+                <TouchableOpacity
+                  disabled={!reassignTeacher || reassignBusy}
+                  onPress={async () => {
+                    setReassignBusy(true);
+                    try {
+                      const res = await api.post('/lectures/reassign-history', { course_id: reassignCourse.id, teacher_id: reassignTeacher, until_date: reassignUntil || undefined, dry_run: !reassignPreview });
+                      if (!reassignPreview) setReassignPreview(res.data);
+                      else { Alert.alert('تم', res.data?.message || 'تم الاسترجاع'); setReassignCourse(null); }
+                    } catch (e: any) { Alert.alert('خطأ', e?.response?.data?.detail || 'فشل التنفيذ'); }
+                    finally { setReassignBusy(false); }
+                  }}
+                  style={{ flex: 1, backgroundColor: reassignPreview ? '#00838f' : '#455a64', borderRadius: 8, padding: 12, alignItems: 'center', opacity: !reassignTeacher || reassignBusy ? 0.6 : 1 }}
+                  testID="reassign-confirm-btn"
+                >
+                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>{reassignBusy ? '...' : reassignPreview ? '✅ تنفيذ الختم' : '👁️ معاينة أولاً'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setReassignCourse(null)} style={{ flex: 0.5, borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 12, alignItems: 'center' }}>
+                  <Text style={{ color: '#555', fontWeight: '600', fontSize: 13 }}>إلغاء</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {openMenuId === '__more__' && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setOpenMenuId(null)}>
           <View style={styles.modalOverlay}>

@@ -6948,6 +6948,44 @@ class CourseUpdate(BaseModel):
     credit_hours: Optional[int] = None
     practical_hours: Optional[int] = None  # 🧪 منها ساعات عملية
 
+class ReassignHistoryRequest(BaseModel):
+    course_id: str
+    teacher_id: str
+    until_date: Optional[str] = None
+    dry_run: bool = True
+
+
+@api_router.post("/lectures/reassign-history")
+async def reassign_lecture_history(data: ReassignHistoryRequest, current_user: dict = Depends(get_current_user)):
+    """🧾 ختم محاضرات مقرر بأثر رجعي لمعلم (استرجاع نصاب معلم سابق بعد تغيير الإسناد)."""
+    if current_user["role"] in (UserRole.TEACHER, UserRole.STUDENT):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    course = await db.courses.find_one({"_id": ObjectId(data.course_id)})
+    if not course:
+        raise HTTPException(status_code=404, detail="المقرر غير موجود")
+    teacher = await db.teachers.find_one({"_id": ObjectId(data.teacher_id)})
+    if not teacher:
+        raise HTTPException(status_code=404, detail="المعلم غير موجود")
+    until = (data.until_date or "").strip() or get_yemen_time().strftime("%Y-%m-%d")
+    q = {
+        "course_id": data.course_id,
+        "date": {"$lte": until},
+        "teacher_id": {"$ne": data.teacher_id},
+        "is_cancelled": {"$ne": True},
+        "status": {"$ne": LectureStatus.CANCELLED},
+    }
+    total = await db.lectures.count_documents(q)
+    executed = await db.lectures.count_documents({**q, "status": LectureStatus.COMPLETED})
+    if data.dry_run:
+        return {"dry_run": True, "course_name": course.get("name", ""), "teacher_name": teacher.get("full_name", ""),
+                "until_date": until, "will_reassign": total, "executed_among_them": executed}
+    r = await db.lectures.update_many(q, {"$set": {"teacher_id": data.teacher_id}})
+    await log_activity(current_user, "reassign_lecture_history", "course", data.course_id, course.get("name", ""),
+                       {"teacher": teacher.get("full_name", ""), "until": until, "count": r.modified_count})
+    return {"dry_run": False, "reassigned": r.modified_count,
+            "message": f"تم ختم {r.modified_count} محاضرة (حتى {until}) باسم {teacher.get('full_name', '')} — عادت لنصابه"}
+
+
 @api_router.put("/courses/{course_id}")
 async def update_course(course_id: str, data: CourseUpdate, current_user: dict = Depends(get_current_user)):
     if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_courses") and not has_permission(current_user, "edit_course"):
