@@ -160,6 +160,16 @@ async def _card_payload(db, student: dict, base_url: str) -> dict:
         "photo_upload_used": bool(student.get("photo_upload_used")),
         "photo_upload_allowed": bool(student.get("photo_upload_allowed")),
         "can_upload_photo": (not student.get("photo_upload_used")) or bool(student.get("photo_upload_allowed")),
+        "photo_guidelines": {
+            "title": "📸 صورتك على بطاقتك",
+            "lines": [
+                "صورتك تعبّر عن شخصيتك وستُطبع على بطاقتك الجامعية الرسمية",
+                "استخدم صورة شخصية واضحة بمقاس 4×6 (عمودية)",
+                "الخلفية بيضاء أو فاتحة موحّدة",
+                "وجه واضح بمواجهة الكاميرا — بدون فلاتر أو نظارة شمسية",
+            ],
+            "confirm_text": "فهمت، اختيار الصورة",
+        },
         "custom_bg_base64": settings.get("custom_bg_base64", ""),
         "custom_layout": settings.get("custom_layout") or {},
         "custom_orientation": settings.get("custom_orientation", "portrait"),
