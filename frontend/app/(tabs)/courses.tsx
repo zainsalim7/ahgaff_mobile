@@ -121,6 +121,7 @@ export default function AddCourseScreen() {
   const [reassignUntil, setReassignUntil] = useState('');
   const [reassignPreview, setReassignPreview] = useState<any>(null);
   const [reassignBusy, setReassignBusy] = useState(false);
+  const [reassignSearch, setReassignSearch] = useState('');
   const [mergeModal, setMergeModal] = useState(false);
   const [mergePrimary, setMergePrimary] = useState<string>('');
   const [mergePlan, setMergePlan] = useState<any>(null);
@@ -1503,7 +1504,7 @@ export default function AddCourseScreen() {
                   </TouchableOpacity>
                 )}
                 {canEdit && (
-                  <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); setReassignCourse(c); setReassignTeacher(''); setReassignUntil(''); setReassignPreview(null); }} testID={`reassign-history-btn-${c.id}`}>
+                  <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); setReassignCourse(c); setReassignTeacher(''); setReassignUntil(''); setReassignPreview(null); setReassignSearch(''); }} testID={`reassign-history-btn-${c.id}`}>
                     <Ionicons name="time-outline" size={18} color="#00838f" />
                     <Text style={styles.menuText}>استرجاع إسناد المحاضرات</Text>
                   </TouchableOpacity>
@@ -1536,21 +1537,40 @@ export default function AddCourseScreen() {
               <Text style={{ fontSize: 12, color: '#5b6678', textAlign: 'right', lineHeight: 19, marginBottom: 10 }}>
                 يختم محاضرات «{reassignCourse.name}» السابقة باسم المعلم المختار لتعود إلى نصابه — يُستخدم عند تغيير معلم المقرر بعد أن نفّذ محاضرات.
               </Text>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>المعلم (السابق) صاحب الساعات</Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>المعلم (السابق) صاحب الساعات — ابحث بالاسم</Text>
+              <TextInput
+                value={reassignSearch}
+                onChangeText={(t) => { setReassignSearch(t); setReassignPreview(null); }}
+                placeholder="🔍 اكتب جزءاً من اسم المعلم..."
+                style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13, marginBottom: 6 }}
+                testID="reassign-teacher-search"
+              />
               <View style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, marginBottom: 10, overflow: 'hidden' }}>
                 <Picker selectedValue={reassignTeacher} onValueChange={(v) => { setReassignTeacher(String(v)); setReassignPreview(null); }} style={{ height: 42 }} testID="reassign-teacher-picker">
                   <Picker.Item label="— اختر المعلم —" value="" />
-                  {teachers.map((t: any) => <Picker.Item key={t.id} label={t.full_name} value={t.id} />)}
+                  {teachers
+                    .filter((t: any) => !reassignSearch.trim() || (t.full_name || '').includes(reassignSearch.trim()))
+                    .map((t: any) => <Picker.Item key={t.id} label={t.full_name} value={t.id} />)}
                 </Picker>
               </View>
-              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>حتى تاريخ (آخر يوم درّس فيه — YYYY-MM-DD، فارغ = اليوم)</Text>
-              <TextInput
-                value={reassignUntil}
-                onChangeText={(t) => { setReassignUntil(t); setReassignPreview(null); }}
-                placeholder="2026-08-01"
-                style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13, marginBottom: 10 }}
-                testID="reassign-until-input"
-              />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>حتى تاريخ (آخر يوم درّس فيه)</Text>
+              {Platform.OS === 'web' ? (
+                <input
+                  type="date"
+                  value={reassignUntil}
+                  onChange={(e: any) => { setReassignUntil(e.target.value); setReassignPreview(null); }}
+                  data-testid="reassign-until-input"
+                  style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #dde3ec', borderRadius: 8, padding: 10, fontSize: 13, marginBottom: 10, direction: 'ltr' }}
+                />
+              ) : (
+                <TextInput
+                  value={reassignUntil}
+                  onChangeText={(t) => { setReassignUntil(t); setReassignPreview(null); }}
+                  placeholder="2026-08-01"
+                  style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13, marginBottom: 10 }}
+                  testID="reassign-until-input"
+                />
+              )}
               {reassignPreview && (
                 <View style={{ backgroundColor: '#e0f7fa', borderRadius: 8, padding: 10, marginBottom: 10 }} testID="reassign-preview-box">
                   <Text style={{ fontSize: 12.5, color: '#006064', textAlign: 'right', lineHeight: 20 }}>
