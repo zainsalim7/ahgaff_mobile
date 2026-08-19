@@ -776,6 +776,12 @@ export default function AddCourseScreen() {
     const teacherName = item.teacher_name || getTeacherName(item.teacher_id);
     const studentsCount = item.students_count ?? 0;
     const lecturesCount = (item as any).lectures_count ?? 0;
+    const sLinks = ((item as any).shared_links || []) as any[];
+    const hasLocFilter = Boolean((filterDept && filterDept !== 'all') || filterLevel || filterSection);
+    const primaryMatches = (!filterDept || filterDept === 'all' || item.department_id === filterDept)
+      && (!filterLevel || String(item.level) === filterLevel)
+      && (!filterSection || (item.section || '') === filterSection);
+    const sharedHere = Boolean((hasLocFilter && !primaryMatches && sLinks.length > 0) || (item as any).shared_here);
     return (
       <View dataSet={{ responsive: "table-row" }} style={[styles.tRow, index % 2 === 1 && styles.tRowAlt, selectedIds.has(item.id) && styles.tRowSelected]}>
         <TouchableOpacity
@@ -810,7 +816,19 @@ export default function AddCourseScreen() {
                   <Text style={{ fontSize: 8.5, color: '#fff', fontWeight: '800' }}>🧪 {(item as any).practical_hours}ع</Text>
                 </View>
               )}
-              {(((item as any).shared_here) || (((item as any).shared_links || []).length > 0)) && (
+              {sharedHere ? (
+                <TouchableOpacity
+                  style={{ backgroundColor: '#f3e5f5', borderWidth: 1, borderColor: '#ce93d8', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
+                  testID={`course-shared-origin-badge-${item.id}`}
+                  onPress={async () => {
+                    setSharedDetailCourse(item); setSharedDetailData(null);
+                    try { const r = await api.get(`/courses/${item.id}/shared-details`); setSharedDetailData(r.data); }
+                    catch { setSharedDetailData({ error: true }); }
+                  }}
+                >
+                  <Text style={{ fontSize: 8.5, color: '#6a1b9a', fontWeight: '800' }}>🔗 مشترك — الأساس: {getDepartmentName(item.department_id)} / مستوى {item.level}{item.section ? ` / شعبة ${item.section}` : ''}</Text>
+                </TouchableOpacity>
+              ) : (sLinks.length > 0) && (
                 <TouchableOpacity
                   style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
                   testID={`course-shared-badge-${item.id}`}
@@ -1235,7 +1253,12 @@ export default function AddCourseScreen() {
                   const sharedOk = links.some((l: any) => String(l.level) === filterLevel && (!filterDept || filterDept === 'all' || l.department_id === filterDept));
                   if (!nativeOk && !sharedOk) return false;
                 }
-                if (filterSection && (c.section || '') !== filterSection) return false;
+                if (filterSection) {
+                  const links = ((c as any).shared_links || []) as any[];
+                  const nativeOk = (c.section || '') === filterSection;
+                  const sharedOk = links.some((l: any) => (l.section || '') === filterSection && (!filterDept || filterDept === 'all' || l.department_id === filterDept) && (!filterLevel || String(l.level) === filterLevel));
+                  if (!nativeOk && !sharedOk) return false;
+                }
                 return true;
               });
               // 🔤 فرز ديناميكي
@@ -1357,7 +1380,7 @@ export default function AddCourseScreen() {
                             style={styles.dropdownInner}
                           >
                             <Picker.Item label="الكل" value="" />
-                            {Array.from(new Set(courses.map(c => c.section).filter(Boolean))).sort().map(s => (
+                            {Array.from(new Set(courses.flatMap(c => [c.section, ...((((c as any).shared_links || []) as any[]).map((l: any) => l.section))]).filter(Boolean))).sort().map(s => (
                               <Picker.Item key={s} label={s} value={s} />
                             ))}
                           </Picker>

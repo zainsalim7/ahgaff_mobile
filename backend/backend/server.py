@@ -5857,6 +5857,9 @@ async def get_courses(
         else:
             _shared = {"shared_links.department_id": _dep}
         query["$or"] = [_own, _shared]
+    elif "level" in query and "$or" not in query:
+        _lv = query.pop("level")
+        query["$or"] = [{"level": _lv}, {"shared_links": {"$elemMatch": {"level": _lv}}}]
     courses = await db.courses.find(query).to_list(None)
     
     # جلب عدد الطلاب لكل مقرر دفعة واحدة (فقط إذا مطلوب)

@@ -120,6 +120,22 @@ export default function WeeklySchedulePage() {
   const [mergeDeptLevels, setMergeDeptLevels] = useState<number[]>([]);
   const [addSlotFreeRooms, setAddSlotFreeRooms] = useState<any[] | null>(null);
   const [courses, setCourses] = useState<any[]>([]);
+  const [sectionOptions, setSectionOptions] = useState<string[]>([]);
+
+  // 🔤 تحميل الشعب المتاحة (تشمل شعب المقررات المشتركة)
+  useEffect(() => {
+    if (viewMode !== 'section' || !selectedDept) { setSectionOptions([]); setSelectedSection(''); return; }
+    (async () => {
+      try {
+        const params: any = { department_id: selectedDept };
+        if (selectedLevel) params.level = parseInt(selectedLevel);
+        const r = await api.get('/weekly-schedule/sections', { params });
+        const secs: string[] = r.data.sections || [];
+        setSectionOptions(secs);
+        setSelectedSection(prev => (secs.includes(prev) ? prev : ''));
+      } catch { setSectionOptions([]); }
+    })();
+  }, [viewMode, selectedDept, selectedLevel]);
 
   // Load initial data
   useEffect(() => {
@@ -794,6 +810,15 @@ export default function WeeklySchedulePage() {
                         </Picker>
                       </View>
                     </View>
+                    <View style={{ flex: 0.5, minWidth: 84 }}>
+                      <Text style={st.label}>الشعبة</Text>
+                      <View style={st.pickerWrap}>
+                        <Picker selectedValue={selectedSection} onValueChange={setSelectedSection} style={{ height: 34, fontSize: 13 }} testID="section-filter-picker">
+                          <Picker.Item label="الكل" value="" />
+                          {sectionOptions.map(s => <Picker.Item key={s} label={`شعبة ${s}`} value={s} />)}
+                        </Picker>
+                      </View>
+                    </View>
                   </>
                 )}
 
@@ -1220,8 +1245,13 @@ export default function WeeklySchedulePage() {
                                     {(item.slot_type === 'practical') && (
                                       <span data-testid={`practical-badge-${item.id}`} style={{ fontSize: 9, color: '#fff', fontWeight: 800, backgroundColor: '#00695c', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🧪 عملي</span>
                                     )}
-                                    {(item.merged_with?.length > 0 || item.merge_group_id) && (
+                                    {!item.shared_here && (item.merged_with?.length > 0 || item.merge_group_id) && (
                                       <span data-testid={`shared-slot-badge-${item.id}`} style={{ fontSize: 9, color: '#00695c', fontWeight: 800, backgroundColor: '#e0f2f1', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🔗 مشترك</span>
+                                    )}
+                                    {item.shared_here && item.shared_origin && (
+                                      <span data-testid={`shared-origin-badge-${item.id}`} style={{ fontSize: 9, color: '#6a1b9a', fontWeight: 800, backgroundColor: '#f3e5f5', border: '1px solid #ce93d8', borderRadius: 4, padding: '1px 4px', marginRight: 4, display: 'inline-block' }}>
+                                        🔗 مشترك — الأساس: {item.shared_origin.department_name || 'قسم آخر'} / مستوى {item.shared_origin.level}{item.shared_origin.section ? ` / شعبة ${item.shared_origin.section}` : ''}
+                                      </span>
                                     )}
                                   </div>
                                   <div style={{ fontSize: 10, color: '#666', textAlign: 'right' }}>{item.course_code}</div>

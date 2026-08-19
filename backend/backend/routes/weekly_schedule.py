@@ -771,6 +771,36 @@ async def update_teacher_preferences(
 
 # ===== خانات الجدول =====
 
+@router.get("/weekly-schedule/sections")
+async def get_schedule_sections(
+    department_id: str,
+    level: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """🔤 الشعب المتاحة في جدول قسم/مستوى (من الخانات + روابط المقررات المشتركة)"""
+    db = get_db()
+    q: dict = {"department_id": department_id}
+    if level:
+        q["level"] = level
+    secs = {(s or "").strip() for s in await db.weekly_schedule.distinct("section", q)}
+    link_match: dict = {"department_id": department_id}
+    if level:
+        link_match["level"] = level
+    own_match: dict = {"department_id": department_id}
+    if level:
+        own_match["level"] = level
+    async for c in db.courses.find(
+        {"is_active": True, "$or": [own_match, {"shared_links": {"$elemMatch": link_match}}]},
+        {"section": 1, "level": 1, "department_id": 1, "shared_links": 1},
+    ):
+        if c.get("department_id") == department_id and (not level or c.get("level") == level):
+            secs.add((c.get("section") or "").strip())
+        for l in (c.get("shared_links") or []):
+            if l.get("department_id") == department_id and (not level or l.get("level") == level):
+                secs.add((l.get("section") or "").strip())
+    return {"sections": sorted(s for s in secs if s)}
+
+
 @router.get("/weekly-schedule")
 async def get_weekly_schedule(
     faculty_id: Optional[str] = None,
@@ -804,6 +834,36 @@ async def get_weekly_schedule(
 
     slots = await db.weekly_schedule.find(query).to_list(2000)
 
+    # 🔗 المقررات المشتركة: عند الفلترة بموقع محدد، أضف محاضرات المقررات
+    # المرتبطة بهذا الموقع عبر shared_links (موقعها الأساسي في مكان آخر)
+    if department_id or level or section:
+        link_match: dict = {}
+        if department_id:
+            link_match["department_id"] = department_id
+        if level:
+            link_match["level"] = level
+        if section:
+            link_match["section"] = section
+        shared_cids = [str(c["_id"]) async for c in db.courses.find(
+            {"is_active": True, "shared_links": {"$elemMatch": link_match}}, {"_id": 1})]
+        if course_id:
+            shared_cids = [c for c in shared_cids if c == course_id]
+        if shared_cids:
+            extra_q: dict = {"course_id": {"$in": shared_cids}}
+            for k, v in (("semester_id", semester_id), ("faculty_id", faculty_id),
+                         ("teacher_id", teacher_id), ("room_id", room_id)):
+                if v:
+                    extra_q[k] = v
+            existing_ids = {s["_id"] for s in slots}
+            existing_keys = {(s.get("course_id"), s.get("day"), s.get("slot_number")) for s in slots}
+            async for s in db.weekly_schedule.find(extra_q):
+                key = (s.get("course_id"), s.get("day"), s.get("slot_number"))
+                if s["_id"] in existing_ids or key in existing_keys:
+                    continue
+                s["_shared_here"] = True
+                existing_keys.add(key)
+                slots.append(s)
+
     # Batch lookup
     course_ids = list({s["course_id"] for s in slots if s.get("course_id")})
     teacher_ids = list({s["teacher_id"] for s in slots if s.get("teacher_id")})
@@ -823,6 +883,9 @@ async def get_weekly_schedule(
         for cid, info in (await archived_courses_info(db, _missing_cids)).items():
             courses_map[cid] = {"name": info.get("name", ""), "code": info.get("code", ""),
                                 "teacher_id": info.get("teacher_id"), "_archived": True}
+
+    # أقسام المواقع الأساسية للمقررات (لشارة الأساس)
+    dept_ids = list(set(dept_ids) | {str(c.get("department_id")) for c in courses_map.values() if c.get("department_id")})
 
     teachers_map = {}
     if teacher_ids:
@@ -882,6 +945,17 @@ async def get_weekly_schedule(
         teacher = teachers_map.get(s.get("teacher_id", ""), {})
         room = rooms_map.get(s.get("room_id", ""), {})
         dept = depts_map.get(s.get("department_id", ""), {})
+        # 🔗 شارة الأساس: الخانة تعرض في موقع ثانوي (موقعها ≠ الموقع الأساسي للمقرر)
+        _prim_dept = str(course.get("department_id") or "")
+        _is_shared_here = bool(
+            (department_id or level or section)
+            and _prim_dept
+            and (
+                s.get("_shared_here")
+                or (_prim_dept, course.get("level"), (course.get("section") or "").strip())
+                != (s.get("department_id", ""), s.get("level"), (s.get("section", "") or "").strip())
+            )
+        )
         result.append({
             "id": str(s["_id"]),
             "faculty_id": s.get("faculty_id", ""),
@@ -903,6 +977,13 @@ async def get_weekly_schedule(
             "computed_end_time": s.get("computed_end_time"),
             "merge_group_id": s.get("merge_group_id", ""),
             "merged_with": _merge_labels(s),
+            "shared_here": _is_shared_here,
+            "shared_origin": ({
+                "department_id": _prim_dept,
+                "department_name": depts_map.get(_prim_dept, {}).get("name", ""),
+                "level": course.get("level"),
+                "section": (course.get("section") or "").strip(),
+            } if _is_shared_here else None),
         })
     return result
 
