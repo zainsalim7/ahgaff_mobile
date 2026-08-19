@@ -611,8 +611,18 @@ async def get_teacher_workload_report(
     for teacher in teachers:
         tid = str(teacher["_id"])
         
-        # جلب المقررات
+        # جلب المقررات الحالية + مقررات سابقة نفّذ فيها محاضرات (سجل lecture.teacher_id)
         courses = await db.courses.find({"teacher_id": tid, "is_active": True}).to_list(50)
+        _cur_ids = {str(c["_id"]) for c in courses}
+        for _hc in await db.lectures.distinct("course_id", {"teacher_id": tid}):
+            if _hc not in _cur_ids:
+                try:
+                    _cdoc = await db.courses.find_one({"_id": ObjectId(_hc)})
+                except Exception:
+                    _cdoc = None
+                if _cdoc:
+                    _cdoc["_hist_only"] = True
+                    courses.append(_cdoc)
         
         total_scheduled_hours = 0
         total_actual_hours = 0
@@ -622,10 +632,13 @@ async def get_teacher_workload_report(
             cid = str(course["_id"])
             
             # المحاضرات المجدولة في الفترة (فقط المنعقدة والمجدولة - بدون الملغاة وغياب الأستاذ)
+            # 🧾 الإسناد الفعلي: المختومة لهذا المعلم + غير المختومة على مقرره الحالي فقط
+            _attr = [{"teacher_id": tid}] if course.get("_hist_only") else [{"teacher_id": tid}, {"teacher_id": None}]
             scheduled_lectures = await db.lectures.find({
                 "course_id": cid,
                 "date": {"$gte": start, "$lte": end},
-                "status": {"$in": ACTIVE_LECTURE_STATUSES}
+                "status": {"$in": ACTIVE_LECTURE_STATUSES},
+                "$or": _attr
             }).to_list(500)
             
             # المحاضرات التي تم تسجيل حضور فيها (المنفذة فعلياً)
