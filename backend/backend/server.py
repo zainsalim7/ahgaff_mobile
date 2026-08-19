@@ -6957,9 +6957,9 @@ class ReassignHistoryRequest(BaseModel):
 
 @api_router.post("/lectures/reassign-history")
 async def reassign_lecture_history(data: ReassignHistoryRequest, current_user: dict = Depends(get_current_user)):
-    """🧾 ختم محاضرات مقرر بأثر رجعي لمعلم (استرجاع نصاب معلم سابق بعد تغيير الإسناد)."""
-    if current_user["role"] in (UserRole.TEACHER, UserRole.STUDENT):
-        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    """🧾 ختم محاضرات مقرر بأثر رجعي لمعلم (استرجاع نصاب معلم سابق بعد تغيير الإسناد) — للأدمن فقط."""
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="هذه الأداة متاحة للإدارة العليا فقط")
     course = await db.courses.find_one({"_id": ObjectId(data.course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="المقرر غير موجود")

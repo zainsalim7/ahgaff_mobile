@@ -1503,7 +1503,7 @@ export default function AddCourseScreen() {
                     <Text style={styles.menuText}>الخطة الدراسية</Text>
                   </TouchableOpacity>
                 )}
-                {canEdit && (
+                {authUser?.role === 'admin' && (
                   <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); setReassignCourse(c); setReassignTeacher(''); setReassignUntil(''); setReassignPreview(null); setReassignSearch(''); }} testID={`reassign-history-btn-${c.id}`}>
                     <Ionicons name="time-outline" size={18} color="#00838f" />
                     <Text style={styles.menuText}>استرجاع إسناد المحاضرات</Text>
