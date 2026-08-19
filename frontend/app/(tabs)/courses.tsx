@@ -1566,8 +1566,15 @@ export default function AddCourseScreen() {
                     try {
                       const res = await api.post('/lectures/reassign-history', { course_id: reassignCourse.id, teacher_id: reassignTeacher, until_date: reassignUntil || undefined, dry_run: !reassignPreview });
                       if (!reassignPreview) setReassignPreview(res.data);
-                      else { Alert.alert('تم', res.data?.message || 'تم الاسترجاع'); setReassignCourse(null); }
-                    } catch (e: any) { Alert.alert('خطأ', e?.response?.data?.detail || 'فشل التنفيذ'); }
+                      else {
+                        const m = res.data?.message || 'تم الاسترجاع';
+                        if (Platform.OS === 'web') window.alert(m); else Alert.alert('تم', m);
+                        setReassignCourse(null);
+                      }
+                    } catch (e: any) {
+                      const m = e?.response?.data?.detail || 'فشل التنفيذ';
+                      if (Platform.OS === 'web') window.alert(m); else Alert.alert('خطأ', m);
+                    }
                     finally { setReassignBusy(false); }
                   }}
                   style={{ flex: 1, backgroundColor: reassignPreview ? '#00838f' : '#455a64', borderRadius: 8, padding: 12, alignItems: 'center', opacity: !reassignTeacher || reassignBusy ? 0.6 : 1 }}
