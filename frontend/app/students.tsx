@@ -211,6 +211,7 @@ export default function StudentsScreen() {
   // 🆕 إجراءات المقررات: نسخ / نقل / إلغاء تسجيل
   const [enrollActionMode, setEnrollActionMode] = useState<null | 'copy' | 'move' | 'unenroll'>(null);
   const [enrollActionCourses, setEnrollActionCourses] = useState<any[]>([]);
+  const [enrollActionEnrolledCourses, setEnrollActionEnrolledCourses] = useState<any[]>([]);
   const [enrollActionSourceId, setEnrollActionSourceId] = useState<string>('');
   const [enrollActionTargetIds, setEnrollActionTargetIds] = useState<string[]>([]);
   const [enrollActionSearch, setEnrollActionSearch] = useState('');
@@ -636,6 +637,14 @@ export default function StudentsScreen() {
       const list = (res.data || []).filter((c: any) => c.is_active !== false);
       setEnrollActionCourses(list);
     } catch { setEnrollActionCourses([]); }
+    // 📚 للإلغاء والنقل: نعرض فقط المقررات المسجّل فيها الطلاب المحددون فعلياً
+    setEnrollActionEnrolledCourses([]);
+    if (mode === 'unenroll' || mode === 'move') {
+      try {
+        const r = await api.post('/enrollments/of-students', { student_ids: Array.from(selectedIds) });
+        setEnrollActionEnrolledCourses(r.data || []);
+      } catch { setEnrollActionEnrolledCourses([]); }
+    }
     setEnrollActionSourceId('');
     setEnrollActionTargetIds([]);
     setEnrollActionSearch('');
@@ -2735,7 +2744,10 @@ export default function StudentsScreen() {
                 <>
                   <Text style={{ fontSize: 12, color: '#556', fontWeight: '600', textAlign: 'right', marginTop: 8 }}>المقرر المصدر (سيُحذف الطلاب منه):</Text>
                   <ScrollView style={{ maxHeight: 130, borderWidth: 1, borderColor: '#c0c8d4', borderRadius: 6, marginTop: 4 }}>
-                    {enrollActionCourses.map(c => (
+                    {enrollActionEnrolledCourses.length === 0 && (
+                      <Text style={{ fontSize: 11, color: '#889', textAlign: 'center', padding: 10 }}>الطلاب المحددون غير مسجلين في أي مقرر</Text>
+                    )}
+                    {enrollActionEnrolledCourses.map(c => (
                       <TouchableOpacity
                         key={'src-' + c.id}
                         style={{ padding: 8, backgroundColor: enrollActionSourceId === c.id ? '#fff3d6' : '#fff', borderBottomWidth: 1, borderBottomColor: '#eef1f6' }}
@@ -2763,7 +2775,10 @@ export default function StudentsScreen() {
                 data-testid="enroll-action-search"
               />
               <ScrollView style={{ maxHeight: 200, borderWidth: 1, borderColor: '#c0c8d4', borderRadius: 6, marginTop: 4 }}>
-                {enrollActionCourses
+                {enrollActionMode === 'unenroll' && enrollActionEnrolledCourses.length === 0 && (
+                  <Text style={{ fontSize: 11, color: '#889', textAlign: 'center', padding: 10 }} data-testid="no-enrolled-courses-msg">الطلاب المحددون غير مسجلين في أي مقرر</Text>
+                )}
+                {(enrollActionMode === 'unenroll' ? enrollActionEnrolledCourses : enrollActionCourses)
                   .filter(c => !enrollActionSearch || (c.name || '').includes(enrollActionSearch) || (c.code || '').toLowerCase().includes(enrollActionSearch.toLowerCase()))
                   .map(c => {
                     const isSelected = enrollActionTargetIds.includes(c.id);
@@ -2779,7 +2794,7 @@ export default function StudentsScreen() {
                         data-testid={`target-course-${c.id}`}
                       >
                         <Text style={{ fontSize: 12, textAlign: 'right', color: isSelected ? '#1565c0' : '#333' }}>
-                          {isSelected ? '✓ ' : '○ '}{c.name} ({c.code}) {c.section ? `- شعبة ${c.section}` : ''}
+                          {isSelected ? '✓ ' : '○ '}{c.name} ({c.code}) {c.section ? `- شعبة ${c.section}` : ''}{enrollActionMode === 'unenroll' && selectedIds.size > 1 ? ` — مسجل: ${c.enrolled_count}` : ''}
                         </Text>
                       </TouchableOpacity>
                     );

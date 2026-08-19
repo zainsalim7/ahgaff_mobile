@@ -6400,6 +6400,45 @@ async def bulk_copy_students(request: Request, current_user: dict = Depends(get_
         "details": results
     }
 
+@api_router.post("/enrollments/of-students")
+async def get_courses_of_students(request: Request, current_user: dict = Depends(get_current_user)):
+    """📚 المقررات المسجّل فيها مجموعة طلاب فعلياً (لمودالات إلغاء التسجيل/النقل)"""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_enrollments") and not has_permission(current_user, "add_enrollment"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    data = await request.json()
+    student_ids = data.get("student_ids", [])
+    if not student_ids:
+        return []
+    counts: dict = {}
+    async for row in db.enrollments.aggregate([
+        {"$match": {"student_id": {"$in": student_ids}}},
+        {"$group": {"_id": "$course_id", "count": {"$sum": 1}}},
+    ]):
+        if row.get("_id"):
+            counts[row["_id"]] = int(row.get("count") or 0)
+    if not counts:
+        return []
+    obj_ids = []
+    for cid in counts:
+        try:
+            obj_ids.append(ObjectId(cid))
+        except Exception:
+            pass
+    result = []
+    async for c in db.courses.find({"_id": {"$in": obj_ids}, "is_active": {"$ne": False}}):
+        cid = str(c["_id"])
+        result.append({
+            "id": cid,
+            "name": c.get("name", ""),
+            "code": c.get("code", ""),
+            "level": c.get("level"),
+            "section": c.get("section", ""),
+            "enrolled_count": counts.get(cid, 0),
+        })
+    result.sort(key=lambda x: x["name"])
+    return result
+
+
 @api_router.post("/enrollments/bulk-move")
 async def bulk_move_students(request: Request, current_user: dict = Depends(get_current_user)):
     """نقل طلاب من مقرر إلى آخر"""
