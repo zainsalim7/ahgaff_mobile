@@ -213,6 +213,7 @@ export default function ManageTeachersScreen() {
     try {
       if (editingTeacher) {
         await teachersAPI.update(editingTeacher.id, {
+          teacher_id: formData.teacher_id || undefined,
           full_name: formData.full_name,
           department_ids: formData.department_ids.length > 0 ? formData.department_ids : undefined,
           email: formData.email || undefined,
@@ -624,16 +625,20 @@ export default function ManageTeachersScreen() {
               {editingTeacher ? 'تعديل بيانات المعلم' : 'إضافة معلم جديد'}
             </Text>
 
-            <Text style={styles.label}>رقم الجوال *</Text>
+            <Text style={styles.label}>رقم الجوال (الرقم الوظيفي) *</Text>
             <TextInput
-              style={[styles.input, editingTeacher && styles.inputDisabled]}
+              style={styles.input}
               value={formData.teacher_id}
               onChangeText={(text) => setFormData({ ...formData, teacher_id: text.replace(/[^0-9+]/g, '') })}
               placeholder="أدخل رقم الجوال"
               keyboardType="phone-pad"
-              editable={!editingTeacher}
+              data-testid="teacher-id-input"
             />
-
+            {editingTeacher && formData.teacher_id !== getTeacherId(editingTeacher) ? (
+              <Text style={{ fontSize: 11, color: '#e65100', textAlign: 'right', marginTop: -6, marginBottom: 6 }}>
+                ⚠️ سيتغير اسم المستخدم لتسجيل الدخول إلى الرقم الجديد (كلمة المرور تبقى كما هي)
+              </Text>
+            ) : null}
             <Text style={styles.label}>الاسم الكامل *</Text>
             <TextInput
               style={styles.input}

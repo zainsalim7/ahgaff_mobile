@@ -4993,6 +4993,28 @@ async def update_teacher(teacher_id: str, request: Request, current_user: dict =
     data = TeacherUpdate(**{k: v for k, v in body.items() if k in TeacherUpdate.__fields__})
     
     update_data = {k: v for k, v in data.dict().items() if v is not None}
+
+    # 🔢 تغيير الرقم الوظيفي: فحص التكرار + تحديث اسم مستخدم حساب الدخول المرتبط
+    new_tid = (update_data.get("teacher_id") or "").strip()
+    old_tid = (teacher.get("teacher_id") or "").strip()
+    if new_tid and new_tid != old_tid:
+        dup = await db.teachers.find_one({"teacher_id": new_tid, "_id": {"$ne": ObjectId(teacher_id)}})
+        if dup:
+            raise HTTPException(status_code=400, detail=f"الرقم الوظيفي {new_tid} مستخدم بالفعل للمعلم: {dup.get('full_name', '')}")
+        dup_user = await db.users.find_one({"username": new_tid})
+        if dup_user and str(dup_user.get("_id")) != str(teacher.get("user_id") or ""):
+            raise HTTPException(status_code=400, detail=f"اسم المستخدم {new_tid} مستخدم بالفعل لحساب آخر")
+        if teacher.get("user_id"):
+            try:
+                await db.users.update_one({"_id": ObjectId(teacher["user_id"])}, {"$set": {"username": new_tid}})
+            except Exception:
+                pass
+        else:
+            await db.users.update_many({"username": old_tid, "role": "teacher"}, {"$set": {"username": new_tid}})
+        await log_activity(current_user, "change_teacher_id", "teacher", teacher_id,
+                           f"{teacher.get('full_name', '')}: {old_tid} ← {new_tid}")
+    elif "teacher_id" in update_data:
+        update_data.pop("teacher_id", None)
     
     # حفظ department_ids كمصفوفة في قاعدة البيانات
     if "department_ids" in body and isinstance(body["department_ids"], list):

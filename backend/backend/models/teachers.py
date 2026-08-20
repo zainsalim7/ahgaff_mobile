@@ -21,6 +21,7 @@ class TeacherCreate(TeacherBase):
     pass
 
 class TeacherUpdate(BaseModel):
+    teacher_id: Optional[str] = None
     full_name: Optional[str] = None
     department_id: Optional[str] = None
     email: Optional[str] = None
