@@ -846,6 +846,9 @@ async def get_weekly_schedule(
             link_match["section"] = section
         shared_cids = [str(c["_id"]) async for c in db.courses.find(
             {"is_active": True, "shared_links": {"$elemMatch": link_match}}, {"_id": 1})]
+        # 🛡️ تحصين: فقط المقررات التي لا تملك خانة فعلية في الموقع المفلتر (روابط يتيمة)
+        _present_cids = {s.get("course_id") for s in slots}
+        shared_cids = [c for c in shared_cids if c not in _present_cids]
         if course_id:
             shared_cids = [c for c in shared_cids if c == course_id]
         if shared_cids:
