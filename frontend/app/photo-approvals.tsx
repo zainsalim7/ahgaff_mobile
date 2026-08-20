@@ -13,6 +13,8 @@ export default function PhotoApprovalsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const token = useAuthStore.getState().token;
   const fileUrl = (path: string) => `${api.defaults.baseURL}/files/${path}?auth=${token}`;
@@ -43,6 +45,32 @@ export default function PhotoApprovalsScreen() {
     }
   };
 
+  const toggleSelect = (id: string) => {
+    setSelected(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  };
+
+  const bulkDecide = async (action: 'approve' | 'reject') => {
+    if (selected.size === 0) return;
+    const verb = action === 'approve' ? 'اعتماد' : 'رفض';
+    if (typeof window !== 'undefined' && !window.confirm(`${verb} ${selected.size} صورة دفعة واحدة؟`)) return;
+    setBusy('bulk');
+    try {
+      const r = await api.post('/photos/bulk-decision', { student_ids: Array.from(selected), action });
+      setMsg(r.data?.message || '');
+      setSelected(new Set());
+      setSelectMode(false);
+      fetchData();
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || 'فشل الإجراء الجماعي');
+    } finally {
+      setBusy('');
+    }
+  };
+
   if (loading) {
     return <SafeAreaView style={styles.container}><ActivityIndicator size="large" color="#00796b" style={{ marginTop: 60 }} /></SafeAreaView>;
   }
@@ -55,6 +83,44 @@ export default function PhotoApprovalsScreen() {
       >
         <Text style={styles.title}>🖼️ صور الطلاب المعلقة ({items.length})</Text>
         <Text style={styles.hint}>صور رفعها الطلاب من تطبيقهم — تظهر على البطاقة الرقمية بعد اعتمادها فقط.</Text>
+        {items.length > 0 && (
+          <View style={{ flexDirection: 'row-reverse', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            <TouchableOpacity
+              onPress={() => { setSelectMode(!selectMode); setSelected(new Set()); }}
+              style={[styles.topBtn, { backgroundColor: selectMode ? '#5b6678' : '#1565c0' }]}
+              data-testid="toggle-select-mode-btn"
+            >
+              <Text style={styles.btnText}>{selectMode ? 'إلغاء التحديد' : '☑️ تحديد'}</Text>
+            </TouchableOpacity>
+            {selectMode && (
+              <>
+                <TouchableOpacity
+                  onPress={() => setSelected(selected.size === items.length ? new Set() : new Set(items.map(s => s.id)))}
+                  style={[styles.topBtn, { backgroundColor: '#00695c' }]}
+                  data-testid="select-all-btn"
+                >
+                  <Text style={styles.btnText}>{selected.size === items.length ? 'إلغاء الكل' : `تحديد الكل (${items.length})`}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => bulkDecide('approve')}
+                  disabled={!!busy || selected.size === 0}
+                  style={[styles.topBtn, { backgroundColor: '#2e7d32', opacity: selected.size === 0 ? 0.5 : 1 }]}
+                  data-testid="bulk-approve-btn"
+                >
+                  <Text style={styles.btnText}>✅ اعتماد المحدد ({selected.size})</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => bulkDecide('reject')}
+                  disabled={!!busy || selected.size === 0}
+                  style={[styles.topBtn, { backgroundColor: '#c62828', opacity: selected.size === 0 ? 0.5 : 1 }]}
+                  data-testid="bulk-reject-btn"
+                >
+                  <Text style={styles.btnText}>❌ رفض المحدد ({selected.size})</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
         {!!msg && <Text style={styles.msg} data-testid="approvals-msg">{msg}</Text>}
         {items.length === 0 ? (
           <View style={styles.emptyBox}>
@@ -64,22 +130,35 @@ export default function PhotoApprovalsScreen() {
         ) : (
           <View style={styles.grid}>
             {items.map((s) => (
-              <View key={s.id} style={styles.cardBox} data-testid={`pending-photo-${s.id}`}>
+              <TouchableOpacity
+                key={s.id}
+                activeOpacity={selectMode ? 0.7 : 1}
+                onPress={() => selectMode && toggleSelect(s.id)}
+                style={[styles.cardBox, selectMode && selected.has(s.id) && styles.cardSelected]}
+                data-testid={`pending-photo-${s.id}`}
+              >
+                {selectMode && (
+                  <View style={[styles.checkCircle, selected.has(s.id) && styles.checkCircleOn]} data-testid={`photo-checkbox-${s.id}`}>
+                    {selected.has(s.id) && <Ionicons name="checkmark" size={15} color="#fff" />}
+                  </View>
+                )}
                 <Image source={{ uri: fileUrl(s.pending_photo_path) }} style={styles.photo} resizeMode="cover" />
                 <Text style={styles.name}>{s.full_name}</Text>
                 <Text style={styles.meta}>قيد: {s.student_id} · م{s.level}</Text>
-                <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 8 }}>
-                  <TouchableOpacity onPress={() => decide(s.id, 'approve')} disabled={!!busy} style={[styles.btn, { backgroundColor: '#2e7d32' }]} data-testid={`approve-btn-${s.id}`}>
-                    <Text style={styles.btnText}>اعتماد</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => decide(s.id, 'reject')} disabled={!!busy} style={[styles.btn, { backgroundColor: '#c62828' }]} data-testid={`reject-btn-${s.id}`}>
-                    <Text style={styles.btnText}>رفض</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => router.push(`/student-card?studentId=${s.id}`)} style={[styles.btn, { backgroundColor: '#1565c0' }]} data-testid={`view-card-btn-${s.id}`}>
-                    <Text style={styles.btnText}>البطاقة</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+                {!selectMode && (
+                  <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 8 }}>
+                    <TouchableOpacity onPress={() => decide(s.id, 'approve')} disabled={!!busy} style={[styles.btn, { backgroundColor: '#2e7d32' }]} data-testid={`approve-btn-${s.id}`}>
+                      <Text style={styles.btnText}>اعتماد</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => decide(s.id, 'reject')} disabled={!!busy} style={[styles.btn, { backgroundColor: '#c62828' }]} data-testid={`reject-btn-${s.id}`}>
+                      <Text style={styles.btnText}>رفض</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => router.push(`/student-card?studentId=${s.id}`)} style={[styles.btn, { backgroundColor: '#1565c0' }]} data-testid={`view-card-btn-${s.id}`}>
+                      <Text style={styles.btnText}>البطاقة</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </TouchableOpacity>
             ))}
           </View>
         )}
@@ -97,6 +176,10 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, color: '#8a95a8' },
   grid: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 10 },
   cardBox: { backgroundColor: '#fff', borderRadius: 12, padding: 10, width: 220, borderWidth: 1, borderColor: '#e6eaf2' },
+  cardSelected: { borderColor: '#1565c0', borderWidth: 2, backgroundColor: '#f0f7ff' },
+  checkCircle: { position: 'absolute', top: 14, right: 14, zIndex: 5, width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#fff', backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' },
+  checkCircleOn: { backgroundColor: '#1565c0', borderColor: '#1565c0' },
+  topBtn: { borderRadius: 7, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center' },
   photo: { width: '100%', height: 200, borderRadius: 8, backgroundColor: '#eef1f6' },
   name: { fontSize: 13.5, fontWeight: '800', color: '#1a2540', textAlign: 'right', marginTop: 8 },
   meta: { fontSize: 11.5, color: '#5b6678', textAlign: 'right', marginTop: 2 },

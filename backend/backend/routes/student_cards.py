@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Request
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from bson import ObjectId
@@ -334,6 +334,44 @@ async def reject_student_photo(student_id: str, current_user: dict = Depends(get
     if student.get("pending_photo_path"):
         await _notify_photo_decision(db, student, approved=False)
     return {"message": "تم رفض الصورة المعلقة"}
+
+
+@router.post("/photos/bulk-decision")
+async def bulk_photo_decision(request: Request, current_user: dict = Depends(get_current_user)):
+    """✅❌ اعتماد/رفض جماعي لصور الطلاب المعلقة"""
+    data = await request.json()
+    student_ids = data.get("student_ids") or []
+    action = data.get("action")
+    if action not in ("approve", "reject") or not student_ids:
+        raise HTTPException(status_code=400, detail="حدد الطلاب والإجراء")
+    db = get_db()
+    done, skipped = 0, 0
+    for sid in student_ids[:300]:
+        try:
+            student = await _student_or_404(db, sid)
+        except HTTPException:
+            skipped += 1
+            continue
+        fid, _, _ = await _resolve_faculty(db, student)
+        if not _can_manage(current_user, fid):
+            skipped += 1
+            continue
+        pending = student.get("pending_photo_path")
+        if action == "approve":
+            if not pending:
+                skipped += 1
+                continue
+            await db.students.update_one({"_id": student["_id"]}, {"$set": {"photo_path": pending}, "$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
+            await log_activity(current_user, "approve_student_photo", "student", str(student["_id"]), student.get("full_name", ""), {"bulk": True})
+            await _notify_photo_decision(db, student, approved=True)
+        else:
+            await db.students.update_one({"_id": student["_id"]}, {"$set": {"photo_upload_allowed": True}, "$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
+            await log_activity(current_user, "reject_student_photo", "student", str(student["_id"]), student.get("full_name", ""), {"bulk": True})
+            if pending:
+                await _notify_photo_decision(db, student, approved=False)
+        done += 1
+    verb = "اعتماد" if action == "approve" else "رفض"
+    return {"message": f"تم {verb} {done} صورة" + (f" (تخطي {skipped})" if skipped else ""), "done": done, "skipped": skipped}
 
 
 @router.post("/students/{student_id}/photo/allow-upload")
