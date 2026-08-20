@@ -818,17 +818,19 @@ export default function AddCourseScreen() {
                 </View>
               )}
               {sharedHere ? (
-                <TouchableOpacity
-                  style={{ backgroundColor: '#f3e5f5', borderWidth: 1, borderColor: '#ce93d8', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
-                  testID={`course-shared-origin-badge-${item.id}`}
-                  onPress={async () => {
-                    setSharedDetailCourse(item); setSharedDetailData(null);
-                    try { const r = await api.get(`/courses/${item.id}/shared-details`); setSharedDetailData(r.data); }
-                    catch { setSharedDetailData({ error: true }); }
-                  }}
-                >
-                  <Text style={{ fontSize: 8.5, color: '#6a1b9a', fontWeight: '800' }}>🔗 مشترك — الأساس: {getDepartmentName(item.department_id)} / مستوى {item.level}{item.section ? ` / شعبة ${item.section}` : ''}</Text>
-                </TouchableOpacity>
+                <span title={`الأساس: ${getDepartmentName(item.department_id)} / مستوى ${item.level}${item.section ? ` / شعبة ${item.section}` : ''}`}>
+                  <TouchableOpacity
+                    style={{ backgroundColor: '#f3e5f5', borderWidth: 1, borderColor: '#ce93d8', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
+                    testID={`course-shared-origin-badge-${item.id}`}
+                    onPress={async () => {
+                      setSharedDetailCourse(item); setSharedDetailData(null);
+                      try { const r = await api.get(`/courses/${item.id}/shared-details`); setSharedDetailData(r.data); }
+                      catch { setSharedDetailData({ error: true }); }
+                    }}
+                  >
+                    <Text style={{ fontSize: 8.5, color: '#6a1b9a', fontWeight: '800' }}>🔗 مشترك</Text>
+                  </TouchableOpacity>
+                </span>
               ) : (sLinks.length > 0 || mLinks.length > 0) && (
                 <TouchableOpacity
                   style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}

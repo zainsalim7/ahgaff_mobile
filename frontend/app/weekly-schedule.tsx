@@ -1249,8 +1249,8 @@ export default function WeeklySchedulePage() {
                                       <span data-testid={`shared-slot-badge-${item.id}`} style={{ fontSize: 9, color: '#00695c', fontWeight: 800, backgroundColor: '#e0f2f1', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🔗 مشترك</span>
                                     )}
                                     {item.shared_here && item.shared_origin && (
-                                      <span data-testid={`shared-origin-badge-${item.id}`} style={{ fontSize: 9, color: '#6a1b9a', fontWeight: 800, backgroundColor: '#f3e5f5', border: '1px solid #ce93d8', borderRadius: 4, padding: '1px 4px', marginRight: 4, display: 'inline-block' }}>
-                                        🔗 مشترك — الأساس: {item.shared_origin.department_name || 'قسم آخر'} / مستوى {item.shared_origin.level}{item.shared_origin.section ? ` / شعبة ${item.shared_origin.section}` : ''}
+                                      <span data-testid={`shared-origin-badge-${item.id}`} title={`الأساس: ${item.shared_origin.department_name || 'قسم آخر'} / مستوى ${item.shared_origin.level}${item.shared_origin.section ? ` / شعبة ${item.shared_origin.section}` : ''}`} style={{ fontSize: 9, color: '#6a1b9a', fontWeight: 800, backgroundColor: '#f3e5f5', border: '1px solid #ce93d8', borderRadius: 4, padding: '1px 4px', marginRight: 4, display: 'inline-block', cursor: 'help' }}>
+                                        🔗 مشترك
                                       </span>
                                     )}
                                   </div>
