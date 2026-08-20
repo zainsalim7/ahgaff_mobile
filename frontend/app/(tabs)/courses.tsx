@@ -777,6 +777,7 @@ export default function AddCourseScreen() {
     const studentsCount = item.students_count ?? 0;
     const lecturesCount = (item as any).lectures_count ?? 0;
     const sLinks = ((item as any).shared_links || []) as any[];
+    const mLinks = ((item as any).merge_shared_with || []) as any[];
     const hasLocFilter = Boolean((filterDept && filterDept !== 'all') || filterLevel || filterSection);
     const primaryMatches = (!filterDept || filterDept === 'all' || item.department_id === filterDept)
       && (!filterLevel || String(item.level) === filterLevel)
@@ -828,7 +829,7 @@ export default function AddCourseScreen() {
                 >
                   <Text style={{ fontSize: 8.5, color: '#6a1b9a', fontWeight: '800' }}>🔗 مشترك — الأساس: {getDepartmentName(item.department_id)} / مستوى {item.level}{item.section ? ` / شعبة ${item.section}` : ''}</Text>
                 </TouchableOpacity>
-              ) : (sLinks.length > 0) && (
+              ) : (sLinks.length > 0 || mLinks.length > 0) && (
                 <TouchableOpacity
                   style={{ backgroundColor: '#e0f2f1', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}
                   testID={`course-shared-badge-${item.id}`}
@@ -1823,10 +1824,10 @@ export default function AddCourseScreen() {
                       <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                         <Text style={{ fontSize: 13, fontWeight: '800', color: '#1a2540' }}>{g.department_name || '—'}</Text>
                         <Text style={{ fontSize: 11.5, color: '#5b6678' }}>المستوى {g.level}{g.section ? ` · شعبة ${g.section}` : ''}</Text>
-                        <View style={{ backgroundColor: g.is_native ? '#2e7d32' : '#00695c', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
-                          <Text style={{ fontSize: 9, color: '#fff', fontWeight: '800' }}>{g.is_native ? 'القسم الأصلي' : 'مشاركة'}</Text>
+                        <View style={{ backgroundColor: g.is_native ? '#2e7d32' : g.via_merge ? '#6a1b9a' : '#00695c', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
+                          <Text style={{ fontSize: 9, color: '#fff', fontWeight: '800' }}>{g.is_native ? 'القسم الأصلي' : g.via_merge ? 'مدمجة من العرض الشامل' : 'مشاركة'}</Text>
                         </View>
-                        {!g.is_native && (
+                        {!g.is_native && !g.via_merge && (
                           <TouchableOpacity
                             style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#ef9a9a', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 }}
                             testID={`unmerge-group-${gi}`}
@@ -1849,6 +1850,9 @@ export default function AddCourseScreen() {
                           </TouchableOpacity>
                         )}
                       </View>
+                      {g.via_merge && g.partner_course_name ? (
+                        <Text style={{ fontSize: 10.5, color: '#6a1b9a', textAlign: 'right', marginBottom: 4 }}>🔗 مدمجة مع مقرر: {g.partner_course_name}</Text>
+                      ) : null}
                       {(g.slots || []).map((s: any, si: number) => (
                         <Text key={si} style={{ fontSize: 11.5, color: '#37455c', textAlign: 'right', lineHeight: 20 }}>
                           • {s.day} — {s.slot_name || `الفترة ${s.slot_number}`}{s.start_time ? ` (${s.start_time}-${s.end_time})` : ''} · {s.room_name || 'بدون قاعة'} · {s.teacher_name || 'بدون أستاذ'}

@@ -1616,6 +1616,42 @@ async def get_course_shared_details(
             "teacher_name": s.get("teacher_name") or t_map.get(s.get("teacher_id", ""), ""),
         })
     day_order = {d: i for i, d in enumerate(["السبت", "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة"])}
+    # 🔗 شركاء الدمج من العرض الشامل (مقررات أخرى مدمجة مع محاضرات هذا المقرر)
+    gids = list({s.get("merge_group_id") for s in slots if s.get("merge_group_id")})
+    if gids:
+        partner_slots = await db.weekly_schedule.find({"merge_group_id": {"$in": gids}, "course_id": {"$ne": course_id}}).to_list(1000)
+        pc_names: dict = {}
+        for pcid in {ps.get("course_id") for ps in partner_slots if ps.get("course_id")}:
+            try:
+                pc = await db.courses.find_one({"_id": ObjectId(pcid)}, {"name": 1, "code": 1})
+                if pc:
+                    pc_names[pcid] = f"{pc.get('name', '')} ({pc.get('code', '')})"
+            except Exception:
+                pass
+        for ps in partner_slots:
+            key = (ps.get("department_id", ""), ps.get("level"), ps.get("section", "") or "")
+            if key in groups:
+                continue
+            g = groups.setdefault(key, {
+                "department_id": key[0],
+                "department_name": dep_names.get(key[0], ""),
+                "level": key[1],
+                "section": key[2],
+                "is_native": False,
+                "via_merge": True,
+                "partner_course_name": pc_names.get(ps.get("course_id", ""), ""),
+                "slots": [],
+            })
+            meta = slot_meta.get(ps.get("slot_number"), {})
+            g["slots"].append({
+                "day": ps.get("day", ""),
+                "slot_number": ps.get("slot_number"),
+                "slot_name": meta.get("name", ""),
+                "start_time": ps.get("computed_start_time") or meta.get("start_time", ""),
+                "end_time": ps.get("computed_end_time") or meta.get("end_time", ""),
+                "room_name": ps.get("room_name") or r_map.get(ps.get("room_id", ""), ""),
+                "teacher_name": ps.get("teacher_name") or t_map.get(ps.get("teacher_id", ""), ""),
+            })
     for g in groups.values():
         g["slots"].sort(key=lambda x: (day_order.get(x["day"], 9), x["slot_number"] or 0))
     orphan_links = []

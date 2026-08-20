@@ -5929,6 +5929,27 @@ async def get_courses(
         except Exception:
             pass
 
+    # 🔗 مشاركة عبر دمج العرض الشامل (مقررات مختلفة مدمجة في محاضرة واحدة)
+    _all_cids = [str(c["_id"]) for c in courses]
+    merge_partners: dict = {}
+    if _all_cids:
+        _gid_courses: dict = {}
+        async for s in db.weekly_schedule.find(
+            {"course_id": {"$in": _all_cids}, "merge_group_id": {"$nin": [None, ""]}},
+            {"course_id": 1, "merge_group_id": 1},
+        ):
+            _gid_courses.setdefault(s["merge_group_id"], set()).add(s["course_id"])
+        if _gid_courses:
+            async for s in db.weekly_schedule.find(
+                {"merge_group_id": {"$in": list(_gid_courses.keys())}},
+                {"course_id": 1, "merge_group_id": 1, "department_id": 1, "level": 1, "section": 1},
+            ):
+                for _mc in _gid_courses.get(s["merge_group_id"], set()):
+                    if s.get("course_id") != _mc:
+                        merge_partners.setdefault(_mc, set()).add(
+                            (s.get("department_id", ""), s.get("level"), (s.get("section", "") or "").strip())
+                        )
+
     result = []
     for c in courses:
         teacher_name = None
@@ -5988,6 +6009,10 @@ async def get_courses(
             "is_active": c.get("is_active", True),
             "source": ("curriculum" if (c.get("curriculum_course_id") or c.get("auto_generated")) else ("import" if c.get("created_from_import") else "manual")),
             "shared_links": c.get("shared_links") or [],
+            "merge_shared_with": [
+                {"department_id": k[0], "level": k[1], "section": k[2]}
+                for k in sorted(merge_partners.get(str(c["_id"]), set()), key=lambda x: (str(x[0]), str(x[1]), x[2]))
+            ],
             "shared_here": bool(department_id and c.get("department_id") and c.get("department_id") != department_id),
         })
     
