@@ -4041,7 +4041,14 @@ async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Dep
     for _cid in {a.get("course_id", ""), b.get("course_id", "")}:
         if _cid:
             await _sync_course_shared_links(db, _cid)
-    return {"message": f"تم الدمج في محاضرة مشتركة تضم {total} جداول" + _sync_summary(sync), "merge_group_id": gid}
+    _msg = f"تم الدمج في محاضرة مشتركة تضم {total} جداول" + _sync_summary(sync)
+    # ⚠️ تحذير: دمج خانات لمقررين منفصلين لا يوحّد الطلاب/الحضور
+    if a.get("course_id") and b.get("course_id") and a.get("course_id") != b.get("course_id"):
+        _msg += ("\n\n⚠️ تنبيه: هاتان المحاضرتان تتبعان مقررين منفصلين — الدمج هنا يوحّد الجدول فقط "
+                 "ولا يدمج الطلاب أو الحضور. لتوحيد الطلاب في مقرر واحد استخدم «دمج كمشترك» من شاشة المقررات "
+                 "(حدد المقررين ← دمج كمشترك).")
+    return {"message": _msg, "merge_group_id": gid,
+            "different_courses": bool(a.get("course_id") and b.get("course_id") and a.get("course_id") != b.get("course_id"))}
 
 
 def _needed_weekly_slots(credit_hours) -> int:
