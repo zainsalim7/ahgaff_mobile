@@ -64,6 +64,20 @@ export default function PhotoApprovalsScreen() {
     }
   };
 
+  const revokePhoto = async (id: string, name: string) => {
+    if (typeof window !== 'undefined' && !window.confirm(`إلغاء اعتماد صورة «${name}»؟ ستُسحب من البطاقة ويُفتح للطالب رفع صورة جديدة.`)) return;
+    setBusy(id + 'revoke');
+    try {
+      const r = await api.post(`/students/${id}/photo/revoke`);
+      setMsg(r.data?.message || '');
+      fetchApproved(approvedSearch);
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || 'فشل إلغاء الاعتماد');
+    } finally {
+      setBusy('');
+    }
+  };
+
   const toggleSelect = (id: string) => {
     setSelected(prev => {
       const n = new Set(prev);
@@ -136,6 +150,9 @@ export default function PhotoApprovalsScreen() {
                     <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 8 }}>
                       <TouchableOpacity onPress={() => router.push(`/student-card?studentId=${s.id}`)} style={[styles.btn, { backgroundColor: '#1565c0' }]}>
                         <Text style={styles.btnText}>البطاقة</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => revokePhoto(s.id, s.full_name)} disabled={!!busy} style={[styles.btn, { backgroundColor: '#e65100' }]} data-testid={`revoke-photo-btn-${s.id}`}>
+                        <Text style={styles.btnText}>إلغاء الاعتماد</Text>
                       </TouchableOpacity>
                     </View>
                   </View>

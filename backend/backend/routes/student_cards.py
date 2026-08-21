@@ -304,6 +304,25 @@ async def list_approved_photos(search: Optional[str] = None, current_user: dict 
     return items
 
 
+@router.post("/students/{student_id}/photo/revoke")
+async def revoke_student_photo(student_id: str, current_user: dict = Depends(get_current_user)):
+    """↩️ إلغاء اعتماد الصورة: سحبها من البطاقة + فتح فرصة رفع جديدة للطالب"""
+    db = get_db()
+    student = await _student_or_404(db, student_id)
+    fid, _, _ = await _resolve_faculty(db, student)
+    if not _can_manage(current_user, fid):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    if not student.get("photo_path"):
+        raise HTTPException(status_code=400, detail="لا توجد صورة معتمدة لهذا الطالب")
+    await db.students.update_one(
+        {"_id": student["_id"]},
+        {"$set": {"photo_upload_allowed": True}, "$unset": {"photo_path": ""}},
+    )
+    await log_activity(current_user, "revoke_student_photo", "student", str(student["_id"]), student.get("full_name", ""), {})
+    await _notify_photo_decision(db, student, approved=False)
+    return {"message": "تم إلغاء اعتماد الصورة وفتح فرصة رفع جديدة للطالب"}
+
+
 # ==================== إشعار قرار الصورة ====================
 async def _notify_photo_decision(db, student: dict, approved: bool):
     """إشعار داخل التطبيق + Push للطالب عند اعتماد/رفض صورته."""
