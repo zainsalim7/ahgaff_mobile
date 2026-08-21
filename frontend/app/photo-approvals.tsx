@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Image, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Image, RefreshControl, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -15,6 +15,25 @@ export default function PhotoApprovalsScreen() {
   const [msg, setMsg] = useState('');
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState<'pending' | 'approved'>('pending');
+  const [approved, setApproved] = useState<any[]>([]);
+  const [approvedSearch, setApprovedSearch] = useState('');
+
+  const fetchApproved = useCallback(async (q?: string) => {
+    try {
+      const res = await api.get('/approved-photos', { params: q ? { search: q } : {} });
+      setApproved(res.data || []);
+    } catch (e: any) {
+      setMsg(e?.response?.data?.detail || 'فشل جلب الصور المعتمدة');
+    }
+  }, []);
+
+  useEffect(() => { if (tab === 'approved') fetchApproved(approvedSearch); }, [tab]);
+  useEffect(() => {
+    if (tab !== 'approved') return;
+    const t = setTimeout(() => fetchApproved(approvedSearch), 400);
+    return () => clearTimeout(t);
+  }, [approvedSearch]);
 
   const token = useAuthStore.getState().token;
   const fileUrl = (path: string) => `${api.defaults.baseURL}/files/${path}?auth=${token}`;
@@ -81,8 +100,51 @@ export default function PhotoApprovalsScreen() {
         contentContainerStyle={{ padding: 14 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData(); }} />}
       >
-        <Text style={styles.title}>🖼️ صور الطلاب المعلقة ({items.length})</Text>
-        <Text style={styles.hint}>صور رفعها الطلاب من تطبيقهم — تظهر على البطاقة الرقمية بعد اعتمادها فقط.</Text>
+        <Text style={styles.title}>🖼️ صور الطلاب</Text>
+        <View style={{ flexDirection: 'row-reverse', gap: 8, marginTop: 10, marginBottom: 6 }}>
+          <TouchableOpacity onPress={() => setTab('pending')} style={[styles.tabBtn, tab === 'pending' && styles.tabBtnOn]} data-testid="tab-pending">
+            <Text style={[styles.tabText, tab === 'pending' && styles.tabTextOn]}>⏳ المعلقة ({items.length})</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setTab('approved')} style={[styles.tabBtn, tab === 'approved' && styles.tabBtnOn]} data-testid="tab-approved">
+            <Text style={[styles.tabText, tab === 'approved' && styles.tabTextOn]}>✅ المعتمدة{tab === 'approved' ? ` (${approved.length})` : ''}</Text>
+          </TouchableOpacity>
+        </View>
+        {tab === 'pending' && <Text style={styles.hint}>صور رفعها الطلاب من تطبيقهم — تظهر على البطاقة الرقمية بعد اعتمادها فقط.</Text>}
+        {!!msg && <Text style={styles.msg} data-testid="approvals-msg">{msg}</Text>}
+        {tab === 'approved' ? (
+          <>
+            <TextInput
+              style={styles.search}
+              value={approvedSearch}
+              onChangeText={setApprovedSearch}
+              placeholder="🔍 ابحث بالاسم أو رقم القيد..."
+              placeholderTextColor="#8a95a8"
+              data-testid="approved-search-input"
+            />
+            {approved.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Ionicons name="images-outline" size={44} color="#b0bec5" />
+                <Text style={styles.emptyText}>لا توجد صور معتمدة{approvedSearch ? ' مطابقة للبحث' : ''}</Text>
+              </View>
+            ) : (
+              <View style={styles.grid}>
+                {approved.map((s) => (
+                  <View key={s.id} style={styles.cardBox} data-testid={`approved-photo-${s.id}`}>
+                    <Image source={{ uri: fileUrl(s.photo_path) }} style={styles.photo} resizeMode="cover" />
+                    <Text style={styles.name}>{s.full_name}</Text>
+                    <Text style={styles.meta}>قيد: {s.student_id} · م{s.level}</Text>
+                    <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 8 }}>
+                      <TouchableOpacity onPress={() => router.push(`/student-card?studentId=${s.id}`)} style={[styles.btn, { backgroundColor: '#1565c0' }]}>
+                        <Text style={styles.btnText}>البطاقة</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
+        ) : (
+        <>
         {items.length > 0 && (
           <View style={{ flexDirection: 'row-reverse', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
             <TouchableOpacity
@@ -121,7 +183,7 @@ export default function PhotoApprovalsScreen() {
             )}
           </View>
         )}
-        {!!msg && <Text style={styles.msg} data-testid="approvals-msg">{msg}</Text>}
+        {!!msg && <Text style={styles.msg} data-testid="approvals-msg-pending">{msg}</Text>}
         {items.length === 0 ? (
           <View style={styles.emptyBox}>
             <Ionicons name="checkmark-done-circle-outline" size={44} color="#a5d6a7" />
@@ -162,6 +224,8 @@ export default function PhotoApprovalsScreen() {
             ))}
           </View>
         )}
+        </>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -180,6 +244,11 @@ const styles = StyleSheet.create({
   checkCircle: { position: 'absolute', top: 14, right: 14, zIndex: 5, width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#fff', backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center' },
   checkCircleOn: { backgroundColor: '#1565c0', borderColor: '#1565c0' },
   topBtn: { borderRadius: 7, paddingVertical: 8, paddingHorizontal: 12, alignItems: 'center' },
+  tabBtn: { borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#e6eaf2' },
+  tabBtnOn: { backgroundColor: '#1565c0' },
+  tabText: { fontSize: 12.5, fontWeight: '800', color: '#5b6678' },
+  tabTextOn: { color: '#fff' },
+  search: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#dfe4ee', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 12, fontSize: 13, textAlign: 'right', marginBottom: 12, color: '#1a2540' },
   photo: { width: '100%', height: 200, borderRadius: 8, backgroundColor: '#eef1f6' },
   name: { fontSize: 13.5, fontWeight: '800', color: '#1a2540', textAlign: 'right', marginTop: 8 },
   meta: { fontSize: 11.5, color: '#5b6678', textAlign: 'right', marginTop: 2 },

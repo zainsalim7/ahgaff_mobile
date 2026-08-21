@@ -274,6 +274,36 @@ async def list_pending_photos(current_user: dict = Depends(get_current_user)):
     return items
 
 
+@router.get("/approved-photos")
+async def list_approved_photos(search: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """🖼️ الصور المعتمدة (الظاهرة على البطاقات)"""
+    db = get_db()
+    if current_user.get("role") in ("teacher", "student"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    q: dict = {"photo_path": {"$exists": True, "$ne": ""}}
+    if current_user.get("role") != "admin":
+        fids = set(current_user.get("faculty_ids") or [])
+        if current_user.get("faculty_id"):
+            fids.add(current_user["faculty_id"])
+        if fids:
+            q["faculty_id"] = {"$in": list(fids)}
+    if search:
+        q["$or"] = [
+            {"full_name": {"$regex": search, "$options": "i"}},
+            {"student_id": {"$regex": search, "$options": "i"}},
+        ]
+    items = []
+    async for s in db.students.find(q).sort("full_name", 1).limit(500):
+        items.append({
+            "id": str(s["_id"]),
+            "full_name": s.get("full_name", ""),
+            "student_id": s.get("student_id", ""),
+            "level": s.get("level"),
+            "photo_path": s.get("photo_path", ""),
+        })
+    return items
+
+
 # ==================== إشعار قرار الصورة ====================
 async def _notify_photo_decision(db, student: dict, approved: bool):
     """إشعار داخل التطبيق + Push للطالب عند اعتماد/رفض صورته."""
