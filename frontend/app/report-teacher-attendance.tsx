@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { reportsAPI, departmentsAPI, facultiesAPI } from '../src/services/api';
+import { reportsAPI, departmentsAPI, facultiesAPI, teachersAPI } from '../src/services/api';
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string; icon: any }> = {
   executed: { label: 'نُفّذت', color: '#2e7d32', bg: '#e8f5e9', icon: 'checkmark-circle' },
@@ -38,6 +38,9 @@ export default function TeacherAttendanceReport() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [facultyId, setFacultyId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
+  const [teachers, setTeachers] = useState<any[]>([]);
+  const [teacherSearch, setTeacherSearch] = useState('');
+  const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
   const [viewMode, setViewMode] = useState<'teacher' | 'lecture'>('teacher');
   const [data, setData] = useState<any>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -46,9 +49,10 @@ export default function TeacherAttendanceReport() {
   useEffect(() => {
     (async () => {
       try {
-        const [fRes, dRes] = await Promise.all([facultiesAPI.getAll(), departmentsAPI.getAll()]);
+        const [fRes, dRes, tRes] = await Promise.all([facultiesAPI.getAll(), departmentsAPI.getAll(), teachersAPI.getAll()]);
         setFaculties(fRes.data || []);
         setDepartments(dRes.data || []);
+        setTeachers(tRes.data || []);
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     })();
@@ -57,6 +61,13 @@ export default function TeacherAttendanceReport() {
   const filteredDepartments = facultyId
     ? departments.filter((d) => d.faculty_id === facultyId)
     : departments;
+
+  const teacherSuggestions = teacherSearch.trim().length >= 1 && !selectedTeacher
+    ? teachers.filter((t) => {
+        const q = teacherSearch.trim().toLowerCase();
+        return (t.full_name || '').toLowerCase().includes(q) || (t.teacher_id || '').toLowerCase().includes(q);
+      }).slice(0, 8)
+    : [];
 
   const runReport = useCallback(async () => {
     if (!dateFrom || !dateTo) {
@@ -71,6 +82,7 @@ export default function TeacherAttendanceReport() {
       const params: any = { start_date: from, end_date: to };
       if (departmentId) params.department_id = departmentId;
       if (facultyId) params.faculty_id = facultyId;
+      if (selectedTeacher) params.teacher_id = selectedTeacher.id;
       const res = await reportsAPI.getTeacherAttendance(params);
       setData(res.data);
       setHasRun(true);
@@ -81,7 +93,7 @@ export default function TeacherAttendanceReport() {
     } finally {
       setExecuting(false);
     }
-  }, [dateFrom, dateTo, departmentId, facultyId]);
+  }, [dateFrom, dateTo, departmentId, facultyId, selectedTeacher]);
 
   const downloadBlob = async (blob: Blob, filename: string) => {
     if (Platform.OS === 'web') {
@@ -112,11 +124,13 @@ export default function TeacherAttendanceReport() {
       const params: any = { start_date: dateFrom, end_date: dateTo };
       if (departmentId) params.department_id = departmentId;
       if (facultyId) params.faculty_id = facultyId;
+      if (selectedTeacher) params.teacher_id = selectedTeacher.id;
       const res = type === 'excel'
         ? await reportsAPI.exportTeacherAttendanceExcel(params)
         : await reportsAPI.exportTeacherAttendancePDF(params);
       const ext = type === 'excel' ? 'xlsx' : 'pdf';
-      await downloadBlob(new Blob([res.data]), `teacher_attendance_${dateFrom}_${dateTo}.${ext}`);
+      const namePart = selectedTeacher ? `_${selectedTeacher.full_name.replace(/\s+/g, '_')}` : '';
+      await downloadBlob(new Blob([res.data]), `teacher_attendance${namePart}_${dateFrom}_${dateTo}.${ext}`);
     } catch (e) {
       console.error('Export error', e);
       if (Platform.OS === 'web') window.alert('فشل في التصدير');
@@ -229,6 +243,58 @@ export default function TeacherAttendanceReport() {
             </Picker>
           </View>
 
+          <Text style={styles.fieldLabel}>بحث عن أستاذ محدد (اختياري)</Text>
+          {selectedTeacher ? (
+            <View style={styles.teacherChip} testID="selected-teacher-chip">
+              <View style={styles.chipAvatar}><Ionicons name="person" size={14} color="#fff" /></View>
+              <Text style={styles.teacherChipText}>{selectedTeacher.full_name}</Text>
+              <TouchableOpacity onPress={() => { setSelectedTeacher(null); setTeacherSearch(''); }} testID="clear-teacher-btn">
+                <Ionicons name="close-circle" size={20} color="#c62828" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View>
+              <View style={styles.searchBox}>
+                <Ionicons name="search" size={18} color="#999" />
+                <TextInput
+                  style={styles.searchInput}
+                  value={teacherSearch}
+                  onChangeText={setTeacherSearch}
+                  placeholder="اكتب اسم الأستاذ أو رقمه الوظيفي..."
+                  placeholderTextColor="#aaa"
+                  testID="teacher-search-input"
+                />
+                {teacherSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setTeacherSearch('')}>
+                    <Ionicons name="close" size={18} color="#999" />
+                  </TouchableOpacity>
+                )}
+              </View>
+              {teacherSuggestions.length > 0 && (
+                <View style={styles.suggestionsBox}>
+                  {teacherSuggestions.map((t) => (
+                    <TouchableOpacity
+                      key={t.id}
+                      style={styles.suggestionRow}
+                      onPress={() => { setSelectedTeacher(t); setTeacherSearch(''); }}
+                      testID={`teacher-suggestion-${t.id}`}
+                    >
+                      <View style={styles.chipAvatar}><Ionicons name="person" size={13} color="#fff" /></View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.suggestionName}>{t.full_name}</Text>
+                        {!!t.teacher_id && <Text style={styles.suggestionMeta}>{t.teacher_id}</Text>}
+                      </View>
+                      <Ionicons name="add-circle-outline" size={20} color="#2e7d32" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              {teacherSearch.trim().length >= 1 && teacherSuggestions.length === 0 && (
+                <Text style={styles.noResultText}>لا توجد نتائج مطابقة</Text>
+              )}
+            </View>
+          )}
+
           <TouchableOpacity
             style={[styles.runBtn, executing && { opacity: 0.7 }]}
             onPress={runReport}
@@ -253,6 +319,12 @@ export default function TeacherAttendanceReport() {
         {/* الملخص */}
         {summary && (
           <View style={styles.summaryCard}>
+            {!!data?.teacher_filter_name && (
+              <View style={styles.filterBanner} testID="teacher-filter-banner">
+                <Ionicons name="person-circle" size={18} color="#1565c0" />
+                <Text style={styles.filterBannerText}>تقرير خاص بالأستاذ: {data.teacher_filter_name}</Text>
+              </View>
+            )}
             <View style={styles.summaryGrid}>
               <View style={styles.summaryItem}>
                 <Text style={[styles.summaryValue, { color: '#1565c0' }]}>{summary.total_lectures}</Text>
@@ -422,4 +494,16 @@ const styles = StyleSheet.create({
   statusPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
   statusPillText: { fontSize: 12, fontWeight: '700' },
   flatCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#f5f5f5', borderRadius: 8, paddingHorizontal: 12, paddingVertical: Platform.OS === 'web' ? 10 : 4 },
+  searchInput: { flex: 1, fontSize: 14, color: '#333', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } as any : { paddingVertical: 8 }) },
+  suggestionsBox: { backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: '#e0e0e0', marginTop: 6, overflow: 'hidden' },
+  suggestionRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f5f5f5' },
+  suggestionName: { fontSize: 14, fontWeight: '600', color: '#333' },
+  suggestionMeta: { fontSize: 11, color: '#999', marginTop: 1 },
+  chipAvatar: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#2e7d32', justifyContent: 'center', alignItems: 'center' },
+  teacherChip: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#e8f5e9', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: '#a5d6a7' },
+  teacherChipText: { flex: 1, fontSize: 14, fontWeight: '700', color: '#2e7d32' },
+  noResultText: { fontSize: 12, color: '#999', marginTop: 6, textAlign: 'center' },
+  filterBanner: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#e3f2fd', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 12 },
+  filterBannerText: { fontSize: 13, fontWeight: '700', color: '#1565c0' },
 });

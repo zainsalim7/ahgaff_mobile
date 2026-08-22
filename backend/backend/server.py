@@ -11894,7 +11894,7 @@ _TEACHER_ATT_STATUS_LABELS = {
 }
 
 
-async def _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id):
+async def _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id, teacher_id=None):
     """يبني بيانات تقرير حضور الأساتذة وتنفيذ المحاضرات لفترة محددة."""
     # ضبط التواريخ (نصية بصيغة YYYY-MM-DD)
     if not start_date and not end_date:
@@ -11982,13 +11982,16 @@ async def _build_teacher_attendance_report(start_date, end_date, department_id, 
         if faculty_id:
             if not dept or dept.get("faculty_id") != faculty_id:
                 continue
+        # فلترة أستاذ محدد
+        if teacher_id and course.get("teacher_id") != teacher_id:
+            continue
 
-        teacher_id = course.get("teacher_id")
-        if teacher_id:
-            teacher = await get_teacher(teacher_id)
+        course_teacher_id = course.get("teacher_id")
+        if course_teacher_id:
+            teacher = await get_teacher(course_teacher_id)
             teacher_name = teacher.get("full_name") if teacher else "غير معروف"
             employee_id = teacher.get("teacher_id", "") if teacher else ""
-            tkey = teacher_id
+            tkey = course_teacher_id
         else:
             teacher_name = "غير معيّن"
             employee_id = ""
@@ -12012,7 +12015,7 @@ async def _build_teacher_attendance_report(start_date, end_date, department_id, 
             "room": lec.get("room", ""),
             "status": est,
             "status_label": _TEACHER_ATT_STATUS_LABELS.get(est, est),
-            "teacher_id": teacher_id or "",
+            "teacher_id": course_teacher_id or "",
             "teacher_name": teacher_name,
             "employee_id": employee_id,
         }
@@ -12020,7 +12023,7 @@ async def _build_teacher_attendance_report(start_date, end_date, department_id, 
 
         if tkey not in by_teacher:
             by_teacher[tkey] = {
-                "teacher_id": teacher_id or "",
+                "teacher_id": course_teacher_id or "",
                 "teacher_name": teacher_name,
                 "employee_id": employee_id,
                 "total": 0,
@@ -12054,9 +12057,15 @@ async def _build_teacher_attendance_report(start_date, end_date, department_id, 
     total_lectures = len(flat_lectures)
     denom = total_executed + total_absent
 
+    teacher_filter_name = ""
+    if teacher_id:
+        t = await get_teacher(teacher_id)
+        teacher_filter_name = t.get("full_name", "") if t else ""
+
     return {
         "start_date": start_date,
         "end_date": end_date,
+        "teacher_filter_name": teacher_filter_name,
         "teachers": teachers_list,
         "lectures": flat_lectures,
         "summary": {
@@ -12078,12 +12087,13 @@ async def get_teacher_attendance_report(
     end_date: str = None,
     department_id: str = None,
     faculty_id: str = None,
+    teacher_id: str = None,
     current_user: dict = Depends(get_current_user)
 ):
     """تقرير حضور الأساتذة وتنفيذ المحاضرات (من حضر ونفّذ ومن غاب)."""
     if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, Permission.VIEW_REPORTS):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
-    return await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id)
+    return await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id, teacher_id)
 
 
 @api_router.get("/reports/teacher-attendance/export/excel")
@@ -12092,12 +12102,13 @@ async def export_teacher_attendance_excel(
     end_date: str = None,
     department_id: str = None,
     faculty_id: str = None,
+    teacher_id: str = None,
     current_user: dict = Depends(get_current_user)
 ):
     """تصدير تقرير حضور الأساتذة إلى Excel."""
     if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, Permission.EXPORT_REPORTS):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
-    report = await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id)
+    report = await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id, teacher_id)
 
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill
@@ -12110,7 +12121,8 @@ async def export_teacher_attendance_excel(
     ws.sheet_view.rightToLeft = True
     ws.merge_cells('A1:G1')
     period = f"{report['start_date']}" if report['start_date'] == report['end_date'] else f"{report['start_date']} إلى {report['end_date']}"
-    ws['A1'] = f"تقرير حضور الأساتذة وتنفيذ المحاضرات — {period}"
+    title_suffix = f" — الأستاذ: {report['teacher_filter_name']}" if report.get('teacher_filter_name') else ""
+    ws['A1'] = f"تقرير حضور الأساتذة وتنفيذ المحاضرات — {period}{title_suffix}"
     ws['A1'].font = Font(bold=True, size=14)
     ws['A1'].alignment = Alignment(horizontal='center')
     s = report['summary']
@@ -12188,12 +12200,13 @@ async def export_teacher_attendance_pdf(
     end_date: str = None,
     department_id: str = None,
     faculty_id: str = None,
+    teacher_id: str = None,
     current_user: dict = Depends(get_current_user)
 ):
     """تصدير تقرير حضور الأساتذة إلى PDF."""
     if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, Permission.EXPORT_REPORTS):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
-    report = await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id)
+    report = await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id, teacher_id)
 
     from reportlab.lib.pagesizes import landscape
 
@@ -12218,7 +12231,7 @@ async def export_teacher_attendance_pdf(
     styles_title = ParagraphStyle("t", fontName=arabic_font, fontSize=15, alignment=TA_CENTER, textColor=colors.HexColor("#1a2540"))
     styles_sub = ParagraphStyle("d", fontName=arabic_font, fontSize=10, alignment=TA_CENTER, textColor=colors.HexColor("#5b6678"), spaceBefore=4, spaceAfter=10)
     elements = [
-        Paragraph(_ar("تقرير حضور الأساتذة وتنفيذ المحاضرات"), styles_title),
+        Paragraph(_ar("تقرير حضور الأساتذة وتنفيذ المحاضرات" + (f" — الأستاذ: {report['teacher_filter_name']}" if report.get('teacher_filter_name') else "")), styles_title),
         Paragraph(_ar(f"الفترة: {period}  |  نُفّذت: {s['executed']}  |  غياب: {s['absent']}  |  ملغاة: {s['cancelled']}  |  نسبة التنفيذ: {s['execution_rate']}%"), styles_sub),
     ]
 
