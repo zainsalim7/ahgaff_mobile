@@ -55,6 +55,18 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [newDurationCustom, setNewDurationCustom] = useState('');
   const [addType, setAddType] = useState('theory'); // 🧪 نوع المحاضرة عند الإضافة (افتراضي: نظري)
   const [impactPreview, setImpactPreview] = useState<any>(null); // 🔍 معاينة أثر التغيير قبل التنفيذ
+  const [logModal, setLogModal] = useState(false); // 📜 سجل تغييرات الجدول
+  const [logEntries, setLogEntries] = useState<any[] | null>(null);
+  const [logSearch, setLogSearch] = useState('');
+
+  const openChangeLog = async () => {
+    setLogModal(true);
+    setLogEntries(null);
+    try {
+      const res = await api.get('/weekly-schedule/change-log', { params: { limit: 200 } });
+      setLogEntries(res.data || []);
+    } catch { setLogEntries([]); }
+  };
 
   const PRESET_DURATIONS = ['45', '60', '90', '120', '180'];
 
@@ -751,6 +763,17 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           </View>
         )}
         {busy && <ActivityIndicator size="small" color="#1565c0" />}
+        {can_manage && (
+          <TouchableOpacity
+            onPress={openChangeLog}
+            disabled={busy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#455a64' }}
+            testID="master-change-log-btn"
+          >
+            <Ionicons name="receipt-outline" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>سجل التغييرات</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           onPress={() => downloadExport('pdf')}
           disabled={busy}
@@ -1103,6 +1126,84 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       )}
 
       {/* ⏱ نافذة تعديل مدة المحاضرة */}
+      {/* 📜 سجل تغييرات الجدول */}
+      {logModal && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setLogModal(false)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} data-testid="schedule-change-log-modal" style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 720, maxWidth: '94%',
+            maxHeight: '85vh', display: 'flex', flexDirection: 'column' as any, boxShadow: '0 8px 32px rgba(0,0,0,0.3)', direction: 'rtl',
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>📜 سجل تغييرات الجدول</div>
+            <div style={{ fontSize: 11.5, color: '#5b6678', marginBottom: 10, textAlign: 'right' }}>
+              كل تعديلات الجدول: ماذا حدث، من نفّذه، ومتى (بتوقيت اليمن) — آخر 200 عملية
+            </div>
+            <input
+              value={logSearch}
+              onChange={(ev: any) => setLogSearch(ev.target.value)}
+              placeholder="🔎 بحث: اسم مستخدم، مقرر، نوع عملية..."
+              data-testid="change-log-search-input"
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', fontSize: 12.5, direction: 'rtl', marginBottom: 10, boxSizing: 'border-box', backgroundColor: '#f7f9fc' }}
+            />
+            <div style={{ overflowY: 'auto' as any, flex: 1 }}>
+              {logEntries === null ? (
+                <div style={{ textAlign: 'center', padding: 30, color: '#8a94a6', fontSize: 13 }}>جاري التحميل...</div>
+              ) : (() => {
+                const q = logSearch.trim().toLowerCase();
+                const filtered = q
+                  ? logEntries.filter((l: any) =>
+                      (l.username || '').toLowerCase().includes(q) ||
+                      (l.summary || '').toLowerCase().includes(q) ||
+                      (l.action_ar || '').toLowerCase().includes(q) ||
+                      (l.entity_name || '').toLowerCase().includes(q))
+                  : logEntries;
+                if (filtered.length === 0) {
+                  return <div style={{ textAlign: 'center', padding: 30, color: '#8a94a6', fontSize: 13 }}>لا توجد سجلات{q ? ' مطابقة للبحث' : ' بعد — أي تعديل قادم على الجدول سيظهر هنا'}</div>;
+                }
+                const ACTION_COLORS: Record<string, string> = {
+                  create_schedule_slot: '#2e7d32', delete_schedule_slot: '#c62828', clear_schedule: '#b71c1c',
+                  update_schedule_slot: '#ef6c00', move_schedule_slot: '#1565c0', swap_schedule_slots: '#1565c0',
+                  merge_schedule_slots: '#00695c', cascade_slot_teacher: '#6a1b9a', rebalance_schedule: '#ef6c00',
+                };
+                const ROLE_AR: Record<string, string> = {
+                  admin: 'مدير النظام', dean: 'عميد', department_head: 'رئيس قسم', registrar: 'مسجل', employee: 'موظف', teacher: 'أستاذ',
+                };
+                return filtered.map((l: any, i: number) => {
+                  const col = ACTION_COLORS[l.action] || '#455a64';
+                  return (
+                    <div key={l.id} data-testid={`change-log-row-${i}`} style={{
+                      border: '1px solid #e3e9f2', borderRadius: 8, padding: '8px 10px', marginBottom: 6,
+                      textAlign: 'right', backgroundColor: i % 2 ? '#fafbfd' : '#fff',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' as any }}>
+                        <span style={{ fontSize: 10.5, fontWeight: 800, color: '#fff', backgroundColor: col, borderRadius: 10, padding: '2px 8px', whiteSpace: 'nowrap' as any }}>{l.action_ar}</span>
+                        <span style={{ fontSize: 11, color: '#8a94a6', whiteSpace: 'nowrap' as any }}>🕓 {l.timestamp}</span>
+                      </div>
+                      <div style={{ fontSize: 12.5, color: '#333', marginTop: 5, lineHeight: 1.7 }}>{l.summary || l.entity_name || '—'}</div>
+                      <div style={{ fontSize: 11, color: '#6b7688', marginTop: 3 }}>
+                        👤 نفّذها: <b>{l.username}</b>{l.user_role ? ` (${ROLE_AR[l.user_role] || l.user_role})` : ''}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button onClick={openChangeLog} style={{
+                flex: 0.5, padding: '9px 0', borderRadius: 8, border: '1px solid #1565c0', cursor: 'pointer',
+                backgroundColor: '#e3f2fd', color: '#1565c0', fontSize: 12.5, fontWeight: 700,
+              }} data-testid="change-log-refresh-btn">🔄 تحديث</button>
+              <button onClick={() => setLogModal(false)} style={{
+                flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                backgroundColor: '#455a64', color: '#fff', fontSize: 13, fontWeight: 700,
+              }} data-testid="change-log-close-btn">إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 🔍 نافذة معاينة الأثر قبل التنفيذ */}
       {impactPreview && (
         <div style={{

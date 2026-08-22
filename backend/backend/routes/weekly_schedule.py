@@ -10,7 +10,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
-from .deps import get_db, get_current_user, has_permission, log_activity
+from .deps import get_db, get_current_user, has_permission, log_activity, ACTION_TRANSLATIONS
 from models.permissions import Permission
 
 router = APIRouter(tags=["الجدول الأسبوعي"])
@@ -1274,6 +1274,16 @@ async def create_schedule_slot(
     msg += _shift_summary(shifted)
     if data.course_id:
         await _sync_course_shared_links(db, data.course_id)
+    # 📜 سجل تغييرات الجدول
+    _cn = ""
+    try:
+        _c = await db.courses.find_one({"_id": ObjectId(data.course_id)})
+        _cn = (_c or {}).get("name", "")
+    except Exception:
+        pass
+    await log_activity(current_user, "create_schedule_slot", "weekly_schedule", inserted_id, _cn,
+                       {"summary": f"إضافة «{_cn}» — {data.day} فترة {data.slot_number}" + (f" (مشتركة عبر {len(targets)} جداول)" if merge_gid else ""),
+                        "day": data.day, "slot_number": data.slot_number, "shifted": len(shifted)})
     return {"id": inserted_id, "merge_group_id": merge_gid, "message": msg, "shifted": shifted}
 
 
@@ -1420,6 +1430,55 @@ async def update_schedule_slot(
         if load_check and load_check["excess_minutes"] > 0:
             message += f" ⚠️ تجاوز الخطة الأسبوعية: {load_check['scheduled_minutes']}د مدرجة / {load_check['plan_minutes']}د معتمدة"
 
+    # 📜 سجل تغييرات الجدول (وصف مقروء لما تغيّر)
+    _parts = []
+    if "duration_minutes" in update:
+        _old_d = existing.get("duration_minutes")
+        _parts.append(f"المدة: {f'{_old_d}د' if _old_d else 'افتراضية'} ← {update['duration_minutes']}د")
+    if clear_duration:
+        _old_d = existing.get("duration_minutes")
+        _parts.append(f"المدة: {f'{_old_d}د' if _old_d else 'افتراضية'} ← افتراضية")
+    if "room_id" in update:
+        _rn_old = _rn_new = ""
+        try:
+            if existing.get("room_id"):
+                _r = await db.rooms.find_one({"_id": ObjectId(existing["room_id"])})
+                _rn_old = (_r or {}).get("name", "")
+            if update["room_id"]:
+                _r = await db.rooms.find_one({"_id": ObjectId(update["room_id"])})
+                _rn_new = (_r or {}).get("name", "")
+        except Exception:
+            pass
+        _parts.append(f"القاعة: {_rn_old or 'بدون'} ← {_rn_new or 'بدون'}")
+    if "teacher_id" in update:
+        _tn_old = _tn_new = ""
+        try:
+            if existing.get("teacher_id"):
+                _t = await db.teachers.find_one({"_id": ObjectId(existing["teacher_id"])})
+                _tn_old = (_t or {}).get("full_name", "")
+            if update["teacher_id"]:
+                _t = await db.teachers.find_one({"_id": ObjectId(update["teacher_id"])})
+                _tn_new = (_t or {}).get("full_name", "")
+        except Exception:
+            pass
+        _parts.append(f"الأستاذ: {_tn_old or '؟'} ← {_tn_new or '؟'}")
+    if "slot_type" in update:
+        _parts.append(f"النوع: ← {'عملي 🧪' if update['slot_type'] == 'practical' else 'نظري 📖'}")
+    if "course_id" in update:
+        _parts.append("تغيير المقرر")
+    if _parts:
+        _cn = ""
+        try:
+            _c = await db.courses.find_one({"_id": ObjectId(existing.get("course_id", ""))})
+            _cn = (_c or {}).get("name", "")
+        except Exception:
+            pass
+        _sum = f"تعديل «{_cn}» ({existing.get('day')} فترة {existing.get('slot_number')}): " + "، ".join(_parts)
+        if shifted:
+            _sum += f" — أزاحت {len(shifted)} محاضرة"
+        await log_activity(current_user, "update_schedule_slot", "weekly_schedule", slot_id, _cn,
+                           {"summary": _sum, "day": existing.get("day"), "slot_number": existing.get("slot_number"), "shifted": len(shifted)})
+
     return {"message": message, "shifted": shifted, "load_check": load_check}
 
 
@@ -1466,6 +1525,9 @@ async def apply_rebalance(
     msg = f"⚖️ تمت الموازنة: تعديل مدة {len(applied)} محاضرة لتوافق الساعات المعتمدة" + _shift_summary(shifted)
     if synced:
         msg += f" 🕑 تم تحديث أوقات {synced} محاضرة قادمة"
+    await log_activity(current_user, "rebalance_schedule", "weekly_schedule", "", None,
+                       {"summary": f"موازنة الساعات الأسبوعية: تعديل مدة {len(applied)} محاضرة" + (f" — أزاحت {len(shifted)} محاضرة" if shifted else ""),
+                        "applied": len(applied)})
     return {"message": msg, "applied": applied, "shifted": shifted}
 
 
@@ -1963,6 +2025,16 @@ async def delete_schedule_slot(
         await _resolve_day_times(db, slot.get("faculty_id", ""), slot.get("day", ""))
         if slot.get("course_id"):
             await _sync_course_shared_links(db, slot["course_id"])
+        # 📜 سجل تغييرات الجدول
+        _cn = ""
+        try:
+            _c = await db.courses.find_one({"_id": ObjectId(slot.get("course_id", ""))})
+            _cn = (_c or {}).get("name", "")
+        except Exception:
+            pass
+        await log_activity(current_user, "delete_schedule_slot", "weekly_schedule", slot_id, _cn,
+                           {"summary": f"حذف «{_cn}» من الجدول ({slot.get('day')} فترة {slot.get('slot_number')})" + (" — شمل كل الشُعب المشتركة" if slot.get("merge_group_id") else ""),
+                            "day": slot.get("day"), "slot_number": slot.get("slot_number")})
     return {"message": message}
 
 
@@ -1982,6 +2054,9 @@ async def clear_schedule(
     if department_id:
         query["department_id"] = department_id
     result = await db.weekly_schedule.delete_many(query)
+    await log_activity(current_user, "clear_schedule", "weekly_schedule", faculty_id or "", None,
+                       {"summary": f"مسح الجدول الأسبوعي ({result.deleted_count} خانة)", "deleted": result.deleted_count,
+                        "scope_faculty_id": faculty_id, "scope_department_id": department_id})
     return {"message": f"تم حذف {result.deleted_count} خانة"}
 
 
@@ -3811,6 +3886,91 @@ async def preview_schedule_impact(
     }
 
 
+# ===== 📜 سجل تغييرات الجدول =====
+
+_SCHEDULE_LOG_ACTIONS = [
+    "create_schedule_slot", "update_schedule_slot", "delete_schedule_slot",
+    "move_schedule_slot", "swap_schedule_slots", "merge_schedule_slots",
+    "cascade_slot_teacher", "rebalance_schedule", "clear_schedule",
+    "auto_place_unscheduled", "generate_lectures_from_schedule",
+    "auto_generate_schedule", "import_master_schedule_excel",
+]
+
+
+def _compose_log_summary(action: str, det: dict, entity_name: str) -> str:
+    """وصف مقروء للسجلات القديمة التي لا تحمل حقل summary"""
+    en = f"«{entity_name}» " if entity_name else ""
+    if action == "move_schedule_slot":
+        return f"نقل {en}من {det.get('from', '')} إلى {det.get('to', '')}"
+    if action == "swap_schedule_slots":
+        return f"تبديل محاضرتين: {det.get('a', '')} ↔ {det.get('b', '')}"
+    if action == "merge_schedule_slots":
+        return f"دمج {en}في محاضرة مشتركة"
+    if action == "cascade_slot_teacher":
+        return f"تغيير أستاذ المقرر {en}({det.get('cells_updated', '')} خلية)"
+    if action == "auto_place_unscheduled":
+        return f"إدراج تلقائي: {det.get('placed', 0)} مقرر أُدرج، {det.get('failed', 0)} تعذّر"
+    if action == "generate_lectures_from_schedule":
+        return f"توليد {det.get('created', 0)} محاضرة يومية ({det.get('range', '')})"
+    if action == "auto_generate_schedule":
+        return "توليد الجدول تلقائياً"
+    if action == "import_master_schedule_excel":
+        return f"استيراد من Excel: {det.get('created', 0)} جديدة، {det.get('replaced', 0)} مستبدلة، {det.get('errors', 0)} أخطاء"
+    if action == "clear_schedule":
+        return f"مسح الجدول ({det.get('deleted', '')} خانة)"
+    return en.strip()
+
+
+@router.get("/weekly-schedule/change-log")
+async def get_schedule_change_log(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    username: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 200,
+    current_user: dict = Depends(get_current_user),
+):
+    """📜 سجل كل تعديلات الجدول الأسبوعي/الشامل: ماذا حدث، من نفّذه، ومتى"""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    q: dict = {"action": {"$in": _SCHEDULE_LOG_ACTIONS}}
+    if action and action in _SCHEDULE_LOG_ACTIONS:
+        q["action"] = action
+    if username:
+        q["username"] = {"$regex": username, "$options": "i"}
+    if start_date or end_date:
+        from datetime import timedelta as _td
+        tq = {}
+        try:
+            if start_date:
+                tq["$gte"] = datetime.strptime(start_date, "%Y-%m-%d")
+            if end_date:
+                tq["$lt"] = datetime.strptime(end_date, "%Y-%m-%d") + _td(days=1)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="صيغة التاريخ غير صحيحة (YYYY-MM-DD)")
+        if tq:
+            q["timestamp"] = tq
+    logs = await db.activity_logs.find(q).sort("timestamp", -1).to_list(max(1, min(int(limit), 500)))
+    out = []
+    from datetime import timedelta as _td
+    for l in logs:
+        det = l.get("details") or {}
+        ts = l.get("timestamp")
+        ts_str = (ts + _td(hours=3)).strftime("%Y-%m-%d %H:%M") if isinstance(ts, datetime) else str(ts or "")
+        out.append({
+            "id": str(l["_id"]),
+            "timestamp": ts_str,
+            "username": l.get("username", ""),
+            "user_role": l.get("user_role", ""),
+            "action": l.get("action", ""),
+            "action_ar": ACTION_TRANSLATIONS.get(l.get("action", ""), l.get("action_ar", l.get("action", ""))),
+            "entity_name": l.get("entity_name", "") or "",
+            "summary": det.get("summary") or _compose_log_summary(l.get("action", ""), det, l.get("entity_name", "") or ""),
+        })
+    return out
+
+
 async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_slot_number=None, new_room_id=None) -> dict:
     """المستقبل يتبع الجدول والماضي محفوظ: نقل/حذف المحاضرات اليومية المستقبلية المولّدة من موقع الخلية القديم.
     تُستثنى: الماضية، غير المجدولة، التي عليها حضور، والمعاد جدولتها يدوياً."""
@@ -4320,8 +4480,15 @@ async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Dep
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail={"message": "تعارض في الجدول (مرفوض من قاعدة البيانات)", "conflicts": ["تعارض فريد في قاعدة البيانات"]})
 
-    await log_activity(current_user, "merge_schedule_slots", "weekly_schedule", data.slot_a_id, None,
-                       {"joined_to": data.slot_b_id, "group": gid})
+    _mg_cn = ""
+    try:
+        _c = await db.courses.find_one({"_id": ObjectId(a.get("course_id", ""))})
+        _mg_cn = (_c or {}).get("name", "")
+    except Exception:
+        pass
+    await log_activity(current_user, "merge_schedule_slots", "weekly_schedule", data.slot_a_id, _mg_cn,
+                       {"joined_to": data.slot_b_id, "group": gid,
+                        "summary": f"دمج «{_mg_cn}» في محاضرة مشتركة ({b.get('day')} فترة {b.get('slot_number')})"})
 
     sync = {}
     for g in group_a:
@@ -4725,8 +4892,15 @@ async def move_schedule_slot(
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail={"message": "تعارض في الجدول (مرفوض من قاعدة البيانات)", "conflicts": ["تعارض فريد في قاعدة البيانات"]})
 
-    await log_activity(current_user, "move_schedule_slot", "weekly_schedule", data.slot_id, None,
-                       {"from": f"{slot.get('day')}-{slot.get('slot_number')}", "to": f"{data.target_day}-{data.target_slot_number}"})
+    _mv_cn = ""
+    try:
+        _c = await db.courses.find_one({"_id": ObjectId(slot.get("course_id", ""))})
+        _mv_cn = (_c or {}).get("name", "")
+    except Exception:
+        pass
+    await log_activity(current_user, "move_schedule_slot", "weekly_schedule", data.slot_id, _mv_cn,
+                       {"from": f"{slot.get('day')}-{slot.get('slot_number')}", "to": f"{data.target_day}-{data.target_slot_number}",
+                        "summary": f"نقل «{_mv_cn}» من {slot.get('day')} فترة {slot.get('slot_number')} إلى {data.target_day} فترة {data.target_slot_number}"})
 
     # 🔄 (جدول ← نظام) المحاضرات اليومية المستقبلية تتبع الموقع الجديد
     sync = {}
@@ -4789,8 +4963,16 @@ async def swap_schedule_slots(
         await db.weekly_schedule.insert_many(group_a + group_b)
         raise HTTPException(status_code=409, detail={"message": "تعارض في الجدول (مرفوض من قاعدة البيانات)", "conflicts": ["تعارض فريد في قاعدة البيانات"]})
 
-    await log_activity(current_user, "swap_schedule_slots", "weekly_schedule", data.slot_a_id, None,
-                       {"a": f"{pos_a['day']}-{pos_a['slot_number']}", "b": f"{pos_b['day']}-{pos_b['slot_number']}"})
+    _sw_a = _sw_b = ""
+    try:
+        _ca = await db.courses.find_one({"_id": ObjectId(slot_a.get("course_id", ""))})
+        _cb = await db.courses.find_one({"_id": ObjectId(slot_b.get("course_id", ""))})
+        _sw_a, _sw_b = (_ca or {}).get("name", ""), (_cb or {}).get("name", "")
+    except Exception:
+        pass
+    await log_activity(current_user, "swap_schedule_slots", "weekly_schedule", data.slot_a_id, _sw_a,
+                       {"a": f"{pos_a['day']}-{pos_a['slot_number']}", "b": f"{pos_b['day']}-{pos_b['slot_number']}",
+                        "summary": f"تبديل «{_sw_a}» ({pos_a['day']} فترة {pos_a['slot_number']}) ↔ «{_sw_b}» ({pos_b['day']} فترة {pos_b['slot_number']})"})
 
     # 🔄 (جدول ← نظام) محاضرات الطرفين المستقبلية تتبع الموقعين الجديدين
     combined = {}

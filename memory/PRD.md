@@ -176,3 +176,10 @@
 - ✅ Frontend (MasterScheduleView.tsx): نافذة impact-preview-modal ملوّنة حسب النوع مع الأسباب وزرّي «✅ تنفيذ التغييرات» / «↩️ تراجع». إذا لا إزاحات → تنفيذ مباشر دون نافذة (قرار المستخدم). المسارات: confirmDurationChange وmove (handleCellClick) وdeleteSelected تستدعي المعاينة أولاً.
 - سبب الظاهرة الأصلية (موثّق للمستخدم): الحلحلة تمر على كل محاضرات الكلية في اليوم وتُزيح المتعارضة في الشعبة/الأستاذ/القاعة بشكل متسلسل (دومينو) — لذا تتأثر محاضرات «بعيدة».
 - ✅ اختبار: curl (معاينة مدة 180د = 4 تغييرات بأسباب دقيقة + لا كتابة في DB + تطابق مع التنفيذ الفعلي 3 إزاحات، معاينة حذف/نقل) + E2E سكرينشوت (تحرير ← اختيار ← مدة 180 ← ظهور النافذة بـ4 تغييرات ← تراجع يغلق دون تغيير). أعيدت البيانات للوضع الافتراضي بعد الاختبار.
+
+## 2026-06: سجل تغييرات الجدول الشامل (من نفّذ ماذا ومتى)
+- ✅ تسجيل كل عمليات الجدول التي لم تكن مسجّلة: create/update (مدة، قاعة، أستاذ، نوع بأسماء قديم←جديد)/delete slot، rebalance، clear — مع حقل summary مقروء بالعربية وعدد الإزاحات. أُثريت سجلات move/swap/merge الموجودة بأسماء المقررات وsummary.
+- ✅ GET /api/weekly-schedule/change-log (فلاتر: start_date, end_date, username, action, limit≤500) — توقيت اليمن (+3)، action_ar يُعاد ترجمته من ACTION_TRANSLATIONS (يشمل السجلات القديمة)، وfallback _compose_log_summary للسجلات بلا summary.
+- ✅ ترجمات جديدة في deps.py ACTION_TRANSLATIONS (create/update/delete_schedule_slot، merge، cascade، rebalance، clear، import_master_schedule_excel).
+- ✅ Frontend (MasterScheduleView.tsx): زر «📜 سجل التغييرات» (master-change-log-btn) في شريط أدوات الجدول الشامل → نافذة schedule-change-log-modal: شارات ملوّنة حسب نوع العملية + الوصف + «نفّذها فلان (الدور بالعربية)» + الوقت + بحث فوري + زر تحديث.
+- ✅ اختبار: curl (4 عمليات مولّدة ظهرت بأوصاف دقيقة + فلترة username/action) + E2E سكرينشوت (فتح السجل 73 سجلاً، بحث «نقل» = 19، إغلاق).

@@ -172,6 +172,14 @@ async def get_scope_filter(current_user: dict, scope_type: str) -> dict:
 
 # ترجمة أنواع الأنشطة إلى العربية
 ACTION_TRANSLATIONS = {
+    "create_schedule_slot": "إضافة محاضرة للجدول",
+    "update_schedule_slot": "تعديل محاضرة في الجدول",
+    "delete_schedule_slot": "حذف محاضرة من الجدول",
+    "merge_schedule_slots": "دمج محاضرتين في محاضرة مشتركة",
+    "cascade_slot_teacher": "تغيير أستاذ المقرر من الجدول",
+    "rebalance_schedule": "موازنة الساعات الأسبوعية",
+    "clear_schedule": "مسح الجدول الأسبوعي",
+    "import_master_schedule_excel": "استيراد الجدول الشامل من Excel",
     "move_schedule_slot": "نقل محاضرة في الجدول الأسبوعي",
     "swap_schedule_slots": "تبديل محاضرتين في الجدول الأسبوعي",
     "auto_place_unscheduled": "إدراج تلقائي للمقررات غير المدرجة",
