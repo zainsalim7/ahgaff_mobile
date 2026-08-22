@@ -3187,33 +3187,39 @@ async def rooms_availability(
     semester_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    """تقرير حالة القاعات (فارغة/مشغولة) لكل يوم/فترة.
-    - بدون فلاتر: يرجع heatmap كاملة (كل القاعات × كل الأيام × كل الفترات)
-    - مع day + slot: يرجع قائمة القاعات الفارغة والمشغولة لتلك اللحظة
+    """تقرير حالة القاعات (فارغة/مشغولة) لكل يوم/فترة — بالوقت الفعلي.
+    - الإشغال يُحسب بالأوقات الفعلية (مدد مخصصة + إزاحات): أي تداخل مع نافذة الفترة = مشغولة
+    - القاعة كيان فيزيائي: يُفحص إشغالها عبر كل الكليات حتى مع فلتر الكلية
+    - المحاضرة المشتركة تظهر بكل شعبها
     """
     if not can_manage_schedule(current_user):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     db = get_db()
 
-    # جلب القاعات
+    # جلب القاعات (فلتر الكلية يسري على القاعات فقط)
     rooms_query = {"is_active": {"$ne": False}}
     if faculty_id:
         rooms_query["faculty_id"] = faculty_id
     rooms = await db.rooms.find(rooms_query).to_list(500)
 
-    # جلب الجدول
-    sched_query = {}
-    if faculty_id:
-        sched_query["faculty_id"] = faculty_id
+    # 🏛 جلب الجدول عبر كل الكليات (بدون فلتر slot_number — الوقت الفعلي قد يمتد لفترات تالية)
+    sched_query = {"room_id": {"$nin": ["", None]}}
     if semester_id:
         sched_query["semester_id"] = semester_id
     if day_of_week:
         sched_query["$or"] = [{"day": day_of_week}, {"day_of_week": day_of_week}]
-    if slot_number is not None:
-        sched_query["slot_number"] = slot_number
-    slots = await db.weekly_schedule.find(sched_query).to_list(5000)
+    slots = await db.weekly_schedule.find(sched_query).to_list(10000)
 
-    # جلب أسماء المقررات/المعلمين للسياق
+    # أوقات الفترات لكل كلية معنيّة
+    fac_ids = {s.get("faculty_id", "") for s in slots} | {r.get("faculty_id", "") for r in rooms}
+    if faculty_id:
+        fac_ids.add(faculty_id)
+    fac_times = {}
+    for f in fac_ids:
+        if f:
+            fac_times[f] = await _faculty_slot_times(db, f)
+
+    # أسماء المقررات/المعلمين للسياق
     course_ids = {s.get("course_id") for s in slots if s.get("course_id")}
     teacher_ids = {s.get("teacher_id") for s in slots if s.get("teacher_id")}
     courses_map = {}
@@ -3225,26 +3231,59 @@ async def rooms_availability(
         async for t in db.teachers.find({"_id": {"$in": [ObjectId(x) for x in teacher_ids if x]}}):
             teachers_map[str(t["_id"])] = t
 
-    # فهرسة slots حسب (room, day, slot)
-    busy_map = {}  # (room_id, day, slot) -> slot info
+    # حساب الإشغال بالوقت الفعلي: (room_id, day) -> [محاضرات]
+    occupancy: dict = {}
     for s in slots:
         rid = s.get("room_id")
-        if not rid:
+        day = s.get("day") or s.get("day_of_week")
+        if not rid or not day:
             continue
-        key = (rid, s.get("day") or s.get("day_of_week"), s.get("slot_number"))
+        st_def, en_def = fac_times.get(s.get("faculty_id", ""), {}).get(s.get("slot_number"), ("", ""))
+        st, en, _ = _effective_times(s, st_def, en_def)
+        a, b = _t2m(st), _t2m(en)
+        if a is None or b is None:
+            continue
         course = courses_map.get(s.get("course_id", ""), {})
         teacher = teachers_map.get(s.get("teacher_id", ""), {})
-        busy_map[key] = {
+        sec_label = f"م{s.get('level', '')}" + (f" {s.get('section')}" if s.get("section") else "")
+        occupancy.setdefault((rid, day), []).append({
+            "_merge_key": s.get("merge_group_id") or str(s["_id"]),
+            "start_m": a,
+            "end_m": b,
             "course_name": course.get("name", ""),
             "course_code": course.get("code", ""),
             "teacher_name": teacher.get("full_name", ""),
             "section": s.get("section"),
             "level": s.get("level"),
-        }
+            "sections": [sec_label],
+            "slot_number": s.get("slot_number"),
+            "start_time": st,
+            "end_time": en,
+            "is_shared": bool(s.get("merge_group_id")),
+        })
+
+    # دمج شعب المحاضرة المشتركة في عنصر واحد
+    for key in occupancy:
+        merged: dict = {}
+        for o in occupancy[key]:
+            mk = o["_merge_key"]
+            if mk in merged:
+                if o["sections"][0] not in merged[mk]["sections"]:
+                    merged[mk]["sections"].append(o["sections"][0])
+            else:
+                merged[mk] = o
+        items = list(merged.values())
+        for o in items:
+            o["sections_label"] = " + ".join(o["sections"])
+            o.pop("_merge_key", None)
+            o.pop("sections", None)
+        items.sort(key=lambda x: x["start_m"])
+        occupancy[key] = items
 
     result = []
     for room in rooms:
         rid = str(room["_id"])
+        r_times = fac_times.get(room.get("faculty_id", "")) or (fac_times.get(faculty_id) if faculty_id else {}) or {}
         room_info = {
             "id": rid,
             "name": room.get("name", ""),
@@ -3253,18 +3292,28 @@ async def rooms_availability(
             "type": room.get("type", "regular"),
         }
         if day_of_week and slot_number is not None:
-            # حالة محددة لقاعة في وقت محدد
-            busy = busy_map.get((rid, day_of_week, slot_number))
-            room_info["status"] = "busy" if busy else "free"
-            room_info["details"] = busy
+            # نافذة الفترة المطلوبة (بأوقات كلية القاعة)
+            win_st, win_en = (fac_times.get(faculty_id, {}) if faculty_id else r_times).get(slot_number, ("", "")) or r_times.get(slot_number, ("", ""))
+            wa, wb = _t2m(win_st), _t2m(win_en)
+            overlapping = []
+            if wa is not None and wb is not None:
+                overlapping = [o for o in occupancy.get((rid, day_of_week), []) if o["start_m"] < wb and o["end_m"] > wa]
+            room_info["status"] = "busy" if overlapping else "free"
+            room_info["details"] = overlapping[0] if overlapping else None
+            room_info["lectures"] = overlapping
         else:
-            # heatmap: كل اليوم/الفترة
+            # heatmap: المحاضرة تظهر في كل فترة تتداخل معها فعلياً
             room_info["slots"] = []
-            for (br, bd, bs), info in busy_map.items():
-                if br == rid:
-                    room_info["slots"].append({
-                        "day": bd, "slot": bs, **info,
-                    })
+            for (orid, oday), items in occupancy.items():
+                if orid != rid:
+                    continue
+                for sn, (p_st, p_en) in r_times.items():
+                    pa, pb = _t2m(p_st), _t2m(p_en)
+                    if pa is None or pb is None:
+                        continue
+                    for o in items:
+                        if o["start_m"] < pb and o["end_m"] > pa:
+                            room_info["slots"].append({"day": oday, "slot": sn, **{k: v for k, v in o.items() if not k.startswith("_")}})
         result.append(room_info)
 
     # ترتيب: الفارغة أولاً عند الفلتر المحدد
@@ -5399,13 +5448,26 @@ async def get_free_rooms_for_slot(
     slot_number: int,
     current_user: dict = Depends(get_current_user),
 ):
-    """قاعات الكلية مع حالة انشغالها في (يوم، فترة) محددة — الانشغال يُفحص عالمياً عبر كل الجداول"""
+    """قاعات الكلية مع حالة انشغالها في (يوم، فترة) محددة — الانشغال يُفحص عالمياً عبر كل الجداول وبالوقت الفعلي"""
     db = get_db()
     rooms = await db.rooms.find({"faculty_id": faculty_id, "is_active": True}).to_list(300)
-    busy_ids = await db.weekly_schedule.distinct("room_id", {
-        "day": day, "slot_number": slot_number, "room_id": {"$nin": ["", None]}
-    })
-    busy_set = set(busy_ids)
+    slot_times = await _faculty_slot_times(db, faculty_id)
+    win_st, win_en = slot_times.get(slot_number, ("", ""))
+    wa, wb = _t2m(win_st), _t2m(win_en)
+    day_slots = await db.weekly_schedule.find({"day": day, "room_id": {"$nin": ["", None]}}).to_list(10000)
+    fac_ids = {s.get("faculty_id", "") for s in day_slots} - {""}
+    fac_times = {f: await _faculty_slot_times(db, f) for f in fac_ids}
+    busy_set = set()
+    for s in day_slots:
+        st_def, en_def = fac_times.get(s.get("faculty_id", ""), {}).get(s.get("slot_number"), ("", ""))
+        st, en, _ = _effective_times(s, st_def, en_def)
+        a, b = _t2m(st), _t2m(en)
+        if a is None or b is None or wa is None or wb is None:
+            if s.get("slot_number") == slot_number:
+                busy_set.add(s["room_id"])
+            continue
+        if a < wb and b > wa:
+            busy_set.add(s["room_id"])
     return [
         {
             "id": str(r["_id"]),

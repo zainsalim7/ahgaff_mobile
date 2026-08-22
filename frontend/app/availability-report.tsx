@@ -325,7 +325,16 @@ export default function AvailabilityReport() {
                         {r.type === 'lab' ? '🧪 مختبر' : '🏛 قاعة عادية'}
                         {r.capacity ? ` · سعة ${r.capacity}` : ''}
                       </Text>
-                      {r.details ? (
+                      {Array.isArray(r.lectures) && r.lectures.length > 0 ? (
+                        r.lectures.map((l: any, li: number) => (
+                          <Text key={li} style={{ fontSize: 10, color: '#c62828', textAlign: 'right', marginTop: 2 }}>
+                            🔒 {l.course_code} {l.course_name} - {l.teacher_name}
+                            {l.sections_label ? ` (${l.sections_label})` : ''}
+                            {l.start_time ? ` · ⏱ ${l.start_time}-${l.end_time}` : ''}
+                            {l.is_shared ? ' · 🔗 مشتركة' : ''}
+                          </Text>
+                        ))
+                      ) : r.details ? (
                         <Text style={{ fontSize: 10, color: '#c62828', textAlign: 'right', marginTop: 2 }}>
                           🔒 مشغولة: {r.details.course_code} {r.details.course_name} - {r.details.teacher_name}
                           {r.details.section ? ` (شعبة ${r.details.section})` : ''}
