@@ -1369,7 +1369,7 @@ async def update_schedule_slot(
         # ⏱ إزالة المدة المخصصة (العودة لمدة الفترة)
         if clear_duration:
             _dq = {"merge_group_id": _mg} if _mg else {"_id": ObjectId(slot_id)}
-            await db.weekly_schedule.update_many(_dq, {"$unset": {"duration_minutes": ""}})
+            await db.weekly_schedule.update_many(_dq, {"$unset": {"duration_minutes": "", "pinned_start_time": ""}})
         # 🆕 محاضرة مشتركة: المقرر/المعلم/القاعة/المدة تسري على كل المجموعة
         if _mg:
             shared = {k: v for k, v in update.items() if k in ("course_id", "teacher_id", "room_id", "duration_minutes", "slot_type")}
@@ -3645,7 +3645,9 @@ async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
             dur = int(s["duration_minutes"]) if s.get("duration_minutes") else max(base_end - base_start, 0)
         except (TypeError, ValueError):
             dur = max(base_end - base_start, 0)
-        eff_start = base_start
+        # 📌 تقديم مثبّت (رصّ): يبدأ قبل بداية الفترة الرسمية إن وُجد
+        pin = _t2m(s.get("pinned_start_time") or "")
+        eff_start = pin if (pin is not None and pin < base_start) else base_start
         for p in processed:
             if p["_end_m"] > eff_start and _slots_conflict(s, p):
                 eff_start = p["_end_m"]
@@ -3713,7 +3715,9 @@ def _simulate_day_times_mem(slots: list, slot_times: dict) -> list:
             dur = int(s["duration_minutes"]) if s.get("duration_minutes") else max(base_end - base_start, 0)
         except (TypeError, ValueError):
             dur = max(base_end - base_start, 0)
-        eff_start, pusher = base_start, None
+        pin = _t2m(s.get("pinned_start_time") or "")
+        eff_start = pin if (pin is not None and pin < base_start) else base_start
+        pusher = None
         for p in processed:
             if p["_end_m"] > eff_start and _slots_conflict(s, p["slot"]):
                 eff_start = p["_end_m"]
@@ -3984,12 +3988,153 @@ async def preview_schedule_impact(
     }
 
 
+# ===== ⏩ تقديم المحاضرات (رصّ السلسلة) بعد تقصير مدة أو حذف =====
+
+class CompactChainRequest(BaseModel):
+    faculty_id: str
+    day: str
+    anchor_slot_number: int
+    anchor_department_id: Optional[str] = ""
+    anchor_level: Optional[int] = None
+    anchor_section: Optional[str] = ""
+    anchor_teacher_id: Optional[str] = ""
+    anchor_room_id: Optional[str] = ""
+    anchor_slot_id: Optional[str] = ""  # يُستثنى هو ومجموعته من السلسلة (حالة تغيير المدة)
+    gap_minutes: int = 5
+    apply: bool = False
+
+
+@router.post("/weekly-schedule/compact-chain")
+async def compact_schedule_chain(
+    data: CompactChainRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """⏩ تقديم المحاضرات المرتبطة بمحاضرة قُصّرت/حُذفت: تبدأ كل محاضرة في السلسلة بعد
+    انتهاء سابقتها + فاصل، بدل الالتزام ببداية الفترة الرسمية.
+    apply=False: معاينة فقط. apply=True: تنفيذ (تثبيت pinned_start_time + حلحلة + مزامنة)."""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    gap = max(0, min(int(data.gap_minutes or 0), 60))
+    db = get_db()
+    slot_times = await _faculty_slot_times(db, data.faculty_id)
+    if not slot_times:
+        return {"changes": [], "gap_minutes": gap}
+    day_slots = await db.weekly_schedule.find({"faculty_id": data.faculty_id, "day": data.day}).to_list(2000)
+
+    # استثناء المرساة ومجموعتها من السلسلة (أوقاتها ثابتة كما هي)
+    exclude_ids = set()
+    if data.anchor_slot_id:
+        exclude_ids.add(data.anchor_slot_id)
+        try:
+            a_doc = await db.weekly_schedule.find_one({"_id": ObjectId(data.anchor_slot_id)})
+        except Exception:
+            a_doc = None
+        if a_doc and a_doc.get("merge_group_id"):
+            async for g in db.weekly_schedule.find({"merge_group_id": a_doc["merge_group_id"]}, {"_id": 1}):
+                exclude_ids.add(str(g["_id"]))
+
+    # الأوقات الفعلية الحالية
+    eff = {}
+    for s in day_slots:
+        st_def, en_def = slot_times.get(s.get("slot_number"), ("", ""))
+        st, en, _ = _effective_times(s, st_def, en_def)
+        a, b = _t2m(st), _t2m(en)
+        if a is not None and b is not None:
+            eff[str(s["_id"])] = (a, b)
+
+    ordered = sorted(
+        [s for s in day_slots if str(s["_id"]) in eff],
+        key=lambda x: (eff[str(x["_id"])][0], x.get("slot_number") or 0, str(x["_id"])),
+    )
+
+    # بناء السلسلة المرتبطة بالمرساة (انتقالياً عبر شعبة/أستاذ/قاعة)
+    anchor_attrs = {
+        "department_id": data.anchor_department_id or "",
+        "level": data.anchor_level,
+        "section": data.anchor_section or "",
+        "teacher_id": data.anchor_teacher_id or "",
+        "room_id": data.anchor_room_id or "",
+    }
+    chain, chain_attrs = [], [anchor_attrs]
+    for s in ordered:
+        sid = str(s["_id"])
+        if sid in exclude_ids or (s.get("slot_number") or 0) < data.anchor_slot_number:
+            continue
+        if any(_slots_conflict(s, c) for c in chain_attrs):
+            chain.append(s)
+            chain_attrs.append(s)
+    chain_ids = {str(s["_id"]) for s in chain}
+
+    # إعادة حساب أوقات السلسلة: البداية = نهاية آخر متعارِض سابق + الفاصل (تقديم فقط، لا تأخير)
+    fixed = [{"slot": s, "start_m": eff[str(s["_id"])][0], "end_m": eff[str(s["_id"])][1]}
+             for s in ordered if str(s["_id"]) not in chain_ids]
+    recomputed = []
+    changes = []
+    for s in chain:
+        sid = str(s["_id"])
+        cur_a, cur_b = eff[sid]
+        dur = cur_b - cur_a
+        proposed = None
+        for p in fixed + recomputed:
+            if _slots_conflict(s, p["slot"]):
+                proposed = p["end_m"] if proposed is None else max(proposed, p["end_m"])
+        new_a = cur_a if proposed is None else min(cur_a, proposed + gap)
+        new_b = new_a + dur
+        recomputed.append({"slot": s, "start_m": new_a, "end_m": new_b})
+        if new_a != cur_a:
+            changes.append({
+                "slot_id": sid,
+                "course_id": s.get("course_id", ""),
+                "department_id": s.get("department_id", ""),
+                "level": s.get("level"),
+                "section": s.get("section", "") or "",
+                "slot_number": s.get("slot_number"),
+                "old_start": _m2t(cur_a),
+                "old_end": _m2t(cur_b),
+                "new_start": _m2t(new_a),
+                "new_end": _m2t(new_b),
+            })
+
+    # دمج أعضاء المجموعة المشتركة في عرض واحد + إثراء الأسماء
+    course_ids = {c["course_id"] for c in changes if c["course_id"]}
+    course_names = {}
+    if course_ids:
+        try:
+            async for c in db.courses.find({"_id": {"$in": [ObjectId(x) for x in course_ids]}}, {"name": 1}):
+                course_names[str(c["_id"])] = c.get("name", "")
+        except Exception:
+            pass
+    for c in changes:
+        c["course_name"] = course_names.get(c["course_id"], "")
+
+    if not data.apply or not changes:
+        return {"changes": changes, "gap_minutes": gap, "applied": False}
+
+    # ✅ التنفيذ: تثبيت البدايات الجديدة ثم حلحلة (المحرك يحترم التثبيت) ومزامنة المحاضرات القادمة
+    for c in changes:
+        await db.weekly_schedule.update_one(
+            {"_id": ObjectId(c["slot_id"])},
+            {"$set": {"pinned_start_time": c["new_start"]}},
+        )
+    await _resolve_day_times(db, data.faculty_id, data.day)
+    synced = await _resync_slot_times_for_day(db, data.faculty_id, data.day)
+    await log_activity(current_user, "compact_schedule", "weekly_schedule", data.anchor_slot_id or "", None,
+                       {"summary": f"تقديم {len(changes)} محاضرة ({data.day}) بفاصل {gap} دقيقة: " +
+                                   "، ".join(f"«{c['course_name']}» {c['old_start']}←{c['new_start']}" for c in changes[:5]),
+                        "count": len(changes), "gap": gap})
+    msg = f"⏩ تم تقديم {len(changes)} محاضرة"
+    if synced:
+        msg += f" 🕑 وتحديث أوقات {synced} محاضرة قادمة"
+    return {"changes": changes, "gap_minutes": gap, "applied": True, "message": msg}
+
+
 # ===== 📜 سجل تغييرات الجدول =====
 
 _SCHEDULE_LOG_ACTIONS = [
     "create_schedule_slot", "update_schedule_slot", "delete_schedule_slot",
     "move_schedule_slot", "swap_schedule_slots", "merge_schedule_slots",
     "cascade_slot_teacher", "rebalance_schedule", "clear_schedule",
+    "compact_schedule",
     "auto_place_unscheduled", "generate_lectures_from_schedule",
     "auto_generate_schedule", "import_master_schedule_excel",
 ]
@@ -4985,7 +5130,8 @@ async def move_schedule_slot(
     try:
         await db.weekly_schedule.update_many(
             {"_id": {"$in": [g["_id"] for g in group]}},
-            {"$set": {"day": data.target_day, "slot_number": data.target_slot_number}}
+            {"$set": {"day": data.target_day, "slot_number": data.target_slot_number},
+             "$unset": {"pinned_start_time": ""}}
         )
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail={"message": "تعارض في الجدول (مرفوض من قاعدة البيانات)", "conflicts": ["تعارض فريد في قاعدة البيانات"]})
@@ -5052,7 +5198,8 @@ async def swap_schedule_slots(
     # حذف الوثائق ثم إعادة إدراجها بالمواقع المتبادلة (نفس الـ _id) لتفادي تعارض الفهارس الفريدة المؤقت
     all_ids = [g["_id"] for g in group_a + group_b]
     await db.weekly_schedule.delete_many({"_id": {"$in": all_ids}})
-    new_docs = [{**g, **pos_b} for g in group_a] + [{**g, **pos_a} for g in group_b]
+    new_docs = [{**{k: v for k, v in g.items() if k != "pinned_start_time"}, **pos_b} for g in group_a] + \
+               [{**{k: v for k, v in g.items() if k != "pinned_start_time"}, **pos_a} for g in group_b]
     try:
         await db.weekly_schedule.insert_many(new_docs)
     except DuplicateKeyError:

@@ -179,6 +179,7 @@ ACTION_TRANSLATIONS = {
     "cascade_slot_teacher": "تغيير أستاذ المقرر من الجدول",
     "rebalance_schedule": "موازنة الساعات الأسبوعية",
     "clear_schedule": "مسح الجدول الأسبوعي",
+    "compact_schedule": "تقديم محاضرات (رصّ الجدول)",
     "import_master_schedule_excel": "استيراد الجدول الشامل من Excel",
     "move_schedule_slot": "نقل محاضرة في الجدول الأسبوعي",
     "swap_schedule_slots": "تبديل محاضرتين في الجدول الأسبوعي",

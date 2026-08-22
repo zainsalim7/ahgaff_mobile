@@ -70,6 +70,63 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
 
   const PRESET_DURATIONS = ['45', '60', '90', '120', '180'];
 
+  // ⏩ تقديم المحاضرات (رصّ السلسلة) بعد تقصير/حذف
+  const [compactModal, setCompactModal] = useState<any>(null);
+  const [compactGap, setCompactGap] = useState('5');
+
+  const buildCompactPayload = (entry: any, excludeAnchor: boolean, gap: number, apply: boolean) => ({
+    faculty_id: facultyId,
+    day: entry.day,
+    anchor_slot_number: entry.slot_number,
+    anchor_department_id: entry.department_id || '',
+    anchor_level: entry.level,
+    anchor_section: entry.section || '',
+    anchor_teacher_id: entry.teacher_id || '',
+    anchor_room_id: entry.room_id || '',
+    anchor_slot_id: excludeAnchor ? entry.id : '',
+    gap_minutes: gap,
+    apply,
+  });
+
+  const maybeOfferCompact = async (entry: any, excludeAnchor: boolean) => {
+    if (!entry) return;
+    try {
+      const res = await api.post('/weekly-schedule/compact-chain', buildCompactPayload(entry, excludeAnchor, 5, false));
+      if ((res.data?.changes || []).length) {
+        setCompactGap('5');
+        setCompactModal({ entry, excludeAnchor, changes: res.data.changes });
+      }
+    } catch { /* عرض اختياري */ }
+  };
+
+  const refreshCompact = async (gapStr: string) => {
+    setCompactGap(gapStr);
+    if (!compactModal) return;
+    const g = parseInt(gapStr, 10);
+    if (isNaN(g) || g < 0 || g > 60) return;
+    try {
+      const res = await api.post('/weekly-schedule/compact-chain', buildCompactPayload(compactModal.entry, compactModal.excludeAnchor, g, false));
+      setCompactModal((m: any) => (m ? { ...m, changes: res.data?.changes || [] } : m));
+    } catch { /* تجاهل */ }
+  };
+
+  const applyCompact = async () => {
+    if (!compactModal) return;
+    const g = parseInt(compactGap, 10);
+    if (isNaN(g) || g < 0 || g > 60) {
+      showMsg('error', '❌ الفاصل يجب أن يكون بين 0 و60 دقيقة');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.post('/weekly-schedule/compact-chain', buildCompactPayload(compactModal.entry, compactModal.excludeAnchor, g, true));
+      showMsg('success', `✅ ${res.data?.message || 'تم تقديم المحاضرات'}`);
+      setCompactModal(null);
+      await load();
+    } catch (e: any) { handleConflictError(e); }
+    finally { setBusy(false); }
+  };
+
   const openDurationModal = () => {
     if (!selected) return;
     const cur = selected.duration_minutes ? String(selected.duration_minutes) : '';
@@ -117,10 +174,11 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
 
   const executeDurationChange = async (dur: number) => {
     if (!durationModal) return;
+    const anchor = durationModal;
     setImpactPreview(null);
     setBusy(true);
     try {
-      const res = await api.put(`/weekly-schedule/${durationModal.id}`, {
+      const res = await api.put(`/weekly-schedule/${anchor.id}`, {
         duration_minutes: dur,
       });
       // ⚖️ فحص تجاوز الساعات الأسبوعية المعتمدة للمقرر
@@ -149,6 +207,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
             setDurationModal(null);
             setSelected(null);
             await load();
+            await maybeOfferCompact(anchor, true);
             return;
           }
         } else {
@@ -162,6 +221,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       setDurationModal(null);
       setSelected(null);
       await load();
+      await maybeOfferCompact(anchor, true);
     } catch (e: any) { handleConflictError(e); }
     finally { setBusy(false); }
   };
@@ -597,13 +657,15 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
 
   const executeDelete = async () => {
     if (!selected) return;
+    const anchor = selected;
     setImpactPreview(null);
     setBusy(true);
     try {
-      await api.delete(`/weekly-schedule/${selected.id}`);
-      showMsg('success', `✅ تم حذف "${selected.course_name}" من الجدول — عاد المقرر لقائمة غير المدرجة`);
+      await api.delete(`/weekly-schedule/${anchor.id}`);
+      showMsg('success', `✅ تم حذف "${anchor.course_name}" من الجدول — عاد المقرر لقائمة غير المدرجة`);
       setSelected(null);
       await load();
+      await maybeOfferCompact(anchor, false);
     } catch (e: any) { handleConflictError(e); }
     finally { setBusy(false); }
   };
@@ -1199,6 +1261,66 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
                 backgroundColor: '#455a64', color: '#fff', fontSize: 13, fontWeight: 700,
               }} data-testid="change-log-close-btn">إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⏩ نافذة عرض تقديم المحاضرات (رصّ السلسلة) */}
+      {compactModal && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => !busy && setCompactModal(null)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} data-testid="compact-offer-modal" style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 640, maxWidth: '94%',
+            maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.3)', direction: 'rtl',
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>
+              ⏩ توفّرت فجوة — هل تريد تقديم المحاضرات التالية؟
+            </div>
+            <div style={{ fontSize: 12, color: '#5b6678', marginBottom: 12, textAlign: 'right', lineHeight: 1.8 }}>
+              بدل الالتزام ببداية الفترة الرسمية، يمكن أن تبدأ كل محاضرة مرتبطة بعد انتهاء سابقتها مباشرة + الفاصل أدناه. لن يُنفَّذ شيء قبل موافقتك.
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, justifyContent: 'flex-start' }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: '#333' }}>الفاصل بين المحاضرات (دقائق):</span>
+              <input
+                type="number" min={0} max={60} value={compactGap}
+                onChange={(ev: any) => refreshCompact(ev.target.value)}
+                data-testid="compact-gap-input"
+                style={{ width: 70, padding: '6px 8px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, textAlign: 'center', backgroundColor: '#f7f9fc' }}
+              />
+            </div>
+            {(compactModal.changes || []).length === 0 ? (
+              <div style={{ fontSize: 12.5, color: '#8a94a6', textAlign: 'center', padding: 16 }}>
+                بهذا الفاصل لا يوجد ما يمكن تقديمه
+              </div>
+            ) : (compactModal.changes || []).map((c: any, i: number) => (
+              <div key={i} data-testid={`compact-change-${i}`} style={{
+                border: '1px solid #a5d6a7', backgroundColor: '#e8f5e9', borderRadius: 8,
+                padding: '8px 10px', marginBottom: 6, textAlign: 'right',
+              }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: '#333' }}>
+                  {c.course_name || 'محاضرة'}
+                  <span style={{ fontWeight: 400, color: '#777', fontSize: 11 }}>
+                    {c.level ? ` — م${c.level}` : ''}{c.section ? ` شعبة ${c.section}` : ''} · فترة {c.slot_number}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: '#444', marginTop: 3 }}>
+                  <b>{c.old_start}–{c.old_end}</b> ← <b style={{ color: '#2e7d32' }}>{c.new_start}–{c.new_end}</b>
+                  <span style={{ color: '#2e7d32', fontSize: 10.5 }}> (تقديم)</span>
+                </div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button onClick={applyCompact} disabled={busy || (compactModal.changes || []).length === 0} data-testid="compact-apply-btn" style={{
+                flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                backgroundColor: (compactModal.changes || []).length ? '#2e7d32' : '#b7c2b8', color: '#fff', fontSize: 13.5, fontWeight: 700,
+              }}>{busy ? 'جاري التنفيذ...' : '⏩ تقديم المحاضرات'}</button>
+              <button onClick={() => setCompactModal(null)} disabled={busy} data-testid="compact-cancel-btn" style={{
+                flex: 0.8, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
+                backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
+              }}>لا، إبقاء الأوقات الرسمية</button>
             </div>
           </div>
         </div>
