@@ -1,0 +1,41 @@
+{
+  "summary": "Tested the new Teacher Attendance / Lecture Execution report (تقرير حضور الأساتذة وتنفيذ المحاضرات) end-to-end. Backend: created /app/backend/tests/test_teacher_attendance_report.py with 15 pytest cases (shape, summary math consistency, grouped-vs-flat totals, date defaults, faculty/department filters, invalid/reversed date ranges, auth 403, excel+pdf export payload signatures) — 15/15 pass. Frontend: admin login -> Reports card -> /report-teacher-attendance; date range 2026-04-01..2026-08-30 returns summary 19 محاضرة / 1 نُفّذت / 18 غياب / 0 ملغاة / 5.3%; both tabs (حسب الأستاذ with expandable teacher cards + status pills, حسب المحاضرات flat list) render correctly in Arabic RTL; faculty filter 19->10 (كلية الشريعة) and 9 (كلية البنات), department filter sends department_id and dept picker correctly resets when faculty changes (verified via intercepted network requests); Excel (.xlsx) and PDF downloads both trigger with correct filenames. Mobile 390px layout renders acceptably. Two defects found: (1) the new data-testid attributes were not reaching the DOM on TouchableOpacity (RN Web needs testID) — fixed by me; (2) typing a date manually into the date inputs wipes the value (DateField declared inside the component => remount on every keystroke) — needs main-agent fix.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/reports/teacher-attendance", "issue": "11 of 19 lectures in the test range are grouped under 'غير معيّن' because their courses have no teacher_id — per-teacher accountability is therefore incomplete. Consider falling back to lecture.teacher_id / schedule teacher, or surfacing a warning row for unassigned lectures."},
+      {"endpoint": "/api/reports/teacher-attendance", "issue": "Non-date strings (start_date=not-a-date) are accepted and silently return an empty report (no 400 validation)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "report-teacher-attendance.tsx DateField", "issue": "HIGH: `DateField` is declared inside the screen component, so every state change recreates the component type and React remounts the <input type=date>. Typing a date manually (keyboard) ends with BOTH fields empty and the report runs for today (0 results). Repro: focus 'من تاريخ', type 04/01/2026 -> value stays empty. Fix: hoist DateField outside the component (or inline the JSX) and add validation for empty / from>to ranges.", "selector": "[data-testid=\"ta-date-from\"], [data-testid=\"ta-date-to\"]", "priority": "HIGH"},
+      {"component": "report-teacher-attendance.tsx / reports.tsx", "issue": "FIXED BY TESTER: new interactive elements used `data-testid=` on RN `TouchableOpacity`, which react-native-web drops (it maps `testID` -> data-testid). None of run-report-btn / tab-* / export-* / report-teacher-attendance-btn existed in the DOM. Converted them to `testID` and added data-testid to the two date inputs (ta-date-from / ta-date-to). NOTE: the other pre-existing report cards in reports.tsx (report-student-btn, report-course-btn, report-daily-btn, report-teacher-delays-btn, report-lesson-completion-btn, etc.) still use data-testid and remain untestable — main agent should migrate them to testID.", "selector": "[data-testid=\"report-*-btn\"]", "priority": "MEDIUM"},
+      {"component": "report-teacher-attendance.tsx status pills", "issue": "STATUS_META[l.status] is dereferenced without a fallback; any status the backend adds later (or an empty status) throws a render crash. Add a default entry.", "selector": ".statusPill", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/report-teacher-attendance", "issues": ["Native <input type=date> renders in browser locale (mm/dd/yyyy) inside an Arabic RTL screen — inconsistent with the rest of the app which uses styled pickers elsewhere", "The 'من تاريخ' / 'إلى تاريخ' labels are right-aligned inside each field box, so in RTL the 'من تاريخ' label visually sits next to the neighbouring field and can be misread", "Empty/invalid range gives no inline validation message, just an empty list"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_teacher_attendance_report.py", "/app/test_reports/pytest/teacher_attendance.xml"],
+  "action_items": [
+    "Hoist DateField out of TeacherAttendanceReport (or inline the inputs) so manual date typing does not reset the value; add validation for empty date / from>to.",
+    "Add a fallback entry for unknown lecture status in STATUS_META to avoid render crashes.",
+    "Migrate remaining data-testid usages on TouchableOpacity in reports.tsx (and other screens) to testID so they reach the DOM.",
+    "Decide product behaviour for lectures whose course has no teacher_id (11/19 in the test data land in 'غير معيّن')."
+  ],
+  "critical_code_review_comments": [
+    "report-teacher-attendance.tsx: inner component definition (DateField) causes remounts on every keystroke — classic React anti-pattern, root cause of the date input bug.",
+    "server.py _build_teacher_attendance_report: teacher lookup is done per-teacher with await inside the lecture loop (cached, so OK), but department/faculty filtering happens after loading ALL lectures in the range (limit 10000) — consider filtering at the query level for larger ranges.",
+    "server.py: start_date/end_date are plain strings with no format validation; a malformed value silently yields an empty report instead of 400."
+  ],
+  "updated_files": ["/app/frontend/app/report-teacher-attendance.tsx", "/app/frontend/app/reports.tsx", "/app/backend/tests/test_teacher_attendance_report.py"],
+  "success_rate": {"backend": "100% (15/15 pytest)", "frontend": "85% (navigation, run, tabs, filters, both exports pass; manual date typing fails)"},
+  "seed_data_creation": "None — used existing lectures in 2026-04-01..2026-08-30.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin / admin123 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "IMPORTANT: this app is react-native-web — data-testid on TouchableOpacity does NOT render; use testID in source and query [data-testid=...] in Playwright. Login: fill the two inputs then click the 'تسجيل الدخول' text (Enter key does not submit). Report screen testids: ta-date-from, ta-date-to, today-chip, run-report-btn, tab-by-teacher, tab-by-lecture, teacher-att-<id>, export-teacher-att-excel, export-teacher-att-pdf, report-teacher-attendance-btn. Use page.fill() for dates (typing is broken). Backend regression suite: pytest /app/backend/tests/test_teacher_attendance_report.py.",
+  "rca_of_the_issue": "Date-typing bug: DateField is a function component declared in the body of TeacherAttendanceReport, so each render produces a new component type; React unmounts/remounts the underlying <input type=date>, discarding in-progress input and leaving state '' — the report then runs with empty dates and the backend defaults to today (0 rows). Testid bug: react-native-web only forwards the `testID` prop to a data-testid attribute; raw `data-testid` props on TouchableOpacity are stripped, so the new controls were invisible to automation."
+}

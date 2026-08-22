@@ -11885,6 +11885,424 @@ async def export_teacher_delays_report(
     )
 
 
+# ===== تقرير حضور الأساتذة / تنفيذ المحاضرات =====
+_TEACHER_ATT_STATUS_LABELS = {
+    "executed": "نُفّذت",
+    "absent": "غياب / لم تُنفّذ",
+    "cancelled": "ملغاة",
+    "pending": "لم يحن وقتها",
+}
+
+
+async def _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id):
+    """يبني بيانات تقرير حضور الأساتذة وتنفيذ المحاضرات لفترة محددة."""
+    # ضبط التواريخ (نصية بصيغة YYYY-MM-DD)
+    if not start_date and not end_date:
+        today = get_yemen_time().strftime("%Y-%m-%d")
+        start_date = end_date = today
+    if start_date and not end_date:
+        end_date = start_date
+    if end_date and not start_date:
+        start_date = end_date
+
+    lectures = await db.lectures.find({
+        "date": {"$gte": start_date, "$lte": end_date}
+    }).to_list(10000)
+
+    # جلب المقررات المطلوبة دفعة واحدة
+    course_ids = list({l.get("course_id") for l in lectures if l.get("course_id")})
+    obj_ids = []
+    for cid in course_ids:
+        try:
+            obj_ids.append(ObjectId(cid))
+        except Exception:
+            pass
+    courses = await db.courses.find({"_id": {"$in": obj_ids}}).to_list(5000)
+    courses_map = {str(c["_id"]): c for c in courses}
+
+    # الأقسام والكليات
+    dept_ids = list({c.get("department_id") for c in courses if c.get("department_id")})
+    dept_obj_ids = []
+    for d in dept_ids:
+        try:
+            dept_obj_ids.append(ObjectId(d))
+        except Exception:
+            pass
+    depts = await db.departments.find({"_id": {"$in": dept_obj_ids}}).to_list(500)
+    depts_map = {str(d["_id"]): d for d in depts}
+
+    now = get_yemen_time()
+
+    def effective_status(lec):
+        st = lec.get("status", LectureStatus.SCHEDULED)
+        if st == LectureStatus.COMPLETED:
+            return "executed"
+        if st == LectureStatus.CANCELLED:
+            return "cancelled"
+        if st == LectureStatus.ABSENT:
+            return "absent"
+        # scheduled: إذا انتهى وقتها وتاريخها قد مضى فهي غياب فعلياً
+        try:
+            end_dt = datetime.strptime(f"{lec['date']} {lec['end_time']}", "%Y-%m-%d %H:%M").replace(tzinfo=YEMEN_TIMEZONE)
+            if now > end_dt and not lec.get("status_override"):
+                return "absent"
+        except Exception:
+            pass
+        return "pending"
+
+    teacher_cache = {}
+
+    async def get_teacher(tid):
+        if tid in teacher_cache:
+            return teacher_cache[tid]
+        t = None
+        try:
+            t = await db.teachers.find_one({"_id": ObjectId(tid)})
+            if not t:
+                t = await db.users.find_one({"_id": ObjectId(tid)})
+        except Exception:
+            pass
+        teacher_cache[tid] = t
+        return t
+
+    by_teacher = {}
+    flat_lectures = []
+
+    for lec in lectures:
+        course = courses_map.get(lec.get("course_id"))
+        if not course:
+            continue
+
+        dept_id = course.get("department_id", "")
+        dept = depts_map.get(dept_id)
+
+        # فلترة القسم/الكلية
+        if department_id and dept_id != department_id:
+            continue
+        if faculty_id:
+            if not dept or dept.get("faculty_id") != faculty_id:
+                continue
+
+        teacher_id = course.get("teacher_id")
+        if teacher_id:
+            teacher = await get_teacher(teacher_id)
+            teacher_name = teacher.get("full_name") if teacher else "غير معروف"
+            employee_id = teacher.get("teacher_id", "") if teacher else ""
+            tkey = teacher_id
+        else:
+            teacher_name = "غير معيّن"
+            employee_id = ""
+            tkey = "__unassigned__"
+
+        est = effective_status(lec)
+        dept_name = dept.get("name", "") if dept else ""
+        sec = course.get("section", "")
+        lvl = course.get("level", "")
+
+        lec_item = {
+            "lecture_id": str(lec["_id"]),
+            "date": lec.get("date", ""),
+            "course_name": course.get("name", ""),
+            "course_code": course.get("code", ""),
+            "department_name": dept_name,
+            "level": lvl,
+            "section": sec,
+            "start_time": lec.get("start_time", ""),
+            "end_time": lec.get("end_time", ""),
+            "room": lec.get("room", ""),
+            "status": est,
+            "status_label": _TEACHER_ATT_STATUS_LABELS.get(est, est),
+            "teacher_id": teacher_id or "",
+            "teacher_name": teacher_name,
+            "employee_id": employee_id,
+        }
+        flat_lectures.append(lec_item)
+
+        if tkey not in by_teacher:
+            by_teacher[tkey] = {
+                "teacher_id": teacher_id or "",
+                "teacher_name": teacher_name,
+                "employee_id": employee_id,
+                "total": 0,
+                "executed": 0,
+                "absent": 0,
+                "cancelled": 0,
+                "pending": 0,
+                "lectures": [],
+            }
+        entry = by_teacher[tkey]
+        entry["total"] += 1
+        entry[est] += 1
+        entry["lectures"].append(lec_item)
+
+    # حساب نسبة التنفيذ لكل أستاذ
+    teachers_list = []
+    for entry in by_teacher.values():
+        denom = entry["executed"] + entry["absent"]
+        entry["execution_rate"] = round(entry["executed"] / denom * 100, 1) if denom > 0 else 0
+        entry["lectures"].sort(key=lambda x: (x["date"], x["start_time"]))
+        teachers_list.append(entry)
+
+    # ترتيب: الأكثر غياباً أولاً ثم الاسم
+    teachers_list.sort(key=lambda x: (-x["absent"], x["teacher_name"]))
+    flat_lectures.sort(key=lambda x: (x["date"], x["start_time"], x["teacher_name"]))
+
+    total_executed = sum(t["executed"] for t in teachers_list)
+    total_absent = sum(t["absent"] for t in teachers_list)
+    total_cancelled = sum(t["cancelled"] for t in teachers_list)
+    total_pending = sum(t["pending"] for t in teachers_list)
+    total_lectures = len(flat_lectures)
+    denom = total_executed + total_absent
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "teachers": teachers_list,
+        "lectures": flat_lectures,
+        "summary": {
+            "total_lectures": total_lectures,
+            "total_teachers": len(teachers_list),
+            "teachers_with_absence": len([t for t in teachers_list if t["absent"] > 0]),
+            "executed": total_executed,
+            "absent": total_absent,
+            "cancelled": total_cancelled,
+            "pending": total_pending,
+            "execution_rate": round(total_executed / denom * 100, 1) if denom > 0 else 0,
+        },
+    }
+
+
+@api_router.get("/reports/teacher-attendance")
+async def get_teacher_attendance_report(
+    start_date: str = None,
+    end_date: str = None,
+    department_id: str = None,
+    faculty_id: str = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """تقرير حضور الأساتذة وتنفيذ المحاضرات (من حضر ونفّذ ومن غاب)."""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, Permission.VIEW_REPORTS):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    return await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id)
+
+
+@api_router.get("/reports/teacher-attendance/export/excel")
+async def export_teacher_attendance_excel(
+    start_date: str = None,
+    end_date: str = None,
+    department_id: str = None,
+    faculty_id: str = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """تصدير تقرير حضور الأساتذة إلى Excel."""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, Permission.EXPORT_REPORTS):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    report = await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id)
+
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from io import BytesIO
+
+    wb = openpyxl.Workbook()
+    # ورقة 1: ملخص الأساتذة
+    ws = wb.active
+    ws.title = "ملخص الأساتذة"
+    ws.sheet_view.rightToLeft = True
+    ws.merge_cells('A1:G1')
+    period = f"{report['start_date']}" if report['start_date'] == report['end_date'] else f"{report['start_date']} إلى {report['end_date']}"
+    ws['A1'] = f"تقرير حضور الأساتذة وتنفيذ المحاضرات — {period}"
+    ws['A1'].font = Font(bold=True, size=14)
+    ws['A1'].alignment = Alignment(horizontal='center')
+    s = report['summary']
+    ws['A3'] = f"إجمالي المحاضرات: {s['total_lectures']}"
+    ws['C3'] = f"نُفّذت: {s['executed']}"
+    ws['E3'] = f"غياب: {s['absent']}"
+    ws['G3'] = f"نسبة التنفيذ: {s['execution_rate']}%"
+
+    headers = ['المعلم', 'الرقم الوظيفي', 'إجمالي', 'نُفّذت', 'غياب', 'ملغاة', 'نسبة التنفيذ %']
+    header_fill = PatternFill(start_color='1565C0', end_color='1565C0', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=5, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+    for row, t in enumerate(report['teachers'], 6):
+        ws.cell(row=row, column=1, value=t['teacher_name'])
+        ws.cell(row=row, column=2, value=t['employee_id'])
+        ws.cell(row=row, column=3, value=t['total'])
+        ws.cell(row=row, column=4, value=t['executed'])
+        ws.cell(row=row, column=5, value=t['absent'])
+        ws.cell(row=row, column=6, value=t['cancelled'])
+        ws.cell(row=row, column=7, value=t['execution_rate'])
+        if t['absent'] > 0:
+            for col in range(1, 8):
+                ws.cell(row=row, column=col).fill = PatternFill(start_color='FFEBEE', end_color='FFEBEE', fill_type='solid')
+    for col in range(1, 8):
+        ws.column_dimensions[chr(64 + col)].width = 18
+
+    # ورقة 2: تفاصيل المحاضرات
+    ws2 = wb.create_sheet("تفاصيل المحاضرات")
+    ws2.sheet_view.rightToLeft = True
+    dheaders = ['التاريخ', 'المعلم', 'المقرر', 'القسم', 'المستوى', 'الشعبة', 'من', 'إلى', 'الحالة']
+    for col, h in enumerate(dheaders, 1):
+        cell = ws2.cell(row=1, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+    for row, l in enumerate(report['lectures'], 2):
+        ws2.cell(row=row, column=1, value=l['date'])
+        ws2.cell(row=row, column=2, value=l['teacher_name'])
+        ws2.cell(row=row, column=3, value=l['course_name'])
+        ws2.cell(row=row, column=4, value=l['department_name'])
+        ws2.cell(row=row, column=5, value=str(l['level']))
+        ws2.cell(row=row, column=6, value=l['section'])
+        ws2.cell(row=row, column=7, value=l['start_time'])
+        ws2.cell(row=row, column=8, value=l['end_time'])
+        ws2.cell(row=row, column=9, value=l['status_label'])
+        if l['status'] == 'absent':
+            fill = PatternFill(start_color='FFEBEE', end_color='FFEBEE', fill_type='solid')
+        elif l['status'] == 'executed':
+            fill = PatternFill(start_color='E8F5E9', end_color='E8F5E9', fill_type='solid')
+        else:
+            fill = None
+        if fill:
+            for col in range(1, 10):
+                ws2.cell(row=row, column=col).fill = fill
+    for col in range(1, 10):
+        ws2.column_dimensions[chr(64 + col)].width = 16
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=ar_export_headers(ar_export_filename("تقرير حضور الأساتذة", ext="xlsx"))
+    )
+
+
+@api_router.get("/reports/teacher-attendance/export/pdf")
+async def export_teacher_attendance_pdf(
+    start_date: str = None,
+    end_date: str = None,
+    department_id: str = None,
+    faculty_id: str = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """تصدير تقرير حضور الأساتذة إلى PDF."""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, Permission.EXPORT_REPORTS):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    report = await _build_teacher_attendance_report(start_date, end_date, department_id, faculty_id)
+
+    from reportlab.lib.pagesizes import landscape
+
+    font_path = Path(__file__).parent / "fonts" / "Amiri-Regular.ttf"
+    arabic_font = "Helvetica"
+    try:
+        pdfmetrics.registerFont(TTFont('Amiri', str(font_path)))
+        arabic_font = 'Amiri'
+    except Exception:
+        pass
+
+    def _ar(txt):
+        try:
+            return get_display(arabic_reshaper.reshape(str(txt if txt is not None else "")))
+        except Exception:
+            return str(txt if txt is not None else "")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=18, leftMargin=18, topMargin=22, bottomMargin=22)
+    period = f"{report['start_date']}" if report['start_date'] == report['end_date'] else f"{report['start_date']} — {report['end_date']}"
+    s = report['summary']
+    styles_title = ParagraphStyle("t", fontName=arabic_font, fontSize=15, alignment=TA_CENTER, textColor=colors.HexColor("#1a2540"))
+    styles_sub = ParagraphStyle("d", fontName=arabic_font, fontSize=10, alignment=TA_CENTER, textColor=colors.HexColor("#5b6678"), spaceBefore=4, spaceAfter=10)
+    elements = [
+        Paragraph(_ar("تقرير حضور الأساتذة وتنفيذ المحاضرات"), styles_title),
+        Paragraph(_ar(f"الفترة: {period}  |  نُفّذت: {s['executed']}  |  غياب: {s['absent']}  |  ملغاة: {s['cancelled']}  |  نسبة التنفيذ: {s['execution_rate']}%"), styles_sub),
+    ]
+
+    # جدول ملخص الأساتذة
+    elements.append(Paragraph(_ar("ملخص الأساتذة"), ParagraphStyle("h", fontName=arabic_font, fontSize=12, alignment=TA_RIGHT, textColor=colors.HexColor("#1565C0"), spaceAfter=6)))
+    theads = ["نسبة التنفيذ %", "ملغاة", "غياب", "نُفّذت", "إجمالي", "الرقم الوظيفي", "المعلم", "#"]
+    trows = [[_ar(h) for h in theads]]
+    for i, t in enumerate(report['teachers'], 1):
+        trows.append([
+            _ar(f"{t['execution_rate']}%"),
+            str(t['cancelled']),
+            str(t['absent']),
+            str(t['executed']),
+            str(t['total']),
+            _ar(t['employee_id'] or "-"),
+            _ar(t['teacher_name']),
+            str(i),
+        ])
+    ttable = Table(trows, colWidths=[70, 45, 45, 45, 50, 90, 220, 25], repeatRows=1)
+    ttable.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), arabic_font),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565C0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f6fc")]),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d4e4")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(ttable)
+    elements.append(Spacer(1, 16))
+
+    # جدول تفاصيل المحاضرات
+    elements.append(Paragraph(_ar("تفاصيل المحاضرات"), ParagraphStyle("h2", fontName=arabic_font, fontSize=12, alignment=TA_RIGHT, textColor=colors.HexColor("#1565C0"), spaceAfter=6)))
+    dheads = ["الحالة", "إلى", "من", "الشعبة", "المستوى", "القسم", "المقرر", "المعلم", "التاريخ"]
+    drows = [[_ar(h) for h in dheads]]
+    status_row_colors = []
+    for l in report['lectures']:
+        drows.append([
+            _ar(l['status_label']),
+            _ar(l['end_time']),
+            _ar(l['start_time']),
+            _ar(l['section'] or "-"),
+            _ar(str(l['level'])),
+            _ar(l['department_name']),
+            _ar(l['course_name']),
+            _ar(l['teacher_name']),
+            _ar(l['date']),
+        ])
+        status_row_colors.append(l['status'])
+    dtable = Table(drows, colWidths=[85, 50, 50, 45, 50, 130, 150, 150, 70], repeatRows=1)
+    dstyle = [
+        ("FONTNAME", (0, 0), (-1, -1), arabic_font),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 8.5),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565C0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d4e4")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for idx, st in enumerate(status_row_colors, 1):
+        if st == 'absent':
+            dstyle.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#ffebee")))
+        elif st == 'executed':
+            dstyle.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#e8f5e9")))
+    dtable.setStyle(TableStyle(dstyle))
+    elements.append(dtable)
+
+    doc.build(elements)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/pdf",
+        headers=ar_export_headers(ar_export_filename("تقرير حضور الأساتذة", ext="pdf"))
+    )
+
+
+
 @api_router.get("/reports/teacher-workload")
 async def get_teacher_workload_report(
     teacher_id: Optional[str] = None,

@@ -153,3 +153,13 @@
 - ✅ POST /api/students/{id}/photo/revoke: يسحب photo_path + يفتح photo_upload_allowed + إشعار للطالب + log (revoke_student_photo).
 - ✅ photo-approvals.tsx: زر برتقالي «إلغاء الاعتماد» بجانب «البطاقة» مع رسالة تأكيد.
 - ✅ اختبار: curl (سحب + التحقق من الحقول + استرجاع بيانات المعاينة) + سكرينشوت.
+
+## 2026-06: تقرير حضور الأساتذة / تنفيذ المحاضرات (جديد)
+- ✅ Backend (server.py ~11888): _build_teacher_attendance_report + 3 نقاط:
+  - GET /api/reports/teacher-attendance (start_date,end_date,department_id,faculty_id)
+  - GET /api/reports/teacher-attendance/export/excel (ورقتان: ملخص الأساتذة + تفاصيل المحاضرات)
+  - GET /api/reports/teacher-attendance/export/pdf (Amiri RTL: جدول ملخص + جدول تفاصيل ملوّن بالحالة)
+- تعريف الحالة: completed=نُفّذت، absent=غياب، cancelled=ملغاة، scheduled منتهية الوقت=غياب، غير ذلك=لم يحن وقتها.
+- ✅ Frontend (app/report-teacher-attendance.tsx): فترة (من/إلى) + زر «اليوم» + فلتر كلية/قسم متسلسل + ملخص (محاضرة/نُفّذت/غياب/ملغاة/نسبة التنفيذ) + تبويبان «حسب الأستاذ» (بطاقات قابلة للتوسّع) و«حسب المحاضرات» (قائمة مسطّحة) + تصدير Excel/PDF. بطاقة في reports.tsx (testID report-teacher-attendance-btn).
+- ✅ اختبار: backend 15/15 pytest (test_teacher_attendance_report.py)؛ frontend E2E (login→تشغيل→تبويبان→فلاتر→تصديران) نجح. أُصلح: حقول التاريخ مضمّنة مباشرة (كانت تُفرّغ عند الكتابة)، احتياطي getStatusMeta لأي حالة غير معروفة، تحقق من الفترة (تبديل عند from>to). testID بدل data-testid على TouchableOpacity.
+- ملاحظة بيانات: المقررات بلا teacher_id تُجمَّع تحت «غير معيّن» (طبيعي لبيانات غير مُسندة).

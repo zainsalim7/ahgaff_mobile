@@ -561,6 +561,13 @@ export const reportsAPI = {
     api.get(`/export/report/course/${courseId}/excel`, { responseType: 'blob' }),
   exportAttendanceOverviewExcel: (params?: { department_id?: string }) =>
     api.get('/export/report/attendance-overview/excel', { params, responseType: 'blob' }),
+  // تقرير حضور الأساتذة / تنفيذ المحاضرات
+  getTeacherAttendance: (params?: { start_date?: string; end_date?: string; department_id?: string; faculty_id?: string }) =>
+    api.get('/reports/teacher-attendance', { params }),
+  exportTeacherAttendanceExcel: (params?: { start_date?: string; end_date?: string; department_id?: string; faculty_id?: string }) =>
+    api.get('/reports/teacher-attendance/export/excel', { params, responseType: 'blob' }),
+  exportTeacherAttendancePDF: (params?: { start_date?: string; end_date?: string; department_id?: string; faculty_id?: string }) =>
+    api.get('/reports/teacher-attendance/export/pdf', { params, responseType: 'blob' }),
 };
 
 // Export API - returns blob for file download

@@ -617,6 +617,21 @@ export default function ReportsScreen() {
             </TouchableOpacity>
             )}
 
+            {/* تقرير حضور الأساتذة / تنفيذ المحاضرات */}
+            {canViewReport(userRole, userPermissions, 'report_daily') && (
+            <TouchableOpacity 
+              style={styles.reportTypeCard}
+              onPress={() => router.push('/report-teacher-attendance')}
+              testID="report-teacher-attendance-btn"
+            >
+              <View style={[styles.reportTypeIcon, { backgroundColor: '#e8f5e9' }]}>
+                <Ionicons name="clipboard" size={28} color="#2e7d32" />
+              </View>
+              <Text style={styles.reportTypeTitle}>حضور الأساتذة</Text>
+              <Text style={styles.reportTypeDesc}>من نفّذ محاضرته ومن غاب</Text>
+            </TouchableOpacity>
+            )}
+
             {/* تقرير إنجاز الدروس */}
             {canViewReport(userRole, userPermissions, 'report_lesson_completion') && (
             <TouchableOpacity 
