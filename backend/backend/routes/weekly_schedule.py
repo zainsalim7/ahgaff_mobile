@@ -3518,6 +3518,299 @@ async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
     return shifted
 
 
+# ===== 🔍 معاينة أثر التغيير قبل التنفيذ (بدون أي كتابة) =====
+
+class PreviewImpactRequest(BaseModel):
+    slot_id: str
+    action: str  # duration | delete | move
+    duration_minutes: Optional[int] = None  # 0 أو None = العودة لمدة الفترة الافتراضية
+    target_day: Optional[str] = None
+    target_slot_number: Optional[int] = None
+
+
+def _simulate_day_times_mem(slots: list, slot_times: dict) -> list:
+    """نفس خوارزمية _resolve_day_times لكن في الذاكرة فقط، مع تتبّع «مَن أزاح مَن»"""
+    processed, results = [], []
+    for s in sorted(slots, key=lambda x: (x.get("slot_number") or 0, str(x.get("_id")))):
+        st_def, en_def = slot_times.get(s.get("slot_number"), ("", ""))
+        base_start, base_end = _t2m(st_def), _t2m(en_def)
+        if base_start is None or base_end is None:
+            continue
+        try:
+            dur = int(s["duration_minutes"]) if s.get("duration_minutes") else max(base_end - base_start, 0)
+        except (TypeError, ValueError):
+            dur = max(base_end - base_start, 0)
+        eff_start, pusher = base_start, None
+        for p in processed:
+            if p["_end_m"] > eff_start and _slots_conflict(s, p["slot"]):
+                eff_start = p["_end_m"]
+                pusher = p
+        eff_end = eff_start + dur
+        processed.append({"slot": s, "_end_m": eff_end})
+        results.append({"slot": s, "start_m": eff_start, "end_m": eff_end, "pusher": pusher})
+    return results
+
+
+@router.post("/weekly-schedule/preview-impact")
+async def preview_schedule_impact(
+    data: PreviewImpactRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """🔍 معاينة كل ما سيحدث (إزاحات مع أسبابها، عودة أوقات، تعارضات، تجاوز الخطة،
+    محاضرات قادمة متأثرة) قبل تنفيذ تغيير المدة أو الحذف أو النقل — دون أي كتابة."""
+    if not can_manage_schedule(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    if data.action not in ("duration", "delete", "move"):
+        raise HTTPException(status_code=400, detail="إجراء غير معروف")
+    db = get_db()
+    try:
+        slot = await db.weekly_schedule.find_one({"_id": ObjectId(data.slot_id)})
+    except Exception:
+        slot = None
+    if not slot:
+        raise HTTPException(status_code=404, detail="المحاضرة غير موجودة")
+    faculty_id = slot.get("faculty_id", "")
+    slot_times = await _faculty_slot_times(db, faculty_id)
+
+    group = [slot]
+    if slot.get("merge_group_id"):
+        group = await db.weekly_schedule.find({"merge_group_id": slot["merge_group_id"]}).to_list(50)
+    group_ids = {str(g["_id"]) for g in group}
+
+    # تعارضات النقل (تمنع التنفيذ من الأساس)
+    conflicts = []
+    if data.action == "move" and data.target_day and data.target_slot_number is not None:
+        for g in group:
+            conflicts += await _check_slot_placement(db, g, data.target_day, data.target_slot_number, group_ids)
+        conflicts = list(dict.fromkeys(conflicts))
+
+    days = {slot.get("day")}
+    if data.action == "move" and data.target_day:
+        days.add(data.target_day)
+
+    # الأوقات الفعلية الحالية لأعضاء المجموعة (لعرض «من ← إلى» عند النقل ليوم آخر)
+    orig_times = {}
+    for g in group:
+        st_def, en_def = slot_times.get(g.get("slot_number"), ("", ""))
+        st, en, _ = _effective_times(g, st_def, en_def)
+        orig_times[str(g["_id"])] = (st, en)
+
+    changes = []
+    for day in [d for d in days if d]:
+        day_slots = await db.weekly_schedule.find({"faculty_id": faculty_id, "day": day}).to_list(2000)
+        baseline = {}
+        for s in day_slots:
+            st_def, en_def = slot_times.get(s.get("slot_number"), ("", ""))
+            st, en, _ = _effective_times(s, st_def, en_def)
+            baseline[str(s["_id"])] = (st, en)
+        modified = []
+        for s in day_slots:
+            sid = str(s["_id"])
+            c = dict(s)
+            if sid in group_ids:
+                if data.action == "delete":
+                    continue
+                if data.action == "duration":
+                    if data.duration_minutes:
+                        c["duration_minutes"] = data.duration_minutes
+                    else:
+                        c.pop("duration_minutes", None)
+                if data.action == "move":
+                    if data.target_day != day:
+                        continue  # تغادر هذا اليوم
+                    c["slot_number"] = data.target_slot_number
+            modified.append(c)
+        # عناصر منقولة قادمة من يوم آخر
+        if data.action == "move" and day == data.target_day and slot.get("day") != data.target_day:
+            for g in group:
+                c = dict(g)
+                c["day"] = data.target_day
+                c["slot_number"] = data.target_slot_number
+                modified.append(c)
+
+        for r in _simulate_day_times_mem(modified, slot_times):
+            s = r["slot"]
+            sid = str(s["_id"])
+            new_st, new_en = _m2t(r["start_m"]), _m2t(r["end_m"])
+            is_target = sid in group_ids
+            entry = {
+                "slot_id": sid,
+                "course_id": s.get("course_id", ""),
+                "department_id": s.get("department_id", ""),
+                "level": s.get("level"),
+                "section": s.get("section", "") or "",
+                "day": day,
+                "slot_number": s.get("slot_number"),
+                "new_start": new_st,
+                "new_end": new_en,
+            }
+            if data.action == "move" and is_target:
+                old = baseline.get(sid) or orig_times.get(sid)
+                entry.update({
+                    "old_start": old[0] if old else "",
+                    "old_end": old[1] if old else "",
+                    "kind": "moved",
+                    "reason": f"المحاضرة المنقولة: {slot.get('day')} فترة {slot.get('slot_number')} ← {day} فترة {data.target_slot_number}",
+                })
+                changes.append(entry)
+                continue
+            old = baseline.get(sid)
+            if not old or (old[0] == new_st and old[1] == new_en):
+                continue
+            entry["old_start"], entry["old_end"] = old[0], old[1]
+            st_def, en_def = slot_times.get(s.get("slot_number"), ("", ""))
+            if is_target and data.action == "duration":
+                entry["kind"] = "target"
+                entry["reason"] = "المحاضرة التي عُدّلت مدتها"
+            elif r["pusher"] is not None:
+                entry["kind"] = "shift"
+                p_slot = r["pusher"]["slot"]
+                entry["_pusher_course_id"] = p_slot.get("course_id", "")
+                entry["_pusher_end"] = _m2t(r["pusher"]["_end_m"])
+                entry["_pusher_teacher_id"] = p_slot.get("teacher_id", "")
+                entry["_pusher_room_id"] = p_slot.get("room_id", "")
+                # الموارد المشتركة مع المحاضرة الدافعة
+                res_parts = []
+                if (s.get("department_id"), s.get("level"), s.get("section") or "") == \
+                   (p_slot.get("department_id"), p_slot.get("level"), p_slot.get("section") or ""):
+                    res_parts.append("section")
+                if s.get("teacher_id") and s.get("teacher_id") == p_slot.get("teacher_id"):
+                    res_parts.append("teacher")
+                if s.get("room_id") and s.get("room_id") == p_slot.get("room_id"):
+                    res_parts.append("room")
+                entry["_res_parts"] = res_parts
+            elif new_st == st_def:
+                entry["kind"] = "restore"
+                entry["reason"] = "عودة للوقت الافتراضي — زال سبب الإزاحة بعد هذا التغيير"
+            else:
+                entry["kind"] = "shift"
+                entry["reason"] = "تعديل تلقائي للوقت نتيجة التغيير"
+            changes.append(entry)
+
+    # إثراء الأسماء (مقررات/أقسام/أساتذة/قاعات)
+    course_ids = {c["course_id"] for c in changes if c.get("course_id")}
+    course_ids |= {c.get("_pusher_course_id", "") for c in changes} - {""}
+    dept_ids = {c["department_id"] for c in changes if c.get("department_id")}
+    teacher_ids = {c.get("_pusher_teacher_id", "") for c in changes if c.get("_res_parts") and "teacher" in c["_res_parts"]} - {""}
+    room_ids = {c.get("_pusher_room_id", "") for c in changes if c.get("_res_parts") and "room" in c["_res_parts"]} - {""}
+
+    def _oids(ids):
+        out = []
+        for i in ids:
+            try:
+                out.append(ObjectId(i))
+            except Exception:
+                pass
+        return out
+
+    course_names, dept_names, teacher_names, room_names = {}, {}, {}, {}
+    if course_ids:
+        async for c in db.courses.find({"_id": {"$in": _oids(course_ids)}}, {"name": 1}):
+            course_names[str(c["_id"])] = c.get("name", "")
+    if dept_ids:
+        async for d in db.departments.find({"_id": {"$in": _oids(dept_ids)}}, {"name": 1}):
+            dept_names[str(d["_id"])] = d.get("name", "")
+    if teacher_ids:
+        async for t in db.teachers.find({"_id": {"$in": _oids(teacher_ids)}}, {"full_name": 1}):
+            teacher_names[str(t["_id"])] = t.get("full_name", "")
+    if room_ids:
+        async for rm in db.rooms.find({"_id": {"$in": _oids(room_ids)}}, {"name": 1}):
+            room_names[str(rm["_id"])] = rm.get("name", "")
+
+    for c in changes:
+        c["course_name"] = course_names.get(c.get("course_id", ""), "")
+        c["department_name"] = dept_names.get(c.get("department_id", ""), "")
+        if c.get("_res_parts") is not None:
+            parts = []
+            for rp in c["_res_parts"]:
+                if rp == "section":
+                    parts.append("نفس الشعبة")
+                elif rp == "teacher":
+                    tn = teacher_names.get(c.get("_pusher_teacher_id", ""), "")
+                    parts.append(f"نفس الأستاذ ({tn})" if tn else "نفس الأستاذ")
+                elif rp == "room":
+                    rn = room_names.get(c.get("_pusher_room_id", ""), "")
+                    parts.append(f"نفس القاعة ({rn})" if rn else "نفس القاعة")
+            p_name = course_names.get(c.get("_pusher_course_id", ""), "") or "محاضرة سابقة"
+            c["reason"] = f"تشترك في {'، '.join(parts) or 'مورد'} مع «{p_name}» التي تنتهي الساعة {c.get('_pusher_end', '')}"
+        for k in ("_pusher_course_id", "_pusher_end", "_pusher_teacher_id", "_pusher_room_id", "_res_parts"):
+            c.pop(k, None)
+
+    changes.sort(key=lambda x: (x["day"], x.get("slot_number") or 0, x.get("new_start") or ""))
+
+    # ⚖️ فحص تجاوز الخطة الأسبوعية (لتغيير المدة فقط)
+    load_check = None
+    if data.action == "duration":
+        load_check = await _course_week_balance(db, slot, override_duration=data.duration_minutes or 0)
+
+    # 🕑 المحاضرات اليومية القادمة المتأثرة
+    from datetime import timedelta as _td
+    today = (datetime.now(timezone.utc) + _td(hours=3)).strftime("%Y-%m-%d")
+    future_note = ""
+    if data.action == "duration":
+        cids = list({c["course_id"] for c in changes if c.get("course_id")})
+        wds = {_ARABIC_DAY_TO_WEEKDAY.get(d) for d in days if d} - {None}
+        n = 0
+        if cids and wds:
+            async for l in db.lectures.find({
+                "course_id": {"$in": cids}, "generated_from_schedule": True,
+                "status": "scheduled", "date": {"$gte": today},
+            }, {"date": 1}):
+                try:
+                    if datetime.strptime(l.get("date", ""), "%Y-%m-%d").weekday() in wds:
+                        n += 1
+                except (ValueError, TypeError):
+                    pass
+        if n:
+            future_note = f"🕑 سيتم تحديث أوقات {n} محاضرة يومية قادمة تلقائياً"
+    else:
+        old_start, _ = slot_times.get(slot.get("slot_number"), ("", ""))
+        wd = _ARABIC_DAY_TO_WEEKDAY.get(slot.get("day", ""))
+        cand_ids = []
+        if old_start and wd is not None:
+            async for lec in db.lectures.find({
+                "course_id": slot.get("course_id", ""), "date": {"$gte": today},
+                "status": "scheduled", "start_time": old_start,
+            }, {"date": 1, "original_date": 1, "last_rescheduled_from": 1}):
+                try:
+                    if datetime.strptime(lec.get("date", ""), "%Y-%m-%d").weekday() != wd:
+                        continue
+                except (ValueError, TypeError):
+                    continue
+                if lec.get("original_date") or lec.get("last_rescheduled_from"):
+                    continue
+                cand_ids.append(str(lec["_id"]))
+        with_att = 0
+        if cand_ids:
+            with_att = len({a.get("lecture_id") async for a in db.attendance.find(
+                {"lecture_id": {"$in": cand_ids}}, {"lecture_id": 1})})
+        n = len(cand_ids) - with_att
+        verb = "حذف" if data.action == "delete" else "نقل"
+        if n > 0:
+            future_note = f"🕑 سيتم {verb} {n} محاضرة يومية قادمة"
+            if with_att:
+                future_note += f" (تُستثنى {with_att} عليها حضور مسجّل)"
+
+    group_note = ""
+    if len(group) > 1:
+        group_note = f"🔗 محاضرة مشتركة — سيسري التغيير على {len(group)} جداول (كل الشُعب المشتركة)"
+
+    target_course = await db.courses.find_one({"_id": ObjectId(slot["course_id"])}) if slot.get("course_id") else None
+    return {
+        "action": data.action,
+        "target": {
+            "course_name": (target_course or {}).get("name", ""),
+            "day": slot.get("day", ""),
+            "slot_number": slot.get("slot_number"),
+        },
+        "changes": changes,
+        "conflicts": conflicts,
+        "load_check": load_check,
+        "future_note": future_note,
+        "group_note": group_note,
+    }
+
+
 async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_slot_number=None, new_room_id=None) -> dict:
     """المستقبل يتبع الجدول والماضي محفوظ: نقل/حذف المحاضرات اليومية المستقبلية المولّدة من موقع الخلية القديم.
     تُستثنى: الماضية، غير المجدولة، التي عليها حضور، والمعاد جدولتها يدوياً."""
@@ -4063,9 +4356,10 @@ def _needed_weekly_slots(credit_hours) -> int:
     return 3
 
 
-async def _course_week_balance(db, slot: dict) -> Optional[dict]:
+async def _course_week_balance(db, slot: dict, override_duration: Optional[int] = None) -> Optional[dict]:
     """⚖️ مقارنة دقائق المقرر المجدولة أسبوعياً (لنفس الشعبة) بالخطة المعتمدة (الساعة = 60 دقيقة)
-    مع اقتراح موازنة بإنقاص المحاضرات الأخرى عند التجاوز."""
+    مع اقتراح موازنة بإنقاص المحاضرات الأخرى عند التجاوز.
+    override_duration: مدة افتراضية للخانة نفسها (للمعاينة قبل الحفظ) — 0 = مدة الفترة."""
     course_id = slot.get("course_id")
     if not course_id:
         return None
@@ -4092,7 +4386,15 @@ async def _course_week_balance(db, slot: dict) -> Optional[dict]:
         **sec_q,
     }).to_list(100)
 
+    changed_id = str(slot.get("_id"))
+
     def _minutes(s):
+        if override_duration is not None and str(s.get("_id")) == changed_id:
+            if override_duration > 0:
+                return int(override_duration)
+            st, en = slot_times.get(s.get("slot_number"), ("", ""))
+            a, b = _t2m(st), _t2m(en)
+            return (b - a) if (a is not None and b is not None) else 0
         if s.get("duration_minutes"):
             try:
                 return int(s["duration_minutes"])
@@ -4113,7 +4415,6 @@ async def _course_week_balance(db, slot: dict) -> Optional[dict]:
     }
     if excess <= 0:
         return result
-    changed_id = str(slot.get("_id"))
     others = [s for s in sibs if str(s["_id"]) != changed_id]
     target = plan_minutes - _minutes(slot)
     if others and target >= 30 * len(others):

@@ -54,6 +54,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [newDuration, setNewDuration] = useState('');
   const [newDurationCustom, setNewDurationCustom] = useState('');
   const [addType, setAddType] = useState('theory'); // 🧪 نوع المحاضرة عند الإضافة (افتراضي: نظري)
+  const [impactPreview, setImpactPreview] = useState<any>(null); // 🔍 معاينة أثر التغيير قبل التنفيذ
 
   const PRESET_DURATIONS = ['45', '60', '90', '120', '180'];
 
@@ -88,16 +89,28 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
     }
     setBusy(true);
     try {
+      // 🔍 معاينة الأثر قبل التنفيذ — إن وُجدت إزاحات تُعرض للمستخدم أولاً
+      const prev = await api.post('/weekly-schedule/preview-impact', {
+        slot_id: durationModal.id, action: 'duration', duration_minutes: dur,
+      });
+      const impacts = (prev.data?.changes || []).filter((c: any) => c.kind !== 'target');
+      if (impacts.length === 0) {
+        await executeDurationChange(dur);
+        return;
+      }
+      setBusy(false);
+      setImpactPreview({ title: '⏱ معاينة تغيير المدة — لن يُنفَّذ شيء قبل موافقتك', preview: prev.data, run: () => executeDurationChange(dur) });
+    } catch (e: any) { handleConflictError(e); setBusy(false); }
+  };
+
+  const executeDurationChange = async (dur: number) => {
+    if (!durationModal) return;
+    setImpactPreview(null);
+    setBusy(true);
+    try {
       const res = await api.put(`/weekly-schedule/${durationModal.id}`, {
         duration_minutes: dur,
       });
-      const shifted = res.data?.shifted || [];
-      if (shifted.length) {
-        window.alert(
-          `⚠️ حلحلة تلقائية للجدول — تمت إزاحة ${shifted.length} محاضرة لتفادي التداخل (بدون نقل أو حذف):\n\n` +
-          shifted.map((sh: any) => `• ${sh.course_name || 'محاضرة'} (فترة ${sh.slot_number}): ${sh.from} ← ${sh.to}${sh.end ? ` حتى ${sh.end}` : ''}`).join('\n')
-        );
-      }
       // ⚖️ فحص تجاوز الساعات الأسبوعية المعتمدة للمقرر
       const lc = res.data?.load_check;
       if (lc && lc.excess_minutes > 0) {
@@ -442,6 +455,30 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
     }
     setBusy(true);
     try {
+      // 🔍 معاينة أثر النقل قبل التنفيذ
+      const prev = await api.post('/weekly-schedule/preview-impact', {
+        slot_id: selected.id, action: 'move', target_day: day, target_slot_number: slotNumber,
+      });
+      if ((prev.data?.conflicts || []).length) {
+        showMsg('error', `❌ لا يمكن النقل: ${prev.data.conflicts.join(' • ')}`);
+        setBusy(false);
+        return;
+      }
+      const impacts = (prev.data?.changes || []).filter((c: any) => c.kind !== 'moved');
+      if (impacts.length === 0) {
+        await executeMove(day, slotNumber);
+        return;
+      }
+      setBusy(false);
+      setImpactPreview({ title: '🔀 معاينة نقل المحاضرة — لن يُنفَّذ شيء قبل موافقتك', preview: prev.data, run: () => executeMove(day, slotNumber) });
+    } catch (e: any) { handleConflictError(e); setBusy(false); }
+  };
+
+  const executeMove = async (day: string, slotNumber: number) => {
+    if (!selected) return;
+    setImpactPreview(null);
+    setBusy(true);
+    try {
       const res = await api.post('/weekly-schedule/move-slot', { slot_id: selected.id, target_day: day, target_slot_number: slotNumber });
       showMsg('success', `✅ ${res.data.message}`);
       setSelected(null);
@@ -527,10 +564,28 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   // حذف المحاضرة المحددة من الجدول (تُحرر الفترة والقاعة والمعلم ويعود المقرر لغير المدرجة)
   const deleteSelected = async () => {
     if (!selected) return;
-    const ok = window.confirm(
-      `هل أنت متأكد من حذف "${selected.course_name}" من الجدول؟\n(${selected.day} · الفترة ${selected.slot_number})\n\nستتحرر الفترة والقاعة والمعلم، وسيعود المقرر لقائمة غير المدرجة.`
-    );
+    setBusy(true);
+    let previewData: any = null;
+    try {
+      const prev = await api.post('/weekly-schedule/preview-impact', { slot_id: selected.id, action: 'delete' });
+      previewData = prev.data;
+    } catch { /* المعاينة اختيارية — نكمل بالتأكيد العادي */ }
+    setBusy(false);
+    if ((previewData?.changes || []).length) {
+      setImpactPreview({ title: '🗑 معاينة حذف المحاضرة — لن يُنفَّذ شيء قبل موافقتك', preview: previewData, run: () => executeDelete() });
+      return;
+    }
+    let text = `هل أنت متأكد من حذف "${selected.course_name}" من الجدول؟\n(${selected.day} · الفترة ${selected.slot_number})\n\nستتحرر الفترة والقاعة والمعلم، وسيعود المقرر لقائمة غير المدرجة.`;
+    if (previewData?.future_note) text += `\n\n${previewData.future_note}`;
+    if (previewData?.group_note) text += `\n${previewData.group_note}`;
+    const ok = window.confirm(text);
     if (!ok) return;
+    await executeDelete();
+  };
+
+  const executeDelete = async () => {
+    if (!selected) return;
+    setImpactPreview(null);
     setBusy(true);
     try {
       await api.delete(`/weekly-schedule/${selected.id}`);
@@ -1048,6 +1103,82 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       )}
 
       {/* ⏱ نافذة تعديل مدة المحاضرة */}
+      {/* 🔍 نافذة معاينة الأثر قبل التنفيذ */}
+      {impactPreview && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => !busy && setImpactPreview(null)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} data-testid="impact-preview-modal" style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 680, maxWidth: '94%',
+            maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.3)', direction: 'rtl',
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>{impactPreview.title}</div>
+            <div style={{ fontSize: 12, color: '#5b6678', marginBottom: 10, textAlign: 'right' }}>
+              <b>{impactPreview.preview?.target?.course_name}</b> — {impactPreview.preview?.target?.day} · الفترة {impactPreview.preview?.target?.slot_number}
+            </div>
+            {!!impactPreview.preview?.group_note && (
+              <div style={{ fontSize: 11.5, color: '#e65100', backgroundColor: '#fff3e0', borderRadius: 8, padding: '6px 10px', marginBottom: 8, textAlign: 'right' }}>
+                {impactPreview.preview.group_note}
+              </div>
+            )}
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: '#c62828', marginBottom: 6, textAlign: 'right' }}>
+              التغييرات التي ستحدث ({(impactPreview.preview?.changes || []).length}):
+            </div>
+            {(impactPreview.preview?.changes || []).map((c: any, i: number) => {
+              const meta: any = {
+                target: { bg: '#fff3e0', border: '#ffb74d', label: '⏱ المعدّلة', color: '#e65100' },
+                moved: { bg: '#e3f2fd', border: '#64b5f6', label: '🔀 منقولة', color: '#1565c0' },
+                shift: { bg: '#ffebee', border: '#ef9a9a', label: '⚠️ إزاحة', color: '#c62828' },
+                restore: { bg: '#e8f5e9', border: '#a5d6a7', label: '↩️ عودة للافتراضي', color: '#2e7d32' },
+              }[c.kind] || { bg: '#f5f5f5', border: '#ddd', label: 'تغيير', color: '#555' };
+              return (
+                <div key={i} data-testid={`impact-change-${i}`} style={{
+                  border: `1px solid ${meta.border}`, backgroundColor: meta.bg, borderRadius: 8,
+                  padding: '8px 10px', marginBottom: 6, textAlign: 'right',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' as any }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: '#333' }}>
+                      {c.course_name || 'محاضرة'}
+                      <span style={{ fontWeight: 400, color: '#777', fontSize: 11 }}>
+                        {' '}— {c.department_name}{c.level ? ` · مستوى ${c.level}` : ''}{c.section ? ` · شعبة ${c.section}` : ''}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: meta.color, whiteSpace: 'nowrap' as any }}>{meta.label}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: '#444', marginTop: 3 }}>
+                    {c.day} · الفترة {c.slot_number}: <b>{c.old_start}–{c.old_end}</b> ← <b style={{ color: meta.color }}>{c.new_start}–{c.new_end}</b>
+                  </div>
+                  {!!c.reason && (
+                    <div style={{ fontSize: 11, color: '#6b7688', marginTop: 3 }}>💡 السبب: {c.reason}</div>
+                  )}
+                </div>
+              );
+            })}
+            {impactPreview.preview?.load_check && impactPreview.preview.load_check.excess_minutes > 0 && (
+              <div style={{ fontSize: 11.5, color: '#c62828', backgroundColor: '#ffebee', borderRadius: 8, padding: '6px 10px', marginTop: 4, textAlign: 'right' }}>
+                ⚖️ تنبيه: سيتجاوز مقرر «{impactPreview.preview.load_check.course_name}» الخطة الأسبوعية ({impactPreview.preview.load_check.scheduled_minutes}د مدرجة / {impactPreview.preview.load_check.plan_minutes}د معتمدة) — سيُعرض عليك خيار الموازنة بعد التنفيذ
+              </div>
+            )}
+            {!!impactPreview.preview?.future_note && (
+              <div style={{ fontSize: 11.5, color: '#1565c0', backgroundColor: '#e3f2fd', borderRadius: 8, padding: '6px 10px', marginTop: 6, textAlign: 'right' }}>
+                {impactPreview.preview.future_note}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button onClick={() => impactPreview.run()} disabled={busy} data-testid="impact-execute-btn" style={{
+                flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                backgroundColor: '#2e7d32', color: '#fff', fontSize: 13.5, fontWeight: 700,
+              }}>{busy ? 'جاري التنفيذ...' : '✅ تنفيذ التغييرات'}</button>
+              <button onClick={() => setImpactPreview(null)} disabled={busy} data-testid="impact-cancel-btn" style={{
+                flex: 0.6, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
+                backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
+              }}>↩️ تراجع</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {durationModal && (
         <div style={{
           position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 99999,
@@ -1088,7 +1219,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
               />
             )}
             <div style={{ fontSize: 10.5, color: '#8a94a6', textAlign: 'right', marginTop: 5 }}>
-              عند التداخل مع محاضرات تالية سيُزيح النظام أوقاتها تلقائياً (بدون نقل أو حذف) وسيظهر لك ملخص الإزاحات
+              عند التداخل مع محاضرات تالية ستظهر لك معاينة كاملة بكل الإزاحات وأسبابها قبل تنفيذ أي تغيير
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={confirmDurationChange} disabled={busy} style={{
