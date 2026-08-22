@@ -378,7 +378,17 @@ export default function AvailabilityReport() {
                           {t.employee_id ? `رقم وظيفي: ${t.employee_id}` : ''}
                           {t.has_preferences ? ' · 📋 له تفضيلات' : ' · ⚪ بدون تفضيلات'}
                         </Text>
-                        {t.details ? (
+                        {Array.isArray(t.lectures) && t.lectures.length > 0 ? (
+                          t.lectures.map((l: any, li: number) => (
+                            <Text key={li} style={{ fontSize: 10, color: '#c62828', textAlign: 'right', marginTop: 2 }}>
+                              🔒 {l.course_code} {l.course_name}
+                              {l.room_name ? ` - 🏛 ${l.room_name}` : ''}
+                              {l.sections_label ? ` (${l.sections_label})` : ''}
+                              {l.start_time ? ` · ⏱ ${l.start_time}-${l.end_time}` : ''}
+                              {l.is_shared ? ' · 🔗 مشتركة' : ''}
+                            </Text>
+                          ))
+                        ) : t.details ? (
                           <Text style={{ fontSize: 10, color: '#c62828', textAlign: 'right', marginTop: 2 }}>
                             🔒 مشغول: {t.details.course_code} {t.details.course_name}
                             {t.details.room_name ? ` - 🏛 ${t.details.room_name}` : ''}

@@ -3359,19 +3359,22 @@ async def teachers_availability(
         teachers_query["faculty_id"] = faculty_id
     teachers = await db.teachers.find(teachers_query).to_list(500)
 
-    # جلب الجدول
-    sched_query = {}
-    if faculty_id:
-        sched_query["faculty_id"] = faculty_id
-    if department_id:
-        sched_query["department_id"] = department_id
+    # 🧑‍🏫 جلب الجدول: انشغال الأستاذ يُفحص عبر كل الجداول (قد يدرّس في أكثر من كلية/قسم)
+    sched_query = {"teacher_id": {"$nin": ["", None]}}
     if semester_id:
         sched_query["semester_id"] = semester_id
     if day_of_week:
         sched_query["$or"] = [{"day": day_of_week}, {"day_of_week": day_of_week}]
-    if slot_number is not None:
-        sched_query["slot_number"] = slot_number
-    slots = await db.weekly_schedule.find(sched_query).to_list(5000)
+    slots = await db.weekly_schedule.find(sched_query).to_list(10000)
+
+    # أوقات الفترات لكل كلية معنيّة
+    fac_ids = {s.get("faculty_id", "") for s in slots} | {t.get("faculty_id", "") for t in teachers}
+    if faculty_id:
+        fac_ids.add(faculty_id)
+    fac_times = {}
+    for f in fac_ids:
+        if f:
+            fac_times[f] = await _faculty_slot_times(db, f)
 
     # جلب التفضيلات
     teacher_ids_list = [str(t["_id"]) for t in teachers]
@@ -3390,22 +3393,54 @@ async def teachers_availability(
         async for r in db.rooms.find({"_id": {"$in": [ObjectId(x) for x in room_ids_set if x]}}):
             rooms_map[str(r["_id"])] = r
 
-    # فهرسة slots
-    busy_map = {}  # (teacher_id, day, slot) -> info
+    # حساب الانشغال بالوقت الفعلي: (teacher_id, day) -> [محاضرات]
+    occupancy: dict = {}
     for s in slots:
         tid = s.get("teacher_id")
-        if not tid:
+        day = s.get("day") or s.get("day_of_week")
+        if not tid or not day:
             continue
-        key = (tid, s.get("day") or s.get("day_of_week"), s.get("slot_number"))
+        st_def, en_def = fac_times.get(s.get("faculty_id", ""), {}).get(s.get("slot_number"), ("", ""))
+        st, en, _ = _effective_times(s, st_def, en_def)
+        a, b = _t2m(st), _t2m(en)
+        if a is None or b is None:
+            continue
         course = courses_map.get(s.get("course_id", ""), {})
         room = rooms_map.get(s.get("room_id", ""), {})
-        busy_map[key] = {
+        sec_label = f"م{s.get('level', '')}" + (f" {s.get('section')}" if s.get("section") else "")
+        occupancy.setdefault((tid, day), []).append({
+            "_merge_key": s.get("merge_group_id") or str(s["_id"]),
+            "start_m": a,
+            "end_m": b,
             "course_name": course.get("name", ""),
             "course_code": course.get("code", ""),
             "room_name": room.get("name", ""),
             "section": s.get("section"),
             "level": s.get("level"),
-        }
+            "sections": [sec_label],
+            "slot_number": s.get("slot_number"),
+            "start_time": st,
+            "end_time": en,
+            "is_shared": bool(s.get("merge_group_id")),
+        })
+
+    # دمج شعب المحاضرة المشتركة في عنصر واحد
+    for key in occupancy:
+        merged: dict = {}
+        for o in occupancy[key]:
+            mk = o["_merge_key"]
+            if mk in merged:
+                if o["sections"][0] not in merged[mk]["sections"]:
+                    merged[mk]["sections"].append(o["sections"][0])
+            else:
+                merged[mk] = o
+        items = list(merged.values())
+        for o in items:
+            o["sections_label"] = " + ".join(o["sections"])
+            o.pop("_merge_key", None)
+            o.pop("sections", None)
+        items.sort(key=lambda x: x["start_m"])
+        occupancy[key] = items
 
     def check_preference(pref: dict, day: str, slot: int):
         """يرجع: 'preferred' | 'unavailable' | 'neutral'"""
@@ -3439,17 +3474,31 @@ async def teachers_availability(
             "has_preferences": bool(pref),
         }
         if day_of_week and slot_number is not None:
-            busy = busy_map.get((tid, day_of_week, slot_number))
-            teacher_info["status"] = "busy" if busy else "free"
-            teacher_info["details"] = busy
+            # نافذة الفترة (بأوقات الكلية المطلوبة أو كلية الأستاذ)
+            t_times = (fac_times.get(faculty_id) if faculty_id else None) or fac_times.get(teacher.get("faculty_id", "")) or {}
+            win_st, win_en = t_times.get(slot_number, ("", ""))
+            wa, wb = _t2m(win_st), _t2m(win_en)
+            overlapping = []
+            if wa is not None and wb is not None:
+                overlapping = [o for o in occupancy.get((tid, day_of_week), []) if o["start_m"] < wb and o["end_m"] > wa]
+            teacher_info["status"] = "busy" if overlapping else "free"
+            teacher_info["details"] = overlapping[0] if overlapping else None
+            teacher_info["lectures"] = overlapping
             teacher_info["preference_status"] = check_preference(pref, day_of_week, slot_number)
         else:
+            # heatmap: المحاضرة تظهر في كل فترة تتداخل معها فعلياً
             teacher_info["slots"] = []
-            for (bt, bd, bs), info in busy_map.items():
-                if bt == tid:
-                    teacher_info["slots"].append({
-                        "day": bd, "slot": bs, **info,
-                    })
+            t_times = (fac_times.get(faculty_id) if faculty_id else None) or fac_times.get(teacher.get("faculty_id", "")) or {}
+            for (ot, oday), items in occupancy.items():
+                if ot != tid:
+                    continue
+                for sn, (p_st, p_en) in t_times.items():
+                    pa, pb = _t2m(p_st), _t2m(p_en)
+                    if pa is None or pb is None:
+                        continue
+                    for o in items:
+                        if o["start_m"] < pb and o["end_m"] > pa:
+                            teacher_info["slots"].append({"day": oday, "slot": sn, **o})
         result.append(teacher_info)
 
     # ترتيب: الفارغين المفضّلين أولاً
