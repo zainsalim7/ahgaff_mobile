@@ -303,6 +303,37 @@ def _parse_grades_file(content: bytes, filename: str) -> dict:
         students.append({"name": nm, "reg_no": reg, "grades": grades, "result": "", "note": ""})
         r += 1
 
+    # 🆕 استكمال أرقام القيد الفارغة من ورقة «السعي» (المصدر الذي تُنقل منه الأسماء)
+    if any(not s["reg_no"] for s in students):
+        s3 = next((sheets[n] for n in sheets if n.strip() == "السعي"), None)
+        if s3:
+            hr3, nc3 = None, None
+            for r0 in range(min(20, s3.nrows)):
+                for c0 in range(min(12, s3.ncols)):
+                    if str(s3.cell(r0, c0)).strip() == "الاسم":
+                        hr3, nc3 = r0, c0
+                        break
+                if hr3 is not None:
+                    break
+            if hr3 is not None:
+                reg_cols = [c0 for c0 in range(nc3) if str(s3.cell(hr3, c0)).strip() == "رقم القيد"]
+                reg_map = {}
+                for r0 in range(hr3 + 1, s3.nrows):
+                    nm0 = str(s3.cell(r0, nc3)).strip()
+                    if not nm0:
+                        continue
+                    reg0 = ""
+                    for c0 in reg_cols:
+                        v = _fmt_val(s3.cell(r0, c0))
+                        if v:
+                            reg0 = v
+                            break
+                    if reg0:
+                        reg_map[_norm_name(nm0)] = reg0
+                for st in students:
+                    if not st["reg_no"]:
+                        st["reg_no"] = reg_map.get(_norm_name(st["name"]), "")
+
     # 3) ملخص الدور الأول — النتيجة والملاحظات (اختياري، مطابقة بالاسم)
     summ = next((sheets[n] for n in sheets if n.strip() == "ملخص الدور الأول"), None)
     if summ and summ.ncols >= 3:
