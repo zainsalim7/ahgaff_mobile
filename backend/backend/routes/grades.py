@@ -145,11 +145,12 @@ async def download_grades_template(current_user: dict = Depends(get_current_user
 
 
 def _parse_template_sheet(sh) -> Optional[dict]:
-    """قراءة النموذج الموحّد — يرجع None إن لم يكن الملف بنمط النموذج"""
+    """قراءة النموذج الموحّد — يرجع None إن لم يكن الملف بنمط النموذج.
+    التمييز الصارم: «رقم القيد» يليه مباشرة «اسم الطالب» (الملفات القديمة تستخدم «الاسم»)"""
     header_r, reg_c = None, None
     for r in range(min(20, sh.nrows)):
         for c in range(min(6, sh.ncols)):
-            if str(sh.cell(r, c)).strip() == "رقم القيد":
+            if str(sh.cell(r, c)).strip() == "رقم القيد" and str(sh.cell(r, c + 1)).strip() == "اسم الطالب":
                 header_r, reg_c = r, c
                 break
         if header_r is not None:
