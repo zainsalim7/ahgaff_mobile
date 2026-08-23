@@ -686,7 +686,7 @@ async def issue_grade_statement(data: GradeStatementRequest, current_user: dict 
         upsert=True, return_document=ReturnDocument.AFTER,
     )
     seq_no = cnt.get("base", 222) + cnt.get("seq", 1)
-    ref_suffix = settings.get("grade_ref_suffix", "6/2/ت ك ش ق /04/05")
+    ref_suffix = settings.get("grade_ref_suffix", " 6 /2  ت ك ش ق /04/05")
     ref_number = f"{seq_no}/{ref_suffix}"
 
     stmt_doc = {
