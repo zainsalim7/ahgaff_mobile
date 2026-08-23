@@ -678,8 +678,20 @@ async def issue_grade_statement(data: GradeStatementRequest, current_user: dict 
     if base:
         verify_url = f"{base}/api/grades/verify/{token}"
 
+    # 🔢 الرقم المرجعي التسلسلي: {تسلسل}/6/2/ت ك ش ق /04/05 (يتغير الرقم الأول فقط)
+    from pymongo import ReturnDocument
+    cnt = await db.counters.find_one_and_update(
+        {"_id": "grade_statement_ref"},
+        {"$inc": {"seq": 1}, "$setOnInsert": {"base": 222}},
+        upsert=True, return_document=ReturnDocument.AFTER,
+    )
+    seq_no = cnt.get("base", 222) + cnt.get("seq", 1)
+    ref_suffix = settings.get("grade_ref_suffix", "6/2/ت ك ش ق /04/05")
+    ref_number = f"{seq_no}/{ref_suffix}"
+
     stmt_doc = {
         "verify_token": token,
+        "ref_number": ref_number,
         "student_name": student_name,
         "reg_no": reg_no,
         "faculty_id": faculty_id,
@@ -695,6 +707,7 @@ async def issue_grade_statement(data: GradeStatementRequest, current_user: dict 
     pdf = _build_grade_statement_pdf({
         "student_name": student_name,
         "reg_no": reg_no,
+        "ref_number": ref_number,
         "faculty_name": (faculty or {}).get("name", "كلية الشريعة والقانون"),
         "addressee": data.addressee,
         "status_text": data.status_text,
@@ -722,6 +735,7 @@ async def verify_grade_statement(token: str):
     return {
         "valid": True,
         "message": "بيان حالة ودرجات صحيح صادر رسمياً من جامعة الأحقاف",
+        "ref_number": s.get("ref_number", ""),
         "student_name": s.get("student_name", ""),
         "reg_no": s.get("reg_no", ""),
         "faculty_name": s.get("faculty_name", ""),
@@ -802,6 +816,11 @@ def _build_grade_statement_pdf(d: dict, settings: dict) -> bytes:
     c.setFont(BOLD, 11)
     c.drawRightString(W - 18 * mm, H - 47 * mm, ar(f"التاريخ: {hijri_str}"))
     c.drawRightString(W - 18 * mm, H - 53 * mm, ar(f"الموافق: {issued.replace('-', '/')}م"))
+    # 🔢 الرقم المرجعي بالأخضر — يسار الترويسة مقابل التاريخ
+    if d.get("ref_number"):
+        c.setFillColorRGB(0.0, 0.45, 0.13)
+        c.drawString(18 * mm, H - 47 * mm, ar(f"الـرقـــم : {d['ref_number']}"))
+        c.setFillColorRGB(0, 0, 0)
 
     yy = H - 62 * mm
     c.setFont(BOLD, 13)
