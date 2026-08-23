@@ -60,15 +60,15 @@ export default function GradesScreen() {
 
   const doImport = async (commit: boolean) => {
     if (!file) { showMsg('error', '❌ اختر ملف الإكسل أولاً'); return; }
-    if (!departmentId) { showMsg('error', '❌ اختر القسم'); return; }
+    if (commit && !departmentId) { showMsg('error', '❌ اختر القسم'); return; }
     setBusy(true);
     try {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('faculty_id', facultyId);
       fd.append('department_id', departmentId);
-      fd.append('level', level);
-      fd.append('semester_no', semesterNo);
+      fd.append('level', level || '0');
+      fd.append('semester_no', semesterNo || '0');
       fd.append('academic_year', academicYear);
       fd.append('batch_no', batchNo);
       fd.append('commit', commit ? 'true' : 'false');
@@ -79,10 +79,32 @@ export default function GradesScreen() {
         setFile(null);
       } else {
         setPreview(res.data);
+        // 🆕 النموذج الموحّد: تعبئة الشاشة تلقائياً من بيانات الملف
+        const rv = res.data?.resolved;
+        if (res.data?.is_template && rv) {
+          if (rv.faculty_id) setFacultyId(rv.faculty_id);
+          if (rv.department_id) setDepartmentId(rv.department_id);
+          if (rv.level) setLevel(String(rv.level));
+          if (rv.semester_no) setSemesterNo(String(rv.semester_no));
+          if (rv.academic_year) setAcademicYear(rv.academic_year);
+          if (rv.batch_no) setBatchNo(String(rv.batch_no));
+        }
       }
     } catch (e: any) {
       showMsg('error', `❌ ${e.response?.data?.detail || 'فشل في المعالجة'}`);
     } finally { setBusy(false); }
+  };
+
+  const downloadTemplate = async () => {
+    try {
+      const res = await api.get('/grades/template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'grades_template.xlsx';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch { showMsg('error', '❌ فشل تنزيل النموذج'); }
   };
 
   const doSearch = async (q: string) => {
@@ -188,6 +210,14 @@ export default function GradesScreen() {
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 60 }}>
         {tab === 'import' && (
           <View>
+            <View style={[st.card, { backgroundColor: '#e8f5e9' }]}>
+              <Text style={{ fontSize: 12.5, color: '#2e7d32', textAlign: 'right', lineHeight: 20, marginBottom: 8 }}>
+                📄 الطريقة الموصى بها: نزّل النموذج الموحّد، عبّئه (رقم القيد إلزامي + بيانات الفصل والسنة والدفعة داخل الملف)، ثم ارفعه — وستُعبّأ الحقول تلقائياً. الملفات القديمة (السعي والأدوار) مدعومة أيضاً.
+              </Text>
+              <TouchableOpacity style={[st.btn, { backgroundColor: '#2e7d32' }]} onPress={downloadTemplate} testID="grades-template-btn">
+                <Text style={st.btnTxt}>⬇️ تنزيل النموذج الموحّد (Excel)</Text>
+              </TouchableOpacity>
+            </View>
             <View style={st.card}>
               <Text style={st.label}>الكلية</Text>
               {Platform.OS === 'web' && (
@@ -233,7 +263,10 @@ export default function GradesScreen() {
 
             {preview && (
               <View style={st.card}>
-                <Text style={st.sectionTitle}>نتيجة المعاينة — {preview.stats.total} طالب · {preview.courses.length} مقرر</Text>
+                <Text style={st.sectionTitle}>نتيجة المعاينة — {preview.stats.total} طالب · {preview.courses.length} مقرر {preview.is_template ? ' · 📄 نموذج موحّد' : ''}</Text>
+                {!!preview.skipped_no_reg && (
+                  <Text style={{ color: '#f57f17', fontSize: 12, textAlign: 'right', marginBottom: 6 }}>⚠️ تم تخطي {preview.skipped_no_reg} صفاً بدون رقم قيد</Text>
+                )}
                 {preview.already_imported && (
                   <Text style={{ color: '#c62828', fontSize: 12, textAlign: 'right', marginBottom: 6 }}>⚠️ يوجد استيراد سابق لنفس (القسم/المستوى/الفصل/العام) — الاعتماد سيضيف نسخة إضافية</Text>
                 )}
@@ -304,6 +337,7 @@ export default function GradesScreen() {
                     {rc.grades.map((g: any, gi: number) => (
                       <View key={gi} style={st.gradeRow}>
                         <Text style={{ fontSize: 12, fontWeight: '700', color: g.total === '' ? '#999' : '#1565c0', width: 46, textAlign: 'center' }}>{g.total || '—'}</Text>
+                        {!!g.grade_letter && <Text style={{ fontSize: 10.5, color: '#00695c', width: 56, textAlign: 'center' }}>{g.grade_letter}</Text>}
                         <Text style={{ fontSize: 11, color: '#999', width: 34, textAlign: 'center' }}>{g.credits}</Text>
                         <Text style={{ fontSize: 12, color: '#333', flex: 1, textAlign: 'right' }}>{g.course_name}</Text>
                       </View>

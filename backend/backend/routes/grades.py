@@ -74,10 +74,158 @@ def _open_workbook(content: bytes, filename: str) -> dict:
     return sheets
 
 
+# ===== 📄 النموذج الموحّد =====
+
+TEMPLATE_META_KEYS = {"الكلية": "faculty_name", "القسم": "department_name", "التخصص": "department_name",
+                      "المستوى": "level", "الفصل": "semester_no", "العام الجامعي": "academic_year", "الدفعة": "batch_no"}
+
+
+@router.get("/grades/template")
+async def download_grades_template(current_user: dict = Depends(get_current_user)):
+    """⬇️ تنزيل نموذج كشف الدرجات الموحّد (Excel)"""
+    if not _can_manage(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "كشف الدرجات"
+    ws.sheet_view.rightToLeft = True
+    bold = Font(bold=True, size=11)
+    hdr_fill = PatternFill("solid", fgColor="E8F0E8")
+    meta_fill = PatternFill("solid", fgColor="FFF6E0")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin = Border(*[Side(style="thin")] * 4)
+
+    ws["A1"] = "نموذج كشف درجات فصلي — جامعة الأحقاف (لا تغيّر أسماء الحقول)"
+    ws["A1"].font = Font(bold=True, size=12, color="1a5c2a")
+    meta_rows = [("الكلية", "كلية الشريعة والقانون"), ("القسم", "شريعة"), ("المستوى", 4),
+                 ("الفصل", 1), ("العام الجامعي", "2025-2026"), ("الدفعة", 27)]
+    for i, (k, v) in enumerate(meta_rows, start=2):
+        ws.cell(row=i, column=1, value=k).font = bold
+        ws.cell(row=i, column=1).fill = meta_fill
+        ws.cell(row=i, column=1).border = thin
+        ws.cell(row=i, column=2, value=v).border = thin
+
+    hr = 9  # صف رؤوس الجدول
+    ws.cell(row=hr, column=1, value="رقم القيد")
+    ws.cell(row=hr, column=2, value="اسم الطالب")
+    sample_courses = ["أصول الفقه (4)", "البلاغة (3)", "مدخل القانون (3)"]
+    col = 3
+    for cn in sample_courses:
+        ws.cell(row=hr, column=col, value=cn)
+        ws.cell(row=hr + 1, column=col, value="الدرجة")
+        ws.cell(row=hr + 1, column=col + 1, value="التقدير")
+        ws.merge_cells(start_row=hr, start_column=col, end_row=hr, end_column=col + 1)
+        col += 2
+    ws.cell(row=hr, column=col, value="النتيجة")
+    ws.cell(row=hr, column=col + 1, value="ملاحظات")
+    for c in range(1, col + 2):
+        for r in (hr, hr + 1):
+            cell = ws.cell(row=r, column=c)
+            cell.font = bold
+            cell.fill = hdr_fill
+            cell.alignment = center
+            cell.border = thin
+    # صفا مثال
+    ws.cell(row=hr + 2, column=1, value="ش129134")
+    ws.cell(row=hr + 2, column=2, value="مثال: فلان بن فلان (احذف هذا الصف)")
+    ws.cell(row=hr + 2, column=3, value=87)
+    ws.cell(row=hr + 2, column=4, value="جيد جداً")
+    ws.cell(row=hr + 2, column=5, value=62)
+    ws.cell(row=hr + 2, column=7, value=90)
+    ws.cell(row=hr + 2, column=col, value=4.15)
+    ws.column_dimensions["A"].width = 14
+    ws.column_dimensions["B"].width = 30
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return StreamingResponse(out, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": "attachment; filename=grades_template.xlsx"})
+
+
+def _parse_template_sheet(sh) -> Optional[dict]:
+    """قراءة النموذج الموحّد — يرجع None إن لم يكن الملف بنمط النموذج"""
+    header_r, reg_c = None, None
+    for r in range(min(20, sh.nrows)):
+        for c in range(min(6, sh.ncols)):
+            if str(sh.cell(r, c)).strip() == "رقم القيد":
+                header_r, reg_c = r, c
+                break
+        if header_r is not None:
+            break
+    if header_r is None:
+        return None
+    name_c = reg_c + 1
+    # البيانات الوصفية أعلى الجدول
+    meta = {}
+    for r in range(header_r):
+        for c in range(min(4, sh.ncols)):
+            k = str(sh.cell(r, c)).strip()
+            if k in TEMPLATE_META_KEYS:
+                meta[TEMPLATE_META_KEYS[k]] = _fmt_val(sh.cell(r, c + 1))
+    # أعمدة المقررات (مع أزواج الدرجة/التقدير)
+    sub_r = header_r + 1
+    has_sub = any(str(sh.cell(sub_r, c)).strip() in ("الدرجة", "التقدير") for c in range(name_c + 1, sh.ncols))
+    courses, cols = [], []  # cols: (name, credits, total_col, letter_col|None)
+    c = name_c + 1
+    while c < sh.ncols:
+        v = str(sh.cell(header_r, c)).strip()
+        if v in ("النتيجة", "ملاحظات"):
+            break
+        if v:
+            m = re.match(r"^(.*?)\s*\((\d+(?:\.\d+)?)\)\s*$", v)
+            nm, cr = (m.group(1).strip(), m.group(2)) if m else (v, "")
+            letter_col = None
+            if has_sub and c + 1 < sh.ncols and str(sh.cell(sub_r, c + 1)).strip() == "التقدير":
+                letter_col = c + 1
+            courses.append({"name": nm, "credits": cr})
+            cols.append((nm, cr, c, letter_col))
+            c += 2 if letter_col is not None else 1
+        else:
+            c += 1
+    result_c = note_c = None
+    for cc in range(name_c + 1, sh.ncols):
+        v = str(sh.cell(header_r, cc)).strip()
+        if v == "النتيجة":
+            result_c = cc
+        elif v == "ملاحظات":
+            note_c = cc
+    students, skipped = [], 0
+    start = sub_r + 1 if has_sub else header_r + 1
+    for r in range(start, sh.nrows):
+        nm = str(sh.cell(r, name_c)).strip()
+        reg = _fmt_val(sh.cell(r, reg_c))
+        if not nm and not reg:
+            continue
+        if not reg or "احذف هذا الصف" in nm:
+            skipped += 1
+            continue
+        grades = []
+        for (cn, cr, tc, lc) in cols:
+            g = {"course_name": cn, "credits": cr, "total": _fmt_val(sh.cell(r, tc))}
+            if lc is not None:
+                letter = _fmt_val(sh.cell(r, lc))
+                if letter:
+                    g["grade_letter"] = letter
+            grades.append(g)
+        students.append({"name": nm, "reg_no": reg,
+                         "grades": grades,
+                         "result": _fmt_val(sh.cell(r, result_c)) if result_c is not None else "",
+                         "note": _fmt_val(sh.cell(r, note_c)) if note_c is not None else ""})
+    return {"courses": courses, "students": students, "meta": meta, "skipped_no_reg": skipped, "is_template": True}
+
+
 def _parse_grades_file(content: bytes, filename: str) -> dict:
     """يقرأ ورقة «المساقات» (الاسم + الوحدات) و«السعي والأدوار» (مجموع كل مقرر لكل طالب)
     و«ملخص الدور الأول» (النتيجة/الملاحظات) — بأسلوب مرن"""
     sheets = _open_workbook(content, filename)
+
+    # 🆕 محاولة قراءة النموذج الموحّد أولاً (أي ورقة تحتوي «رقم القيد»)
+    for sh0 in sheets.values():
+        tpl = _parse_template_sheet(sh0)
+        if tpl is not None:
+            return tpl
 
     # 1) المساقات
     courses = []
@@ -192,11 +340,11 @@ def _parse_grades_file(content: bytes, filename: str) -> dict:
 @router.post("/grades/import")
 async def import_grades(
     file: UploadFile = File(...),
-    faculty_id: str = Form(...),
-    department_id: str = Form(...),
-    level: int = Form(...),
-    semester_no: int = Form(...),
-    academic_year: str = Form(...),
+    faculty_id: str = Form(""),
+    department_id: str = Form(""),
+    level: int = Form(0),
+    semester_no: int = Form(0),
+    academic_year: str = Form(""),
     batch_no: str = Form(""),
     commit: str = Form("false"),
     current_user: dict = Depends(get_current_user),
@@ -209,6 +357,39 @@ async def import_grades(
     parsed = _parse_grades_file(content, file.filename or "grades.xls")
     if not parsed["students"]:
         raise HTTPException(status_code=400, detail="لم يتم العثور على أي طالب في الملف")
+
+    # 🆕 حلّ البيانات الوصفية من النموذج الموحّد (الكلية/القسم بالاسم + المستوى/الفصل/العام/الدفعة)
+    meta = parsed.get("meta") or {}
+    resolved = {}
+    if meta.get("department_name"):
+        dq = await db.departments.find_one({"name": {"$regex": re.escape(meta["department_name"].strip()), "$options": "i"}})
+        if dq:
+            resolved["department_id"] = str(dq["_id"])
+            resolved["faculty_id"] = dq.get("faculty_id", "")
+            resolved["department_name"] = dq.get("name", "")
+    if meta.get("faculty_name") and not resolved.get("faculty_id"):
+        fq = await db.faculties.find_one({"name": {"$regex": re.escape(meta["faculty_name"].strip()), "$options": "i"}})
+        if fq:
+            resolved["faculty_id"] = str(fq["_id"])
+    for k in ("level", "semester_no"):
+        if meta.get(k):
+            try:
+                resolved[k] = int(float(meta[k]))
+            except (ValueError, TypeError):
+                pass
+    for k in ("academic_year", "batch_no"):
+        if meta.get(k):
+            resolved[k] = str(meta[k])
+    # قيم الملف تكمل ما لم يُدخل — والملف النموذجي مصدر الحقيقة عند المعاينة
+    if parsed.get("is_template"):
+        faculty_id = resolved.get("faculty_id") or faculty_id
+        department_id = resolved.get("department_id") or department_id
+        level = resolved.get("level") or level
+        semester_no = resolved.get("semester_no") or semester_no
+        academic_year = resolved.get("academic_year") or academic_year
+        batch_no = resolved.get("batch_no") or batch_no
+    if commit == "true" and not (faculty_id and department_id and level and semester_no and academic_year):
+        raise HTTPException(status_code=400, detail="أكمل بيانات الكشف (الكلية/القسم/المستوى/الفصل/العام الجامعي)")
 
     # مطابقة الطلاب: رقم القيد أولاً ثم الاسم
     all_students = await db.students.find({}, {"student_id": 1, "full_name": 1, "department_id": 1}).to_list(20000)
@@ -249,6 +430,12 @@ async def import_grades(
         "stats": {"total": len(parsed["students"]), "matched_by_reg": matched,
                   "matched_by_name": name_matched, "unmatched": unmatched},
         "already_imported": bool(existing),
+        "is_template": bool(parsed.get("is_template")),
+        "skipped_no_reg": parsed.get("skipped_no_reg", 0),
+        "resolved": {"faculty_id": faculty_id, "department_id": department_id,
+                     "department_name": resolved.get("department_name", ""),
+                     "level": level, "semester_no": semester_no,
+                     "academic_year": academic_year, "batch_no": batch_no},
     }
     if commit != "true":
         return result
@@ -488,8 +675,9 @@ async def issue_grade_statement(data: GradeStatementRequest, current_user: dict 
 
     await log_activity(current_user, "issue_grade_statement", "grades", token, student_name,
                        {"summary": f"إصدار بيان حالة ودرجات للطالب «{student_name}» ({len(recs)} فصل)"})
+    safe_reg = re.sub(r"[^A-Za-z0-9_-]", "", reg_no) or "student"
     return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
-                             headers={"Content-Disposition": f"attachment; filename=grade_statement_{reg_no or 'student'}.pdf"})
+                             headers={"Content-Disposition": f"attachment; filename=grade_statement_{safe_reg}.pdf"})
 
 
 @router.get("/grades/verify/{token}")
@@ -638,8 +826,13 @@ def _build_grade_statement_pdf(d: dict, settings: dict) -> bytes:
         row0 = [wrap_ar(g["course_name"], wchars) for g in rev] + [ar("المقرر")]
         row1 = [ar(_fmt_val(g.get("credits", ""))) for g in rev] + [ar("الساعات")]
         row2 = [ar(_fmt_val(g.get("total", ""))) for g in rev] + [ar("الدرجة")]
-        tbl = Table([row0, row1, row2], colWidths=[col_w] * n + [26 * mm],
-                    rowHeights=[16 * mm, 7 * mm, 8 * mm])
+        rows = [row0, row1, row2]
+        heights = [16 * mm, 7 * mm, 8 * mm]
+        if any(g.get("grade_letter") for g in grades):
+            rows.append([ar(_fmt_val(g.get("grade_letter", ""))) for g in rev] + [ar("التقدير")])
+            heights.append(7 * mm)
+        tbl = Table(rows, colWidths=[col_w] * n + [26 * mm],
+                    rowHeights=heights)
         tbl.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), "Amiri"),
             ("FONTNAME", (-1, 0), (-1, -1), BOLD),
