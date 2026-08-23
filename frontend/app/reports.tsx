@@ -651,6 +651,20 @@ export default function ReportsScreen() {
             {!['teacher', 'student'].includes(userRole) && (
             <TouchableOpacity
               style={styles.reportTypeCard}
+              onPress={() => router.push('/grades')}
+              data-testid="grades-system-btn"
+            >
+              <View style={[styles.reportTypeIcon, { backgroundColor: '#ede7f6' }]}>
+                <Ionicons name="ribbon" size={28} color="#5e35b1" />
+              </View>
+              <Text style={styles.reportTypeTitle}>الدرجات وبيانات الطلاب</Text>
+              <Text style={styles.reportTypeDesc}>استيراد كشوفات الدرجات وإصدار بيان حالة ودرجات</Text>
+            </TouchableOpacity>
+            )}
+
+            {!['teacher', 'student'].includes(userRole) && (
+            <TouchableOpacity
+              style={styles.reportTypeCard}
               onPress={() => router.push('/statements-log')}
               data-testid="statements-log-btn"
             >

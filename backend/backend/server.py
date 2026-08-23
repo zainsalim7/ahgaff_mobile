@@ -215,6 +215,7 @@ from routes.schedule_resolver import router as schedule_resolver_router
 from routes.lectures_purge import router as lectures_purge_router
 from routes.schedule_integrity import router as schedule_integrity_router
 from routes.statements import router as statements_router
+from routes.grades import router as grades_router
 from routes.certificates import router as certificates_router
 from routes.student_cards import router as student_cards_router
 from routes.course_migration import router as course_migration_router
@@ -17343,6 +17344,7 @@ app.include_router(schedule_resolver_router, prefix="/api")
 app.include_router(lectures_purge_router, prefix="/api")
 app.include_router(schedule_integrity_router, prefix="/api")
 app.include_router(statements_router, prefix="/api")
+app.include_router(grades_router, prefix="/api")
 app.include_router(certificates_router, prefix="/api")
 app.include_router(student_cards_router, prefix="/api")
 app.include_router(course_migration_router, prefix="/api")
