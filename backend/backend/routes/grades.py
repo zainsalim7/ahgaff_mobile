@@ -379,6 +379,7 @@ async def import_grades(
     academic_year: str = Form(""),
     batch_no: str = Form(""),
     commit: str = Form("false"),
+    replace: str = Form("false"),
     current_user: dict = Depends(get_current_user),
 ):
     """معاينة (commit=false) أو اعتماد (commit=true) استيراد كشف درجات فصلي من Excel"""
@@ -451,6 +452,13 @@ async def import_grades(
         else:
             unmatched += 1
 
+    # 🛡 كشف رقم قيد واحد مكتوب لأكثر من طالب داخل الملف (يفسد تجميع السجلات)
+    reg_names: dict = {}
+    for st in parsed["students"]:
+        if st["reg_no"] and not st["reg_no"].startswith("TMP"):
+            reg_names.setdefault(st["reg_no"], set()).add(st["name"])
+    duplicate_regs = [{"reg_no": k, "names": sorted(v)} for k, v in reg_names.items() if len(v) > 1]
+
     existing = await db.grade_imports.find_one({
         "department_id": department_id, "level": level,
         "semester_no": semester_no, "academic_year": academic_year,
@@ -462,6 +470,7 @@ async def import_grades(
         "stats": {"total": len(parsed["students"]), "matched_by_reg": matched,
                   "matched_by_name": name_matched, "unmatched": unmatched},
         "already_imported": bool(existing),
+        "duplicate_regs": duplicate_regs,
         "is_template": bool(parsed.get("is_template")),
         "skipped_no_reg": parsed.get("skipped_no_reg", 0),
         "resolved": {"faculty_id": faculty_id, "department_id": department_id,
@@ -471,6 +480,24 @@ async def import_grades(
     }
     if commit != "true":
         return result
+
+    # 🛡 منع الاعتماد إذا وُجد رقم قيد واحد لطالبين مختلفين — يجب تصحيح الملف
+    if duplicate_regs:
+        details = " | ".join(f"{d['reg_no']}: {'، '.join(d['names'])}" for d in duplicate_regs[:5])
+        raise HTTPException(status_code=400,
+                            detail=f"رقم قيد مكرر لأكثر من طالب في الملف — صحح الملف وأعد الرفع: {details}")
+
+    # 🛡 منع الاعتماد المكرر لنفس (القسم/المستوى/الفصل/العام) — إلا بالاستبدال الصريح
+    scope_q = {"department_id": department_id, "level": level,
+               "semester_no": semester_no, "academic_year": academic_year}
+    if existing and replace != "true":
+        raise HTTPException(status_code=409,
+                            detail="يوجد استيراد سابق لنفس (القسم/المستوى/الفصل/العام). فعّل خيار «استبدال الاستيراد السابق» أو احذفه من تبويب الاستيرادات أولاً.")
+    if existing and replace == "true":
+        olds = await db.grade_imports.find(scope_q).to_list(20)
+        for o in olds:
+            await db.student_grades.delete_many({"import_id": str(o["_id"])})
+            await db.grade_imports.delete_one({"_id": o["_id"]})
 
     imp_doc = {
         "filename": file.filename or "",

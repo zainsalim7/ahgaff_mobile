@@ -27,6 +27,7 @@ export default function GradesScreen() {
   const [batchNo, setBatchNo] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<any>(null);
+  const [replaceExisting, setReplaceExisting] = useState(false);
 
   // السجل
   const [search, setSearch] = useState('');
@@ -72,6 +73,7 @@ export default function GradesScreen() {
       fd.append('academic_year', academicYear);
       fd.append('batch_no', batchNo);
       fd.append('commit', commit ? 'true' : 'false');
+      fd.append('replace', replaceExisting ? 'true' : 'false');
       const res = await api.post('/grades/import', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       if (commit) {
         showMsg('success', res.data?.message || '✅ تم الاعتماد');
@@ -267,8 +269,30 @@ export default function GradesScreen() {
                 {!!preview.skipped_no_reg && (
                   <Text style={{ color: '#f57f17', fontSize: 12, textAlign: 'right', marginBottom: 6 }}>⚠️ تم تخطي {preview.skipped_no_reg} صفاً بدون رقم قيد</Text>
                 )}
+                {(preview.duplicate_regs || []).length > 0 && (
+                  <View style={{ backgroundColor: '#ffebee', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                    <Text style={{ color: '#b71c1c', fontSize: 12.5, fontWeight: '800', textAlign: 'right', marginBottom: 4 }}>
+                      🚫 رقم قيد واحد مكتوب لأكثر من طالب — الاعتماد ممنوع حتى تصحيح الملف:
+                    </Text>
+                    {preview.duplicate_regs.map((d: any, di: number) => (
+                      <Text key={di} style={{ color: '#c62828', fontSize: 11.5, textAlign: 'right' }}>
+                        • {d.reg_no}: {d.names.join(' ، ')}
+                      </Text>
+                    ))}
+                  </View>
+                )}
                 {preview.already_imported && (
-                  <Text style={{ color: '#c62828', fontSize: 12, textAlign: 'right', marginBottom: 6 }}>⚠️ يوجد استيراد سابق لنفس (القسم/المستوى/الفصل/العام) — الاعتماد سيضيف نسخة إضافية</Text>
+                  <View>
+                    <Text style={{ color: '#c62828', fontSize: 12, textAlign: 'right', marginBottom: 6 }}>⚠️ يوجد استيراد سابق لنفس (القسم/المستوى/الفصل/العام) — الاعتماد ممنوع لمنع التكرار إلا بالاستبدال</Text>
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, alignSelf: 'flex-end' }}
+                      onPress={() => setReplaceExisting((v) => !v)}
+                      testID="grades-replace-toggle"
+                    >
+                      <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#c62828' }}>استبدال الاستيراد السابق (يحذف سجلاته القديمة)</Text>
+                      <Ionicons name={replaceExisting ? 'checkbox' : 'square-outline'} size={20} color="#c62828" />
+                    </TouchableOpacity>
+                  </View>
                 )}
                 <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                   <Text style={[st.stat, { backgroundColor: '#e8f5e9', color: '#2e7d32' }]}>بالقيد: {preview.stats.matched_by_reg}</Text>
