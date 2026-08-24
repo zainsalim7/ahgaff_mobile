@@ -254,7 +254,8 @@ def _parse_grades_file(content: bytes, filename: str) -> dict:
                     if not nm:
                         break
                     cr = _fmt_val(saq.cell(r, units_c)) if units_c is not None else ""
-                    courses.append({"name": nm, "credits": cr})
+                    eff = _fmt_val(saq.cell(r, units_c + 1)) if units_c is not None else ""
+                    courses.append({"name": nm, "credits": cr, "effort_max": eff})
 
     # 2) السعي والأدوار — المجاميع
     sa = next((sheets[n] for n in sheets if "السعي والأدوار" in n), None)
@@ -299,7 +300,9 @@ def _parse_grades_file(content: bytes, filename: str) -> dict:
         reg = _fmt_val(sa.cell(r, reg_c)) if reg_c >= 0 else ""
         grades = []
         for (cn, tc) in course_cols:
-            grades.append({"course_name": cn, "credits": credits_map.get(cn, ""), "total": _fmt_val(sa.cell(r, tc))})
+            grades.append({"course_name": cn, "credits": credits_map.get(cn, ""), "total": _fmt_val(sa.cell(r, tc)),
+                           "s": _fmt_val(sa.cell(r, tc - 4)), "r1": _fmt_val(sa.cell(r, tc - 3)),
+                           "r2": _fmt_val(sa.cell(r, tc - 2)), "tas": _fmt_val(sa.cell(r, tc - 1))})
         students.append({"name": nm, "reg_no": reg, "grades": grades, "result": "", "note": ""})
         r += 1
 
@@ -364,7 +367,153 @@ def _parse_grades_file(content: bytes, filename: str) -> dict:
                 if hit:
                     st["result"], st["note"] = hit
 
-    return {"courses": [{"name": c[0], "credits": credits_map.get(c[0], "")} for c in course_cols], "students": students}
+    effort_map = {ci["name"].strip(): ci.get("effort_max", "") for ci in courses}
+    return {"courses": [{"name": c[0], "credits": credits_map.get(c[0], ""), "effort_max": effort_map.get(c[0], "")} for c in course_cols], "students": students}
+
+
+# ===== 📊 تحليل النتيجة (متدرج حسب مرحلة الرصد) =====
+
+def _num(v):
+    try:
+        return float(str(v).strip())
+    except (ValueError, TypeError):
+        return None
+
+
+@router.get("/grades/analysis/{import_id}")
+async def analyze_import(import_id: str, current_user: dict = Depends(get_current_user)):
+    """تحليل متدرج لكشف مستورد: سعي فقط ← سعي+دور أول ← نتيجة مكتملة"""
+    if not _can_manage(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    imp = await db.grade_imports.find_one({"_id": ObjectId(import_id)})
+    if not imp:
+        raise HTTPException(status_code=404, detail="الاستيراد غير موجود")
+    recs = await db.student_grades.find({"import_id": import_id}).to_list(2000)
+    courses = imp.get("courses", [])
+    has_details = any(("s" in g or "r1" in g) for r in recs for g in r.get("grades", []))
+
+    # كشف المرحلة
+    r1_filled = sum(1 for r in recs for g in r.get("grades", []) if _num(g.get("r1")) is not None)
+    r2_filled = sum(1 for r in recs for g in r.get("grades", []) if _num(g.get("r2")) is not None or _num(g.get("tas")) is not None)
+    stage = "saai" if r1_filled == 0 else ("final" if r2_filled > 0 else "round1")
+    if not has_details:
+        stage = "final"
+
+    PASS = 50.0
+    course_stats, fail_lists = [], {}
+    for c in courses:
+        cn = c["name"]
+        eff_max = _num(c.get("effort_max")) or 0
+        vals, saais, fails, absents = [], [], [], 0
+        for r in recs:
+            g = next((x for x in r.get("grades", []) if x.get("course_name") == cn), None)
+            if not g:
+                continue
+            s = _num(g.get("s"))
+            if s is not None:
+                saais.append(s)
+            tot = _num(g.get("total"))
+            raw = str(g.get("total", "")).strip()
+            if raw in ("غ", "غش"):
+                absents += 1
+            if tot is not None:
+                vals.append(tot)
+                if stage != "saai" and tot < PASS:
+                    fails.append(r.get("student_name", ""))
+        use = saais if (stage == "saai" and saais) else vals
+        st = {"course": cn, "credits": c.get("credits", ""), "count": len(use),
+              "avg": round(sum(use) / len(use), 1) if use else 0,
+              "max": max(use) if use else 0, "min": min(use) if use else 0,
+              "absent": absents}
+        if stage == "saai":
+            st["effort_max"] = eff_max
+            st["weak"] = sum(1 for v in saais if eff_max and v < eff_max / 2)
+        else:
+            st["fail_count"] = len(fails)
+            st["pass_rate"] = round(100 * (len(vals) - len(fails)) / len(vals), 1) if vals else 0
+            st["avg_saai"] = round(sum(saais) / len(saais), 1) if saais else None
+            fail_lists[cn] = fails
+        course_stats.append(st)
+
+    students_out, passed, second_round, dismissed = [], 0, [], []
+    saai_alerts = []
+    eff_maxes = {c["name"]: _num(c.get("effort_max")) or 0 for c in courses}
+    for r in recs:
+        gs = r.get("grades", [])
+        failed_courses = [g["course_name"] for g in gs if _num(g.get("total")) is not None and _num(g["total"]) < PASS]
+        avg_v = _num(r.get("result"))
+        item = {"name": r.get("student_name", ""), "reg_no": r.get("reg_no", ""),
+                "result": r.get("result", ""), "note": r.get("note", ""),
+                "failed_courses": failed_courses, "avg": avg_v}
+        students_out.append(item)
+        if stage == "saai":
+            weak = [g["course_name"] for g in gs if eff_maxes.get(g["course_name"]) and _num(g.get("s")) is not None and _num(g["s"]) < eff_maxes[g["course_name"]] / 2]
+            if weak:
+                saai_alerts.append({"name": item["name"], "reg_no": item["reg_no"], "courses": weak})
+        else:
+            if failed_courses:
+                second_round.append({"name": item["name"], "reg_no": item["reg_no"], "courses": failed_courses})
+            else:
+                passed += 1
+            if "فصل" in (r.get("note") or "") or "فصل" in (r.get("result") or ""):
+                dismissed.append({"name": item["name"], "note": r.get("note", "")})
+
+    top = sorted([s for s in students_out if s["avg"] is not None], key=lambda x: -x["avg"])[:10]
+    hardest = min([c for c in course_stats if "pass_rate" in c], key=lambda x: x["pass_rate"], default=None)
+
+    return {
+        "stage": stage,
+        "has_details": has_details,
+        "label": f"{imp.get('department_id', '')}",
+        "info": {"filename": imp.get("filename", ""), "level": imp.get("level"),
+                 "semester_no": imp.get("semester_no"), "academic_year": imp.get("academic_year", ""),
+                 "batch_no": imp.get("batch_no", ""), "students": len(recs)},
+        "course_stats": course_stats,
+        "summary": {"passed": passed, "second_round": len(second_round), "dismissed": len(dismissed)},
+        "top": top,
+        "second_round": second_round,
+        "fail_lists": fail_lists,
+        "saai_alerts": saai_alerts,
+        "dismissed": dismissed,
+    }
+
+
+@router.get("/grades/analysis-cumulative")
+async def cumulative_analysis(current_user: dict = Depends(get_current_user)):
+    """تقارير تراكمية عبر كل الاستيرادات: مقارنة الكشوف + الرسوب المتكرر"""
+    if not _can_manage(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    imports = await db.grade_imports.find().to_list(200)
+    recs = await db.student_grades.find().to_list(10000)
+    comp = []
+    for imp in imports:
+        iid = str(imp["_id"])
+        rs = [r for r in recs if r.get("import_id") == iid]
+        avgs = [v for v in (_num(r.get("result")) for r in rs) if v is not None]
+        fails = sum(1 for r in rs if any(_num(g.get("total")) is not None and _num(g["total"]) < 50 for g in r.get("grades", [])))
+        comp.append({"filename": imp.get("filename", ""), "level": imp.get("level"),
+                     "semester_no": imp.get("semester_no"), "academic_year": imp.get("academic_year", ""),
+                     "batch_no": imp.get("batch_no", ""), "students": len(rs),
+                     "avg": round(sum(avgs) / len(avgs), 2) if avgs else None,
+                     "fail_students": fails})
+    # الرسوب المتكرر: نفس الطالب رسب في نفس المقرر في أكثر من كشف
+    fail_map: dict = {}
+    for r in recs:
+        key = r.get("reg_no", "")
+        if not key:
+            continue
+        for g in r.get("grades", []):
+            t = _num(g.get("total"))
+            if t is not None and t < 50:
+                fail_map.setdefault((key, r.get("student_name", ""), g["course_name"]), 0)
+                fail_map[(key, r.get("student_name", ""), g["course_name"])] += 1
+    repeats = [{"reg_no": k[0], "name": k[1], "course": k[2], "times": v}
+               for k, v in fail_map.items() if v > 1]
+    repeats.sort(key=lambda x: -x["times"])
+    return {"comparison": sorted(comp, key=lambda x: (x["academic_year"], x["semester_no"] or 0)),
+            "repeat_failures": repeats[:100]}
 
 
 # ===== الاستيراد =====

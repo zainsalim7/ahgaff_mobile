@@ -38,6 +38,31 @@ export default function GradesScreen() {
   const [statusText, setStatusText] = useState('');
   const [selectedRecs, setSelectedRecs] = useState<string[]>([]);
 
+  // تحليل النتيجة
+  const [anImports, setAnImports] = useState<any[]>([]);
+  const [anId, setAnId] = useState('');
+  const [analysis, setAnalysis] = useState<any>(null);
+  const [cumulative, setCumulative] = useState<any>(null);
+
+  const loadAnalysis = async (id: string) => {
+    setAnId(id);
+    setAnalysis(null);
+    if (!id) return;
+    setBusy(true);
+    try {
+      const res = await api.get(`/grades/analysis/${id}`);
+      setAnalysis(res.data);
+    } catch { showMsg('error', '❌ فشل التحليل'); }
+    finally { setBusy(false); }
+  };
+
+  useEffect(() => {
+    if (tab === 'analysis') {
+      api.get('/grades/imports').then((r) => setAnImports(r.data || [])).catch(() => {});
+      api.get('/grades/analysis-cumulative').then((r) => setCumulative(r.data)).catch(() => {});
+    }
+  }, [tab]);
+
   // الاستيرادات
   const [imports, setImports] = useState<any[]>([]);
 
@@ -200,6 +225,7 @@ export default function GradesScreen() {
         {[
           { k: 'import', t: 'استيراد كشف درجات', ic: 'cloud-upload' },
           { k: 'record', t: 'سجل الطالب وبيانه', ic: 'school' },
+          { k: 'analysis', t: 'تحليل النتيجة', ic: 'stats-chart' },
           { k: 'imports', t: 'الاستيرادات', ic: 'list' },
         ].map((x: any) => (
           <TouchableOpacity key={x.k} style={[st.tab, tab === x.k && st.tabActive]} onPress={() => setTab(x.k)} testID={`grades-tab-${x.k}`}>
@@ -372,6 +398,122 @@ export default function GradesScreen() {
                 <TouchableOpacity style={[st.btn, { backgroundColor: '#00695c' }]} onPress={() => setStmtModal(true)} testID="grades-issue-statement-btn">
                   <Text style={st.btnTxt}>📄 إصدار بيان حالة ودرجات ({selectedRecs.length} فصل)</Text>
                 </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
+
+        {tab === 'analysis' && (
+          <View>
+            <View style={st.card}>
+              <Text style={st.label}>اختر الكشف المراد تحليله</Text>
+              {Platform.OS === 'web' && (
+                <select value={anId} onChange={(e: any) => loadAnalysis(e.target.value)} style={sel as any} data-testid="analysis-import-select">
+                  <option value="">-- اختر كشفاً --</option>
+                  {anImports.map((i) => <option key={i.id} value={i.id}>{i.filename} — م{i.level} ف{i.semester_no} {i.academic_year}</option>)}
+                </select>
+              )}
+              {busy && <ActivityIndicator size="small" color="#5e35b1" />}
+            </View>
+
+            {analysis && (
+              <View>
+                <View style={[st.card, { backgroundColor: analysis.stage === 'saai' ? '#fff8e1' : analysis.stage === 'round1' ? '#e3f2fd' : '#e8f5e9' }]}>
+                  <Text style={{ fontSize: 14, fontWeight: '800', textAlign: 'right', color: '#1a2540' }}>
+                    {analysis.stage === 'saai' ? '🕐 المرحلة: السعي فقط (إنذار مبكر)' : analysis.stage === 'round1' ? '📘 المرحلة: بعد الدور الأول (نتائج أولية)' : '✅ المرحلة: النتيجة المكتملة'}
+                  </Text>
+                  <Text style={{ fontSize: 11.5, color: '#667', textAlign: 'right', marginTop: 4 }}>
+                    {analysis.info.filename} — م{analysis.info.level} · فصل {analysis.info.semester_no} · {analysis.info.academic_year} · {analysis.info.students} طالب
+                  </Text>
+                  {!analysis.has_details && <Text style={{ fontSize: 11, color: '#c62828', textAlign: 'right', marginTop: 4 }}>⚠️ هذا الكشف مستورد قبل تفعيل التفاصيل — أعد رفعه بخيار الاستبدال لتحليل السعي والأدوار</Text>}
+                </View>
+
+                {analysis.stage !== 'saai' && (
+                  <View style={st.card}>
+                    <Text style={st.sectionTitle}>📊 إحصاء النتائج</Text>
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                      <Text style={[st.stat, { backgroundColor: '#e8f5e9', color: '#2e7d32' }]}>ناجح بكل المواد: {analysis.summary.passed}</Text>
+                      <Text style={[st.stat, { backgroundColor: '#fff8e1', color: '#f57f17' }]}>لديهم مواد راسبة: {analysis.summary.second_round}</Text>
+                      <Text style={[st.stat, { backgroundColor: '#ffebee', color: '#c62828' }]}>مفصولون: {analysis.summary.dismissed}</Text>
+                    </View>
+                  </View>
+                )}
+
+                <View style={st.card}>
+                  <Text style={st.sectionTitle}>📚 تحليل المقررات {analysis.stage === 'saai' ? '(درجات السعي)' : ''}</Text>
+                  {analysis.course_stats.map((c: any, i: number) => (
+                    <View key={i} style={st.semCard}>
+                      <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#1a2540', textAlign: 'right' }}>{c.course} <Text style={{ fontWeight: '400', color: '#999' }}>({c.credits} ساعة)</Text></Text>
+                      <Text style={{ fontSize: 11.5, color: '#556', textAlign: 'right', marginTop: 3 }}>
+                        متوسط: {c.avg} · أعلى: {c.max} · أدنى: {c.min}{c.absent ? ` · غياب: ${c.absent}` : ''}
+                        {analysis.stage === 'saai'
+                          ? ` · سعي ضعيف (<${(c.effort_max || 0) / 2}): ${c.weak}`
+                          : ` · نسبة النجاح: ${c.pass_rate}% · راسبون: ${c.fail_count}${c.avg_saai != null ? ` · متوسط السعي: ${c.avg_saai}` : ''}`}
+                      </Text>
+                      {analysis.stage !== 'saai' && (analysis.fail_lists[c.course] || []).length > 0 && (
+                        <Text style={{ fontSize: 10.5, color: '#c62828', textAlign: 'right', marginTop: 3 }}>راسبون: {analysis.fail_lists[c.course].join('، ')}</Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+
+                {analysis.stage === 'saai' && analysis.saai_alerts.length > 0 && (
+                  <View style={st.card}>
+                    <Text style={st.sectionTitle}>⚠️ إنذار مبكر — سعي أقل من النصف ({analysis.saai_alerts.length})</Text>
+                    {analysis.saai_alerts.map((a: any, i: number) => (
+                      <Text key={i} style={{ fontSize: 11.5, color: '#c62828', textAlign: 'right', marginBottom: 3 }}>• {a.name} ({a.reg_no}): {a.courses.join('، ')}</Text>
+                    ))}
+                  </View>
+                )}
+
+                {analysis.stage !== 'saai' && (
+                  <View>
+                    {analysis.top.length > 0 && (
+                      <View style={st.card}>
+                        <Text style={st.sectionTitle}>🏆 الأوائل (بالمعدل)</Text>
+                        {analysis.top.map((t: any, i: number) => (
+                          <Text key={i} style={{ fontSize: 12, color: '#333', textAlign: 'right', marginBottom: 3 }}>{i + 1}. {t.name} — <Text style={{ fontWeight: '800', color: '#2e7d32' }}>{t.avg}</Text></Text>
+                        ))}
+                      </View>
+                    )}
+                    {analysis.second_round.length > 0 && (
+                      <View style={st.card}>
+                        <Text style={st.sectionTitle}>📝 مرشحو الدور الثاني/الإعادة ({analysis.second_round.length})</Text>
+                        {analysis.second_round.map((s: any, i: number) => (
+                          <Text key={i} style={{ fontSize: 11.5, color: '#556', textAlign: 'right', marginBottom: 3 }}>• {s.name}: <Text style={{ color: '#c62828' }}>{s.courses.join('، ')}</Text></Text>
+                        ))}
+                      </View>
+                    )}
+                    {analysis.dismissed.length > 0 && (
+                      <View style={st.card}>
+                        <Text style={st.sectionTitle}>🚫 المفصولون</Text>
+                        {analysis.dismissed.map((d: any, i: number) => (
+                          <Text key={i} style={{ fontSize: 11.5, color: '#b71c1c', textAlign: 'right', marginBottom: 3 }}>• {d.name} — {d.note}</Text>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+            )}
+
+            {cumulative && (
+              <View style={st.card}>
+                <Text style={st.sectionTitle}>📈 التقارير التراكمية (كل الكشوف)</Text>
+                <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#556', textAlign: 'right', marginBottom: 6 }}>مقارنة الكشوف:</Text>
+                {cumulative.comparison.map((c: any, i: number) => (
+                  <Text key={i} style={{ fontSize: 11.5, color: '#556', textAlign: 'right', marginBottom: 3 }}>
+                    • دفعة {c.batch_no} م{c.level} ف{c.semester_no} {c.academic_year}: {c.students} طالب — متوسط المعدل: <Text style={{ fontWeight: '800', color: '#1565c0' }}>{c.avg ?? '—'}</Text> — لديهم رسوب: {c.fail_students}
+                  </Text>
+                ))}
+                {cumulative.repeat_failures.length > 0 && (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={{ fontSize: 12.5, fontWeight: '700', color: '#c62828', textAlign: 'right', marginBottom: 6 }}>🔁 الرسوب المتكرر (نفس المقرر أكثر من مرة):</Text>
+                    {cumulative.repeat_failures.map((r: any, i: number) => (
+                      <Text key={i} style={{ fontSize: 11.5, color: '#b71c1c', textAlign: 'right', marginBottom: 3 }}>• {r.name} ({r.reg_no}) — {r.course}: {r.times} مرات</Text>
+                    ))}
+                  </View>
+                )}
               </View>
             )}
           </View>
