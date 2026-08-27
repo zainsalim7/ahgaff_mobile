@@ -146,7 +146,7 @@ async def login(user_data: UserLogin, request: Request):
             role_doc = await db.roles.find_one({"_id": ObjectId(user["role_id"])})
             if role_doc:
                 user_permissions = list(role_doc.get("permissions", []))
-        except:
+        except Exception:
             pass
     
     if not user_permissions:
@@ -186,14 +186,14 @@ async def login(user_data: UserLogin, request: Request):
             faculty = await db.faculties.find_one({"_id": ObjectId(user["faculty_id"])})
             if faculty:
                 faculty_name = faculty.get("name")
-        except:
+        except Exception:
             pass
     if user.get("department_id"):
         try:
             department = await db.departments.find_one({"_id": ObjectId(user["department_id"])})
             if department:
                 department_name = department.get("name")
-        except:
+        except Exception:
             pass
 
     return {
@@ -234,7 +234,7 @@ async def get_me(current_user: dict = Depends(get_current_user)):
             role_doc = await db.roles.find_one({"_id": ObjectId(user["role_id"])})
             if role_doc:
                 user_permissions = list(role_doc.get("permissions", []))
-        except:
+        except Exception:
             pass
     
     if not user_permissions:
@@ -266,14 +266,14 @@ async def get_me(current_user: dict = Depends(get_current_user)):
             faculty = await db.faculties.find_one({"_id": ObjectId(user["faculty_id"])})
             if faculty:
                 faculty_name = faculty.get("name")
-        except:
+        except Exception:
             pass
     if user.get("department_id"):
         try:
             department = await db.departments.find_one({"_id": ObjectId(user["department_id"])})
             if department:
                 department_name = department.get("name")
-        except:
+        except Exception:
             pass
 
     # دعم multi-department / multi-faculty (backward-compat مع المفرد)

@@ -391,3 +391,24 @@ def require_permission(permission: str):
             )
         return current_user
     return permission_checker
+
+
+async def cleanup_singleton_merge_groups(db, gids=None) -> int:
+    """🔗 إزالة مفاتيح الدمج من الخانات اليتيمة (مجموعة بقي فيها عضو واحد بعد حذف شركائها)."""
+    q = {"merge_group_id": {"$nin": [None, ""]}}
+    if gids is not None:
+        gids = [g for g in gids if g]
+        if not gids:
+            return 0
+        q["merge_group_id"] = {"$in": gids}
+    counts = {}
+    async for s in db.weekly_schedule.find(q, {"merge_group_id": 1}):
+        counts[s["merge_group_id"]] = counts.get(s["merge_group_id"], 0) + 1
+    singles = [g for g, c in counts.items() if c == 1]
+    if not singles:
+        return 0
+    res = await db.weekly_schedule.update_many(
+        {"merge_group_id": {"$in": singles}},
+        {"$unset": {"merge_group_id": "", "merge_key": ""}},
+    )
+    return res.modified_count

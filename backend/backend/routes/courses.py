@@ -68,7 +68,7 @@ async def get_courses(
                 teacher = await db.users.find_one({"_id": ObjectId(c["teacher_id"])})
                 if teacher:
                     teacher_name = teacher.get("full_name")
-            except:
+            except Exception:
                 pass
         
         dept_name = None
@@ -77,7 +77,7 @@ async def get_courses(
                 dept = await db.departments.find_one({"_id": ObjectId(c["department_id"])})
                 if dept:
                     dept_name = dept.get("name")
-            except:
+            except Exception:
                 pass
         
         students_count = await db.enrollments.count_documents({"course_id": str(c["_id"])})
@@ -144,7 +144,7 @@ async def get_course(course_id: str, current_user: dict = Depends(get_current_us
             teacher = await db.users.find_one({"_id": ObjectId(course["teacher_id"])})
             if teacher:
                 teacher_name = teacher.get("full_name")
-        except:
+        except Exception:
             pass
     
     students_count = await db.enrollments.count_documents({"course_id": course_id})

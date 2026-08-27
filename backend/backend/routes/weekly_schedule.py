@@ -3274,6 +3274,7 @@ async def rooms_availability(
                 merged[mk] = o
         items = list(merged.values())
         for o in items:
+            o["is_shared"] = bool(o.get("is_shared")) and len(o["sections"]) > 1
             o["sections_label"] = " + ".join(o["sections"])
             o.pop("_merge_key", None)
             o.pop("sections", None)
@@ -3436,6 +3437,7 @@ async def teachers_availability(
                 merged[mk] = o
         items = list(merged.values())
         for o in items:
+            o["is_shared"] = bool(o.get("is_shared")) and len(o["sections"]) > 1
             o["sections_label"] = " + ".join(o["sections"])
             o.pop("_merge_key", None)
             o.pop("sections", None)

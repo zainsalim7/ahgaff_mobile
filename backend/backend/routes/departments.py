@@ -48,7 +48,7 @@ async def get_departments(faculty_id: Optional[str] = None, current_user: dict =
                 faculty = await db.faculties.find_one({"_id": ObjectId(dept["faculty_id"])})
                 if faculty:
                     faculty_name = faculty.get("name")
-            except:
+            except Exception:
                 pass
         
         result.append({

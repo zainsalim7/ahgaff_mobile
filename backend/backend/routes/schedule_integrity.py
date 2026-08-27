@@ -17,6 +17,7 @@ ISSUE_LABELS = {
     "teacher_mismatch": "خلايا بأستاذ مختلف عن الإسناد الحالي",
     "group_mismatch": "خلايا بمستوى/شعبة لا تطابق المقرر",
     "orphan_room": "خلايا بقاعة محذوفة",
+    "orphan_merge_badge": "خلايا بشارة مشاركة 🔗 يتيمة (شركاؤها حُذفوا)",
     "inactive_room": "خلايا بقاعة معطّلة",
 }
 
@@ -96,6 +97,20 @@ async def _scan(db, faculty_id: str, department_id: Optional[str]):
             elif room.get("is_active") is False:
                 issues.append({"slot_id": sid, "type": "inactive_room", "fixable": False,
                                "desc": f"{loc}: '{cname}' — القاعة '{room.get('name', '')}' معطّلة — عيّن قاعة بديلة يدوياً"})
+
+    # 🔗 شارات مشاركة يتيمة: خانة بمعرف مجموعة دمج لم يبق في مجموعتها (على مستوى النظام كله) سواها
+    gids = list({s.get("merge_group_id") for s in slots if s.get("merge_group_id")})
+    if gids:
+        g_counts: dict = {}
+        async for m in db.weekly_schedule.find({"merge_group_id": {"$in": gids}}, {"merge_group_id": 1}):
+            g_counts[m["merge_group_id"]] = g_counts.get(m["merge_group_id"], 0) + 1
+        for s in slots:
+            gid = s.get("merge_group_id")
+            if gid and g_counts.get(gid, 0) == 1:
+                loc = f"{dept_names.get(s.get('department_id', ''), '؟')} — م{s.get('level')}{' شعبة ' + s.get('section') if s.get('section') else ''} — {s.get('day')} فترة {s.get('slot_number')}"
+                cname = (courses.get(s.get("course_id", "")) or {}).get("name", "؟")
+                issues.append({"slot_id": str(s["_id"]), "type": "orphan_merge_badge", "fixable": True, "fix_action": "clear_merge",
+                               "desc": f"{loc}: '{cname}' — تحمل شارة مشاركة 🔗 لكن كل شركائها في مجموعة الدمج حُذفوا (بقيت وحدها) — ستُزال الشارة"})
     return slots, issues
 
 
@@ -159,6 +174,8 @@ async def integrity_fix(
                 await db.weekly_schedule.update_one({"_id": oid}, {"$set": {"level": it["new_level"], "section": it["new_section"]}})
             elif it["fix_action"] == "clear_room":
                 await db.weekly_schedule.update_one({"_id": oid}, {"$unset": {"room_id": ""}})
+            elif it["fix_action"] == "clear_merge":
+                await db.weekly_schedule.update_one({"_id": oid}, {"$unset": {"merge_group_id": "", "merge_key": ""}})
             fixed += 1
         except DuplicateKeyError:
             failed.append(f"{it['desc']} ⛔ تعذر الإصلاح تلقائياً: يسبب تعارضاً مع محاضرة قائمة — عالجه يدوياً")

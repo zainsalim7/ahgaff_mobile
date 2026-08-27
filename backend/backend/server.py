@@ -6041,6 +6041,68 @@ async def get_courses(
     
     return apply_fields(result, allowed)
 
+@api_router.get("/courses/diagnose-enrollment")
+async def diagnose_enrollment(
+    department_id: str,
+    course_code: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """تشخيص مشكلة التسجيل التلقائي"""
+    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_courses"):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    
+    result = {}
+    
+    # 1. المقررات
+    c_query = {"department_id": department_id, "is_active": True}
+    if course_code:
+        c_query["code"] = {"$regex": course_code, "$options": "i"}
+    courses = await db.courses.find(c_query).to_list(500)
+    result["courses_count"] = len(courses)
+    result["courses"] = []
+    
+    for c in courses[:20]:
+        cid = str(c["_id"])
+        c_section = (c.get("section") or "").strip()
+        c_level = c.get("level")
+        
+        # طلاب مطابقين بالضبط (باستثناء الخريجين)
+        sq = {"department_id": department_id, "level": c_level, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}}
+        if c_section:
+            sq["section"] = c_section
+        exact_count = await db.students.count_documents(sq)
+        
+        # طلاب بنفس المستوى (كل الشعب)
+        all_level = await db.students.count_documents({"department_id": department_id, "level": c_level, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}})
+        
+        # تسجيلات حالية
+        enroll_count = await db.enrollments.count_documents({"course_id": cid})
+        
+        # الشعب الموجودة لهذا المستوى
+        pipeline = [
+            {"$match": {"department_id": department_id, "level": c_level, "is_active": True}},
+            {"$group": {"_id": "$section", "count": {"$sum": 1}}}
+        ]
+        sections = await db.students.aggregate(pipeline).to_list(20)
+        
+        result["courses"].append({
+            "name": c.get("name", ""),
+            "code": c.get("code", ""),
+            "level": c_level,
+            "section": repr(c.get("section")),
+            "section_stripped": repr(c_section),
+            "exact_match_students": exact_count,
+            "all_level_students": all_level,
+            "current_enrollments": enroll_count,
+            "available_sections": [{
+                "section": repr(s["_id"]),
+                "count": s["count"]
+            } for s in sections]
+        })
+    
+    return result
+
+
 @api_router.get("/courses/{course_id}")
 async def get_course(course_id: str, current_user: dict = Depends(get_current_user)):
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
@@ -6262,8 +6324,12 @@ async def safe_delete_course(course_id: str, current_user: dict = Depends(get_cu
     await db.courses.delete_one({"_id": ObjectId(course_id)})
 
     # 🔄 تكامل: حذف خلايا الجدول الأسبوعي والعبء التدريسي المرتبطة بالمقرر
+    _mg_gids = [g for g in await db.weekly_schedule.distinct("merge_group_id", {"course_id": course_id}) if g]
     await db.weekly_schedule.delete_many({"course_id": course_id})
     await db.teaching_loads.delete_many({"course_id": course_id})
+    if _mg_gids:
+        from routes.deps import cleanup_singleton_merge_groups
+        await cleanup_singleton_merge_groups(db, _mg_gids)
     
     # حفظ في سلة المحذوفات
     await save_to_trash("course", course.get("name", ""), backup, current_user.get("username", "admin"))
@@ -6387,8 +6453,12 @@ async def delete_course(course_id: str, current_user: dict = Depends(get_current
         raise HTTPException(status_code=404, detail="المقرر غير موجود")
 
     # 🔄 تكامل: حذف خلايا الجدول الأسبوعي والعبء التدريسي المرتبطة بالمقرر
+    _mg_gids = [g for g in await db.weekly_schedule.distinct("merge_group_id", {"course_id": course_id}) if g]
     ws_del = await db.weekly_schedule.delete_many({"course_id": course_id})
     await db.teaching_loads.delete_many({"course_id": course_id})
+    if _mg_gids:
+        from routes.deps import cleanup_singleton_merge_groups
+        await cleanup_singleton_merge_groups(db, _mg_gids)
 
     msg = "تم حذف المقرر بنجاح"
     if ws_del.deleted_count:
@@ -6604,66 +6674,6 @@ async def auto_enroll_matching_students(course_id: str, current_user: dict = Dep
 
 
 
-@api_router.get("/courses/diagnose-enrollment")
-async def diagnose_enrollment(
-    department_id: str,
-    course_code: Optional[str] = None,
-    current_user: dict = Depends(get_current_user)
-):
-    """تشخيص مشكلة التسجيل التلقائي"""
-    if current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "manage_courses"):
-        raise HTTPException(status_code=403, detail="غير مصرح لك")
-    
-    result = {}
-    
-    # 1. المقررات
-    c_query = {"department_id": department_id, "is_active": True}
-    if course_code:
-        c_query["code"] = {"$regex": course_code, "$options": "i"}
-    courses = await db.courses.find(c_query).to_list(500)
-    result["courses_count"] = len(courses)
-    result["courses"] = []
-    
-    for c in courses[:20]:
-        cid = str(c["_id"])
-        c_section = (c.get("section") or "").strip()
-        c_level = c.get("level")
-        
-        # طلاب مطابقين بالضبط (باستثناء الخريجين)
-        sq = {"department_id": department_id, "level": c_level, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}}
-        if c_section:
-            sq["section"] = c_section
-        exact_count = await db.students.count_documents(sq)
-        
-        # طلاب بنفس المستوى (كل الشعب)
-        all_level = await db.students.count_documents({"department_id": department_id, "level": c_level, "is_active": True, "is_alumni": {"$ne": True}, "status": {"$ne": "graduated"}})
-        
-        # تسجيلات حالية
-        enroll_count = await db.enrollments.count_documents({"course_id": cid})
-        
-        # الشعب الموجودة لهذا المستوى
-        pipeline = [
-            {"$match": {"department_id": department_id, "level": c_level, "is_active": True}},
-            {"$group": {"_id": "$section", "count": {"$sum": 1}}}
-        ]
-        sections = await db.students.aggregate(pipeline).to_list(20)
-        
-        result["courses"].append({
-            "name": c.get("name", ""),
-            "code": c.get("code", ""),
-            "level": c_level,
-            "section": repr(c.get("section")),
-            "section_stripped": repr(c_section),
-            "exact_match_students": exact_count,
-            "all_level_students": all_level,
-            "current_enrollments": enroll_count,
-            "available_sections": [{
-                "section": repr(s["_id"]),
-                "count": s["count"]
-            } for s in sections]
-        })
-    
-    return result
 
 
 @api_router.post("/students/sync-enrollments")

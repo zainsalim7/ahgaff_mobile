@@ -938,6 +938,7 @@ async def import_master_schedule(
             pass
 
     all_remove_ids = replaced_ids | removal_ids
+    _removed_gids = list({d.get("merge_group_id") for d in list(removal_slots.values()) + list(replaced_slots.values()) if d.get("merge_group_id")})
     if all_remove_ids:
         await db.weekly_schedule.delete_many({"_id": {"$in": [ObjectId(x) for x in all_remove_ids]}})
 
@@ -1059,6 +1060,11 @@ async def import_master_schedule(
                 for sid in _new_sids
             ])
             _shared_enrolled += len(_new_sids)
+
+    # 🔗 تنظيف مفاتيح الدمج اليتيمة بعد إزالة/استبدال الخانات (إن لم يعِد الملف تكوين المجموعة)
+    if _removed_gids:
+        from .deps import cleanup_singleton_merge_groups
+        await cleanup_singleton_merge_groups(db, _removed_gids)
 
     await log_activity(
         current_user, "import_master_schedule_excel", "weekly_schedule", department_id, None,

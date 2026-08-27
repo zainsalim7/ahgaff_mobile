@@ -1245,7 +1245,7 @@ export default function WeeklySchedulePage() {
                                     {(item.slot_type === 'practical') && (
                                       <span data-testid={`practical-badge-${item.id}`} style={{ fontSize: 9, color: '#fff', fontWeight: 800, backgroundColor: '#00695c', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🧪 عملي</span>
                                     )}
-                                    {!item.shared_here && (item.merged_with?.length > 0 || item.merge_group_id) && (
+                                    {!item.shared_here && item.merged_with?.length > 0 && (
                                       <span data-testid={`shared-slot-badge-${item.id}`} style={{ fontSize: 9, color: '#00695c', fontWeight: 800, backgroundColor: '#e0f2f1', borderRadius: 4, padding: '1px 4px', marginRight: 4 }}>🔗 مشترك</span>
                                     )}
                                     {item.shared_here && item.shared_origin && (
