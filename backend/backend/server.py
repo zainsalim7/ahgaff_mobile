@@ -8806,6 +8806,8 @@ class GenerateSemesterRequest(BaseModel):
     schedule: List[DayScheduleConfig]
     start_date: str
     end_date: str
+    holidays: List[str] = []
+    dry_run: bool = False
 
 _EN_TO_AR_DAY = {
     "saturday": "السبت", "sunday": "الأحد", "monday": "الاثنين",
@@ -8972,6 +8974,11 @@ async def generate_semester_lectures_advanced(
     }
     
     lectures_created = 0
+    conflicts_skipped = 0
+    to_create = 0
+    already_exist = 0
+    holiday_set = set(data.holidays or [])
+    holiday_dates_skipped = set()
     
     for day_config in data.schedule:
         target_weekday = day_name_to_weekday.get(day_config.day.lower())
@@ -8989,12 +8996,25 @@ async def generate_semester_lectures_advanced(
             current += timedelta(days=1)
         
         # توليد المحاضرات لكل أسبوع
-        conflicts_skipped = 0
         while current <= end:
+            date_str = current.strftime("%Y-%m-%d")
+            # 🏖️ تخطي العطل الرسمية
+            if date_str in holiday_set:
+                holiday_dates_skipped.add(date_str)
+                current += timedelta(days=7)
+                continue
             # إضافة محاضرة لكل فترة زمنية في هذا اليوم
             for slot in day_config.slots:
+                if data.dry_run:
+                    exists = await db.lectures.find_one({
+                        "course_id": data.course_id,
+                        "date": date_str,
+                        "start_time": slot.start_time,
+                    }, {"_id": 1})
+                    if exists:
+                        already_exist += 1
+                        continue
                 # فحص تعارض المحاضرات مع نفس الأستاذ
-                date_str = current.strftime("%Y-%m-%d")
                 conflict = await check_teacher_lecture_conflict(data.course_id, date_str, slot.start_time, slot.end_time, allow_same_course=True)
                 if conflict and conflict["type"] == "error":
                     conflicts_skipped += 1
@@ -9021,6 +9041,9 @@ async def generate_semester_lectures_advanced(
                     conflicts_skipped += 1
                     continue
                 
+                if data.dry_run:
+                    to_create += 1
+                    continue
                 lecture = {
                     "course_id": data.course_id,
                     "date": date_str,
@@ -9040,6 +9063,15 @@ async def generate_semester_lectures_advanced(
             
             current += timedelta(days=7)
     
+    if data.dry_run:
+        return {
+            "dry_run": True,
+            "to_create": to_create,
+            "already_exist": already_exist,
+            "conflicts_skipped": conflicts_skipped,
+            "holidays_count": len(holiday_dates_skipped),
+        }
+
     # إرسال تنبيه عند إنشاء محاضرات الفصل
     if lectures_created > 0:
         await notify_lecture_created(course, data.start_date if hasattr(data, 'start_date') else "", "", "")
@@ -9053,6 +9085,8 @@ async def generate_semester_lectures_advanced(
         logging.warning(f"[reflect_recurring_to_weekly] failed: {e}")
 
     message = f"تم إنشاء {lectures_created} محاضرة للفصل الدراسي" + (f" (تم تخطي {conflicts_skipped} بسبب تعارض)" if conflicts_skipped > 0 else "")
+    if holiday_dates_skipped:
+        message += f" • 🏖️ استُثني {len(holiday_dates_skipped)} يوم عطلة" 
     if ws_created:
         message += f" • 🗓️ أُدرج {ws_created} موعد جديد في الجدول الأسبوعي"
     if ws_existing:
@@ -9064,6 +9098,7 @@ async def generate_semester_lectures_advanced(
         "message": message,
         "lectures_created": lectures_created,
         "conflicts_skipped": conflicts_skipped,
+        "holidays_count": len(holiday_dates_skipped),
         "weekly_cells_created": ws_created,
         "weekly_cells_existing": ws_existing,
         "weekly_notes": ws_notes,

@@ -720,6 +720,8 @@ export const lecturesAPI = {
     schedule: { day: string; slots: { start_time: string; end_time: string }[] }[];
     start_date: string | null;
     end_date: string | null;
+    holidays?: string[];
+    dry_run?: boolean;
   }) =>
     api.post('/lectures/generate-semester', data),
   

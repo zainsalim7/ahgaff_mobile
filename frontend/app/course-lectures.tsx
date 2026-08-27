@@ -259,6 +259,9 @@ export default function CourseLecturesScreen() {
   const [generateRoom, setGenerateRoom] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
+  const [genHolidays, setGenHolidays] = useState<string[]>([]);
+  const [genHolidayInput, setGenHolidayInput] = useState('');
+  const [genPreview, setGenPreview] = useState<any>(null);
   const [dayConfigs, setDayConfigs] = useState<DayScheduleConfig[]>(
     DAYS.map(d => ({
       day: d.id,
@@ -399,10 +402,12 @@ export default function CourseLecturesScreen() {
 
   // فتح نموذج التوليد مباشرة بدون أي شروط
   const openGenerateModal = () => {
-    // التواريخ فارغة - المستخدم يحدد بنفسه
-    setTempStartDate('');
-    setTempEndDate('');
-    
+    // افتراضياً: فترة الفصل النشط إن وُجدت
+    setTempStartDate(semesterSettings?.start || '');
+    setTempEndDate(semesterSettings?.end || '');
+    setGenHolidays([]);
+    setGenHolidayInput('');
+    setGenPreview(null);
     setGenerateRoom('');
     setGenerateError('');
     setDayConfigs(DAYS.map(d => ({
@@ -547,6 +552,7 @@ export default function CourseLecturesScreen() {
 
   // تفعيل/تعطيل يوم
   const toggleDay = (dayId: string) => {
+    setGenPreview(null);
     setDayConfigs(prev => prev.map(config =>
       config.day === dayId ? { ...config, enabled: !config.enabled } : config
     ));
@@ -554,6 +560,7 @@ export default function CourseLecturesScreen() {
 
   // تحديث وقت محاضرة
   const updateSlotTime = (dayId: string, slotIndex: number, field: 'start_time' | 'end_time', value: string) => {
+    setGenPreview(null);
     setDayConfigs(prev => prev.map(config => {
       if (config.day === dayId) {
         const newSlots = [...config.slots];
@@ -571,6 +578,7 @@ export default function CourseLecturesScreen() {
 
   // إضافة محاضرة لليوم
   const addSlotToDay = (dayId: string) => {
+    setGenPreview(null);
     setDayConfigs(prev => prev.map(config => {
       if (config.day === dayId) {
         const lastSlot = config.slots[config.slots.length - 1];
@@ -589,6 +597,7 @@ export default function CourseLecturesScreen() {
 
   // حذف محاضرة من اليوم
   const removeSlotFromDay = (dayId: string, slotIndex: number) => {
+    setGenPreview(null);
     setDayConfigs(prev => prev.map(config => {
       if (config.day === dayId && config.slots.length > 1) {
         return {
@@ -600,10 +609,10 @@ export default function CourseLecturesScreen() {
     }));
   };
 
-  // توليد المحاضرات
-  const handleGenerateLectures = async () => {
+  // توليد المحاضرات (dryRun = معاينة فقط دون إنشاء)
+  const handleGenerateLectures = async (dryRun: boolean) => {
     setGenerateError('');
-    
+
     if (!tempStartDate || !tempEndDate) {
       setGenerateError('الرجاء اختيار تاريخ البداية والنهاية');
       return;
@@ -623,8 +632,6 @@ export default function CourseLecturesScreen() {
       return;
     }
 
-    if (!confirm(`هل أنت متأكد من توليد المحاضرات من ${tempStartDate} إلى ${tempEndDate}؟`)) return;
-
     const scheduleConfig = enabledDays.map(d => ({
       day: d.day,
       slots: d.slots,
@@ -638,15 +645,24 @@ export default function CourseLecturesScreen() {
         schedule: scheduleConfig,
         start_date: tempStartDate,
         end_date: tempEndDate,
+        holidays: genHolidays,
+        dry_run: dryRun,
       });
+
+      if (dryRun) {
+        setGenPreview(response.data);
+        return;
+      }
 
       const count = response.data.lectures_created || 0;
       const skipped = response.data.conflicts_skipped || 0;
+      const holidaysCount = response.data.holidays_count || 0;
       const wsCreated = response.data.weekly_cells_created || 0;
       const wsExisting = response.data.weekly_cells_existing || 0;
       const wsNotes: string[] = response.data.weekly_notes || [];
       let msg = `تم توليد ${count} محاضرة بنجاح`;
-      if (skipped > 0) msg += `\n(تم تخطي ${skipped} محاضرة بسبب تعارض مع أستاذ آخر)`;
+      if (skipped > 0) msg += `\n(تم تخطي ${skipped} محاضرة بسبب تعارض)`;
+      if (holidaysCount > 0) msg += `\n🏖️ استُثني ${holidaysCount} يوم عطلة`;
       if (wsCreated > 0) msg += `\n🗓️ أُدرج ${wsCreated} موعد في الجدول الأسبوعي (العرض الشامل)`;
       if (wsExisting > 0) msg += `\n🗓️ ${wsExisting} موعد مدرج مسبقاً في الجدول الأسبوعي`;
       if (wsNotes.length > 0) msg += `\n⚠️ الجدول الأسبوعي:\n• ${wsNotes.join('\n• ')}`;
@@ -656,10 +672,11 @@ export default function CourseLecturesScreen() {
         showNotification('success', msg);
       }
       setShowGenerateModal(false);
+      setGenPreview(null);
       fetchData(1);
     } catch (error: any) {
       const message = error.response?.data?.detail || 'فشل في توليد المحاضرات';
-      showNotification('error', message);
+      setGenerateError(message);
     } finally {
       setGenerating(false);
     }
@@ -1241,17 +1258,18 @@ export default function CourseLecturesScreen() {
         {/* Generate Semester Lectures Modal */}
         <Modal
           visible={showGenerateModal}
-          animationType="slide"
-          presentationStyle="pageSheet"
-          onRequestClose={() => setShowGenerateModal(false)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => { setShowGenerateModal(false); setGenPreview(null); }}
         >
-          <SafeAreaView style={styles.generateModalContainer}>
+          <View style={styles.genOverlay}>
+            <View style={styles.genCard} testID="generate-lectures-modal">
             <View style={styles.generateModalHeader}>
-              <TouchableOpacity onPress={() => setShowGenerateModal(false)}>
-                <Ionicons name="close" size={28} color="#333" />
+              <TouchableOpacity onPress={() => { setShowGenerateModal(false); setGenPreview(null); }} testID="generate-modal-close">
+                <Ionicons name="close" size={26} color="#333" />
               </TouchableOpacity>
               <Text style={styles.generateModalTitle}>توليد محاضرات الفصل</Text>
-              <View style={{ width: 28 }} />
+              <Ionicons name="calendar" size={22} color="#00838f" />
             </View>
 
             <ScrollView style={styles.generateModalContent}>
@@ -1268,7 +1286,7 @@ export default function CourseLecturesScreen() {
                       <input
                         type="date"
                         value={tempStartDate}
-                        onChange={(e: any) => setTempStartDate(e.target.value)}
+                        onChange={(e: any) => { setTempStartDate(e.target.value); setGenPreview(null); }}
                         style={{
                           width: '100%',
                           padding: '8px',
@@ -1284,7 +1302,7 @@ export default function CourseLecturesScreen() {
                       <TextInput
                         style={styles.dateModalInput}
                         value={tempStartDate}
-                        onChangeText={setTempStartDate}
+                        onChangeText={(v) => { setTempStartDate(v); setGenPreview(null); }}
                         placeholder="YYYY-MM-DD"
                       />
                     )}
@@ -1296,7 +1314,7 @@ export default function CourseLecturesScreen() {
                       <input
                         type="date"
                         value={tempEndDate}
-                        onChange={(e: any) => setTempEndDate(e.target.value)}
+                        onChange={(e: any) => { setTempEndDate(e.target.value); setGenPreview(null); }}
                         style={{
                           width: '100%',
                           padding: '8px',
@@ -1312,7 +1330,7 @@ export default function CourseLecturesScreen() {
                       <TextInput
                         style={styles.dateModalInput}
                         value={tempEndDate}
-                        onChangeText={setTempEndDate}
+                        onChangeText={(v) => { setTempEndDate(v); setGenPreview(null); }}
                         placeholder="YYYY-MM-DD"
                       />
                     )}
@@ -1340,7 +1358,7 @@ export default function CourseLecturesScreen() {
                 </View>
                 <RoomPicker
                   value={generateRoom}
-                  onChange={setGenerateRoom}
+                  onChange={(v: string) => { setGenerateRoom(v); setGenPreview(null); }}
                   testID="generate-room-picker"
                   facultyId={course?.faculty_id}
                   occurrences={generateOccurrences}
@@ -1488,31 +1506,116 @@ export default function CourseLecturesScreen() {
                   );
                 })}
               </View>
+
+              {/* 🏖️ العطل الرسمية */}
+              <View style={styles.generateSection}>
+                <View style={styles.generateSectionHeader}>
+                  <Ionicons name="sunny" size={20} color="#e65100" />
+                  <Text style={styles.generateSectionTitle}>الأيام المعطلة / العطلات (تُتخطى)</Text>
+                </View>
+                <View style={{ flexDirection: 'row-reverse', gap: 6, alignItems: 'center' }}>
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="date"
+                      value={genHolidayInput}
+                      onChange={(e: any) => setGenHolidayInput(e.target.value)}
+                      data-testid="gen-holiday-input"
+                      style={{ flex: 1, padding: '8px 10px', borderRadius: 8, border: '1px solid #ddd', fontSize: 13, boxSizing: 'border-box' as any }}
+                    />
+                  ) : (
+                    <TextInput
+                      style={[styles.dateModalInput, { flex: 1 }]}
+                      value={genHolidayInput}
+                      onChangeText={setGenHolidayInput}
+                      placeholder="YYYY-MM-DD"
+                    />
+                  )}
+                  <TouchableOpacity
+                    style={styles.addHolidayBtn}
+                    testID="gen-add-holiday-btn"
+                    onPress={() => {
+                      if (genHolidayInput && !genHolidays.includes(genHolidayInput)) {
+                        setGenHolidays([...genHolidays, genHolidayInput].sort());
+                        setGenHolidayInput('');
+                        setGenPreview(null);
+                      }
+                    }}
+                  >
+                    <Text style={styles.addHolidayBtnText}>+ إضافة</Text>
+                  </TouchableOpacity>
+                </View>
+                {genHolidays.length > 0 && (
+                  <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                    {genHolidays.map(h => (
+                      <TouchableOpacity
+                        key={h}
+                        style={styles.holidayChip}
+                        testID={`gen-holiday-chip-${h}`}
+                        onPress={() => { setGenHolidays(genHolidays.filter(x => x !== h)); setGenPreview(null); }}
+                      >
+                        <Text style={styles.holidayChipText}>{h}  ✕</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
             </ScrollView>
 
-            {/* Generate Button */}
+            {/* المعاينة + الأخطاء + الأزرار */}
             <View style={styles.generateModalFooter}>
               {generateError ? (
-                <View style={{ backgroundColor: '#ffebee', padding: 12, borderRadius: 8, marginBottom: 10, width: '100%' }}>
-                  <Text style={{ color: '#c62828', textAlign: 'center', fontSize: 14, fontWeight: '600' }}>{generateError}</Text>
+                <View style={styles.genErrorBox} testID="generate-error-box">
+                  <Text style={styles.genErrorText}>{generateError}</Text>
                 </View>
               ) : null}
-              <TouchableOpacity
-                style={[styles.generateButton, generating && styles.generateButtonDisabled]}
-                onPress={handleGenerateLectures}
-                disabled={generating}
-              >
-                {generating ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="flash" size={22} color="#fff" />
-                    <Text style={styles.generateButtonText}>توليد المحاضرات</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              {genPreview ? (
+                <View style={styles.genPreviewBox} testID="generate-preview-box">
+                  <Text style={styles.genPreviewTitle}>📊 المعاينة</Text>
+                  <Text style={styles.genPreviewText}>
+                    {`✅ سيتم إنشاء: ${genPreview.to_create} محاضرة\n⏭️ موجودة مسبقاً (تُتخطى): ${genPreview.already_exist}`}
+                    {genPreview.conflicts_skipped > 0 ? `\n⚠️ ستُتخطى بسبب تعارض: ${genPreview.conflicts_skipped}` : ''}
+                    {genPreview.holidays_count > 0 ? `\n🏖️ عطلات مستثناة: ${genPreview.holidays_count} يوم` : ''}
+                  </Text>
+                </View>
+              ) : null}
+              <View style={{ flexDirection: 'row-reverse', gap: 8, width: '100%' }}>
+                <TouchableOpacity
+                  style={styles.genCancelBtn}
+                  onPress={() => { setShowGenerateModal(false); setGenPreview(null); }}
+                  disabled={generating}
+                  testID="generate-cancel-btn"
+                >
+                  <Text style={styles.genCancelBtnText}>إلغاء</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.genPreviewBtn}
+                  onPress={() => handleGenerateLectures(true)}
+                  disabled={generating}
+                  testID="generate-preview-btn"
+                >
+                  {generating ? (
+                    <ActivityIndicator size="small" color="#00838f" />
+                  ) : (
+                    <Text style={styles.genPreviewBtnText}>👁️ معاينة</Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.genConfirmBtn, (!genPreview || !genPreview.to_create) && styles.generateButtonDisabled]}
+                  onPress={() => handleGenerateLectures(false)}
+                  disabled={generating || !genPreview || !genPreview.to_create}
+                  testID="generate-confirm-btn"
+                >
+                  {generating ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.generateButtonText}>{`✓ تأكيد التوليد${genPreview ? ` (${genPreview.to_create})` : ''}`}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.genFootHint}>التأكيد متاح بعد المعاينة فقط — لضمان مراجعتك للأرقام قبل الإنشاء</Text>
             </View>
-          </SafeAreaView>
+            </View>
+          </View>
         </Modal>
       </SafeAreaView>
       
@@ -2267,6 +2370,123 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffebee',
     borderRadius: 8,
     marginTop: 8,
+  },
+  genOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 12,
+  },
+  genCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    width: '100%',
+    maxWidth: 560,
+    maxHeight: '92%',
+    overflow: 'hidden',
+  },
+  genErrorBox: {
+    backgroundColor: '#ffebee',
+    borderWidth: 1,
+    borderColor: '#ef9a9a',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+    width: '100%',
+  },
+  genErrorText: {
+    color: '#c62828',
+    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  genPreviewBox: {
+    backgroundColor: '#e0f2f1',
+    borderWidth: 1,
+    borderColor: '#80cbc4',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    width: '100%',
+  },
+  genPreviewTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#00695c',
+    marginBottom: 4,
+    textAlign: 'right',
+  },
+  genPreviewText: {
+    fontSize: 12,
+    color: '#004d40',
+    lineHeight: 20,
+    textAlign: 'right',
+  },
+  genCancelBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#f5f5f5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genCancelBtnText: {
+    fontWeight: '700',
+    color: '#555',
+  },
+  genPreviewBtn: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#00838f',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genPreviewBtnText: {
+    fontWeight: '800',
+    color: '#00838f',
+  },
+  genConfirmBtn: {
+    flex: 1.4,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#00838f',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genFootHint: {
+    fontSize: 10,
+    color: '#999',
+    marginTop: 8,
+    textAlign: 'center',
+    width: '100%',
+  },
+  addHolidayBtn: {
+    backgroundColor: '#e65100',
+    borderRadius: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+  },
+  addHolidayBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  holidayChip: {
+    backgroundColor: '#fff3e0',
+    borderWidth: 1,
+    borderColor: '#ffcc80',
+    borderRadius: 12,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+  },
+  holidayChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#e65100',
   },
   generateModalFooter: {
     padding: 16,
