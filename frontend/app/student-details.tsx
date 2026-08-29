@@ -203,6 +203,41 @@ export default function StudentDetailsScreen() {
   const [notifForm, setNotifForm] = useState({ title: '', message: '', type: 'warning' });
   const [sendingNotif, setSendingNotif] = useState(false);
   const [notifsExpanded, setNotifsExpanded] = useState(false); // 🆕 مطوي افتراضياً
+  const [excludedCourses, setExcludedCourses] = useState<any[]>([]);
+  const [excludingId, setExcludingId] = useState<string | null>(null);
+
+  // 🚫 استثناء الطالب من مقرر غير مطالب به
+  const excludeCourse = (course: any) => {
+    showConfirm(
+      'استثناء من المقرر',
+      `سيُفصل تسجيل الطالب من «${course.name}» ولن يُعاد تسجيله تلقائياً (مزامنة/تسجيل تلقائي). متابعة؟`,
+      async () => {
+        setExcludingId(course.id);
+        try {
+          const res = await api.post(`/students/${student.id}/exclude-course/${course.id}`);
+          showMessage('تم', res.data.message);
+          fetchStudent();
+        } catch (e: any) {
+          showMessage('خطأ', e.response?.data?.detail || 'فشل الاستثناء');
+        } finally {
+          setExcludingId(null);
+        }
+      },
+    );
+  };
+
+  const unexcludeCourse = async (course: any) => {
+    setExcludingId(course.id);
+    try {
+      const res = await api.delete(`/students/${student.id}/exclude-course/${course.id}`);
+      showMessage('تم', res.data.message);
+      fetchStudent();
+    } catch (e: any) {
+      showMessage('خطأ', e.response?.data?.detail || 'فشل إلغاء الاستثناء');
+    } finally {
+      setExcludingId(null);
+    }
+  };
 
   // ============== Fetch ==============
   const fetchStudent = useCallback(async () => {
@@ -223,6 +258,7 @@ export default function StudentDetailsScreen() {
       const cData = coursesRes.data as CoursesResponse;
       const courseList = cData.courses || [];
       setCourses(courseList);
+      setExcludedCourses((cData as any).excluded_courses || []);
       setCoursesInferred(!!cData.is_inferred);
 
       const dept = (deptsRes.data || []).find(
@@ -1189,6 +1225,20 @@ export default function StudentDetailsScreen() {
                         </Text>
                       )}
                     </View>
+                    {canManage && (
+                      <TouchableOpacity
+                        onPress={() => excludeCourse(course)}
+                        disabled={excludingId === course.id}
+                        style={{ padding: 6, borderRadius: 8, backgroundColor: '#ffebee' }}
+                        testID={`exclude-course-btn-${course.id}`}
+                      >
+                        {excludingId === course.id ? (
+                          <ActivityIndicator size="small" color="#c62828" />
+                        ) : (
+                          <Ionicons name="person-remove-outline" size={16} color="#c62828" />
+                        )}
+                      </TouchableOpacity>
+                    )}
                     <Ionicons
                       name={isExpanded ? 'chevron-down' : 'chevron-back'}
                       size={18}
@@ -1200,7 +1250,7 @@ export default function StudentDetailsScreen() {
                       <View style={styles.expandedHeader}>
                         <Ionicons name="calendar" size={14} color="#1565c0" />
                         <Text style={styles.expandedTitle}>
-                          سجل حضور الطالب في "{course.name}"
+                          سجل حضور الطالب في «{course.name}»
                         </Text>
                       </View>
                       {isLoading ? (
@@ -1245,9 +1295,43 @@ export default function StudentDetailsScreen() {
               })}
             </View>
           )}
-        </View>
 
-        {/* ============ 🆕 سجل الإشعارات/الإنذارات — قابل للطي ============ */}
+          {/* 🚫 المقررات المستثناة (غير المطالب بها) */}
+          {excludedCourses.length > 0 && (
+            <View style={{ marginTop: 12, backgroundColor: '#fff8f6', borderWidth: 1, borderColor: '#ffcdd2', borderRadius: 10, padding: 10 }} testID="excluded-courses-section">
+              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <Ionicons name="remove-circle" size={16} color="#c62828" />
+                <Text style={{ fontSize: 13, fontWeight: '800', color: '#c62828' }}>
+                  مقررات مستثناة — غير مطالب بها ({excludedCourses.length})
+                </Text>
+              </View>
+              {excludedCourses.map((c: any) => (
+                <View key={c.id} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#ffe5e0' }}>
+                  <Text style={{ flex: 1, fontSize: 13, color: '#5b6678', textAlign: 'right' }}>
+                    {c.name} {c.code ? `(${c.code})` : ''}
+                  </Text>
+                  {canManage && (
+                    <TouchableOpacity
+                      onPress={() => unexcludeCourse(c)}
+                      disabled={excludingId === c.id}
+                      style={{ backgroundColor: '#e8f5e9', borderRadius: 8, paddingVertical: 5, paddingHorizontal: 12 }}
+                      testID={`unexclude-course-btn-${c.id}`}
+                    >
+                      {excludingId === c.id ? (
+                        <ActivityIndicator size="small" color="#2e7d32" />
+                      ) : (
+                        <Text style={{ color: '#2e7d32', fontWeight: '700', fontSize: 11 }}>↩️ إلغاء الاستثناء وإعادة التسجيل</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+              <Text style={{ fontSize: 10, color: '#9aa4b5', textAlign: 'right', marginTop: 6 }}>
+                المقررات المستثناة لا يُعاد تسجيل الطالب فيها تلقائياً عند المزامنة أو التسجيل التلقائي
+              </Text>
+            </View>
+          )}
+        </View>
         <View style={styles.sectionCard}>
           <TouchableOpacity
             style={styles.sectionCardHeader}
@@ -1737,7 +1821,7 @@ export default function StudentDetailsScreen() {
               </TouchableOpacity>
             </View>
             <Text style={{ fontSize: 12, color: '#5a6c7d', textAlign: 'right', marginBottom: 12 }}>
-              ستُنقل بيانات "{student?.full_name}" إلى قائمة الخريجين مرتبطة بسنة التخرج المختارة.
+              ستُنقل بيانات «{student?.full_name}» إلى قائمة الخريجين مرتبطة بسنة التخرج المختارة.
             </Text>
 
             <View style={styles.modalBody}>

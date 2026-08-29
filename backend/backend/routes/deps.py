@@ -80,11 +80,12 @@ async def enroll_student_in_matching_courses(db, student: dict) -> int:
     if active_id:
         q["semester_id"] = active_id
     sid = str(student["_id"])
+    excluded = set(student.get("excluded_course_ids") or [])
     have = {e["course_id"] for e in await db.enrollments.find({"student_id": sid}, {"course_id": 1}).to_list(20000)}
     added = 0
     async for c in db.courses.find(q):
         cid = str(c["_id"])
-        if cid in have:
+        if cid in have or cid in excluded:
             continue
         ok = c.get("department_id") == dep and c.get("level") == lvl and _sec_matches(c.get("section"), sec)
         if not ok:

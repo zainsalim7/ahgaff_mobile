@@ -2903,7 +2903,7 @@ export default function StudentsScreen() {
               حذف الطالب
             </Text>
             <Text style={{ fontSize: 14, color: '#666', textAlign: 'center', marginBottom: 16 }}>
-              "{deleteTarget?.full_name || ''}"
+              «{deleteTarget?.full_name || ''}»
             </Text>
             
             {deleteInfo && !deleteInfo.error ? (
