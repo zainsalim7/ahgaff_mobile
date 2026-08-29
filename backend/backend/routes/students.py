@@ -1,7 +1,7 @@
 """
 Students Routes - مسارات إدارة الطلاب
 """
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query
 from bson import ObjectId
 from datetime import datetime
 from typing import List, Optional
@@ -145,7 +145,7 @@ async def get_students(
                 dept = await db.departments.find_one({"_id": ObjectId(s["department_id"])})
                 if dept:
                     dept_name = dept.get("name")
-            except:
+            except Exception:
                 pass
         
         # تحديد الحالة الفعلية: من حقل status لو موجود، وإلا نشتقّها من is_active
@@ -236,7 +236,7 @@ async def get_student(student_id: str, current_user: dict = Depends(get_current_
             dept = await db.departments.find_one({"_id": ObjectId(student["department_id"])})
             if dept:
                 dept_name = dept.get("name")
-        except:
+        except Exception:
             pass
     
     return {

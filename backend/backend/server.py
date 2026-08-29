@@ -4457,7 +4457,7 @@ async def bulk_deactivate_students(current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=403, detail="غير مصرح لك")
     
     # جلب الطلاب الذين لديهم حسابات
-    students = await db.students.find({"user_id": {"$exists": True, "$ne": None, "$ne": ""}}).to_list(5000)
+    students = await db.students.find({"user_id": {"$exists": True, "$nin": [None, ""]}}).to_list(5000)
     
     deactivated = 0
     
@@ -13723,8 +13723,6 @@ async def import_students_from_excel(
             'الإيميل': 'email',
             'الجنسية': 'nationality',
             'جنسية الطالب': 'nationality',
-            # إضافة "رقم الطالب" كبديل لـ "رقم القيد"
-            'رقم الطالب': 'student_id',
             # حقول الرقم المرجعي
             'البرنامج': 'program_code',
             'رمز البرنامج': 'program_code',

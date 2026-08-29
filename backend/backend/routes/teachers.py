@@ -48,7 +48,7 @@ async def get_teachers(
                 dept = await db.departments.find_one({"_id": ObjectId(t["department_id"])})
                 if dept:
                     dept_name = dept.get("name")
-            except:
+            except Exception:
                 pass
         
         # الحصول على معلومات المستخدم إن وجد
@@ -56,7 +56,7 @@ async def get_teachers(
         if t.get("user_id"):
             try:
                 user_info = await db.users.find_one({"_id": ObjectId(t["user_id"])})
-            except:
+            except Exception:
                 pass
         
         result.append({

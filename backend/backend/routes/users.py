@@ -115,7 +115,7 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
             try:
                 faculty = await db.faculties.find_one({"_id": ObjectId(u["faculty_id"])})
                 user_data["faculty_name"] = faculty["name"] if faculty else None
-            except:
+            except Exception:
                 user_data["faculty_name"] = None
         
         dept_ids_to_fetch = u.get("department_ids") or []

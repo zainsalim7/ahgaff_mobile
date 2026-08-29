@@ -1,0 +1,3 @@
+API=https://schedule-hub-272.preview.emergentagent.com
+TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OThkYzRkNjUwNzZlMDBlNzgxODg0ZjgiLCJleHAiOjE3ODgwOTA1Mzd9.tO9U0wZ0pJV7qoamzgmHXhJD4rgqE3Us8ytsUkSh0mA
+IID=6a8ca936f4393aa14e85fa89

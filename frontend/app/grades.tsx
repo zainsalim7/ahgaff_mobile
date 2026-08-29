@@ -122,6 +122,27 @@ export default function GradesScreen() {
     } finally { setBusy(false); }
   };
 
+  const [exporting, setExporting] = useState(false);
+  const exportAnalysis = async (kind: 'pdf' | 'excel') => {
+    if (!anId) return;
+    setExporting(true);
+    try {
+      const res = await api.get(`/grades/analysis/${anId}/export/${kind}`, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: kind === 'excel' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const xf = (res.headers as any)?.['x-filename'];
+      a.download = xf ? decodeURIComponent(xf) : `analysis.${kind === 'excel' ? 'xlsx' : 'pdf'}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showMsg('success', '✅ تم تصدير التقرير');
+    } catch { showMsg('error', '❌ فشل التصدير'); }
+    finally { setExporting(false); }
+  };
+
   const downloadTemplate = async () => {
     try {
       const res = await api.get('/grades/template', { responseType: 'blob' });
@@ -418,6 +439,16 @@ export default function GradesScreen() {
 
             {analysis && (
               <View>
+                <View style={[st.card, { flexDirection: 'row-reverse', gap: 8, alignItems: 'center' }]}>
+                  <Text style={[st.label, { flex: 1, marginBottom: 0 }]}>📤 تصدير التقرير لمجلس الكلية:</Text>
+                  <TouchableOpacity onPress={() => exportAnalysis('pdf')} disabled={exporting} style={{ backgroundColor: '#c62828', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 18, opacity: exporting ? 0.6 : 1 }} testID="export-analysis-pdf-btn">
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>PDF</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => exportAnalysis('excel')} disabled={exporting} style={{ backgroundColor: '#2e7d32', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, opacity: exporting ? 0.6 : 1 }} testID="export-analysis-excel-btn">
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Excel</Text>
+                  </TouchableOpacity>
+                  {exporting && <ActivityIndicator size="small" color="#5e35b1" />}
+                </View>
                 <View style={[st.card, { backgroundColor: analysis.stage === 'saai' ? '#fff8e1' : analysis.stage === 'round1' ? '#e3f2fd' : '#e8f5e9' }]}>
                   <Text style={{ fontSize: 14, fontWeight: '800', textAlign: 'right', color: '#1a2540' }}>
                     {analysis.stage === 'saai' ? '🕐 المرحلة: السعي فقط (إنذار مبكر)' : analysis.stage === 'round1' ? '📘 المرحلة: بعد الدور الأول (نتائج أولية)' : '✅ المرحلة: النتيجة المكتملة'}
