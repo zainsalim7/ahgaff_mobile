@@ -69,7 +69,8 @@ export interface OfflineSyncState {
   getCachedStudents: (courseId: string) => OfflineStudent[];
   
   // المزامنة
-  syncPendingRecords: () => Promise<{ success: number; failed: number }>;
+  syncPendingRecords: (force?: boolean) => Promise<{ success: number; failed: number }>;
+  verifyConnection: () => Promise<boolean>;
   
   // التحميل والحفظ
   loadFromStorage: () => Promise<void>;
@@ -184,11 +185,11 @@ export const useOfflineSyncStore = create<OfflineSyncState>((set, get) => ({
     return get().cachedStudents[courseId] || [];
   },
   
-  // مزامنة السجلات المعلقة
-  syncPendingRecords: async () => {
+  // مزامنة السجلات المعلقة (force = تجاوز مؤشر الاتصال إن كان عالقاً)
+  syncPendingRecords: async (force = false) => {
     const state = get();
     
-    if (!state.isOnline || state.isSyncing) {
+    if ((!state.isOnline && !force) || state.isSyncing) {
       return { success: 0, failed: 0 };
     }
     
@@ -273,6 +274,11 @@ export const useOfflineSyncStore = create<OfflineSyncState>((set, get) => ({
       syncErrors: errors,
     });
     
+    // نجاح أي إرسال يعني أن الاتصال يعمل فعلاً — صحح المؤشر إن كان عالقاً
+    if (success > 0 && !get().isOnline) {
+      set({ isOnline: true, lastOnlineTime: new Date().toISOString() });
+    }
+    
     await get().saveToStorage();
     
     console.log(`📊 نتيجة المزامنة: ${success} نجاح، ${failed} فشل`);
@@ -335,16 +341,40 @@ export const useOfflineSyncStore = create<OfflineSyncState>((set, get) => ({
     });
   },
   
+  // 🔍 فحص اتصال حقيقي بالسيرفر — NetInfo قد يعلق على "غير متصل" خطأً
+  verifyConnection: async () => {
+    try {
+      await api.get('/', { timeout: 8000 });
+      get().setOnlineStatus(true);
+      return true;
+    } catch (error: any) {
+      if (error?.response) {
+        // السيرفر ردّ (ولو بخطأ) => الاتصال موجود
+        get().setOnlineStatus(true);
+        return true;
+      }
+      get().setOnlineStatus(false);
+      return false;
+    }
+  },
+  
   // بدء مراقبة الاتصال
   startNetworkMonitoring: () => {
     const unsubscribe = NetInfo.addEventListener((state: NetInfoState) => {
       const isConnected = state.isConnected ?? false;
-      get().setOnlineStatus(isConnected);
+      if (isConnected) {
+        get().setOnlineStatus(true);
+      } else {
+        // لا نثق بـ NetInfo وحده: نتحقق بطلب حقيقي قبل إعلان عدم الاتصال
+        get().verifyConnection();
+      }
     });
     
     // فحص أولي
     NetInfo.fetch().then((state: NetInfoState) => {
-      get().setOnlineStatus(state.isConnected ?? false);
+      const isConnected = state.isConnected ?? false;
+      if (isConnected) get().setOnlineStatus(true);
+      else get().verifyConnection();
     });
     
     return unsubscribe;

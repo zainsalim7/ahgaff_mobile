@@ -32,6 +32,7 @@ export default function OfflineSyncScreen() {
     lastSyncTime,
     syncErrors,
     syncPendingRecords,
+    verifyConnection,
     clearAllData,
     loadFromStorage,
     getPendingRecordsCount,
@@ -49,13 +50,24 @@ export default function OfflineSyncScreen() {
     setRefreshing(false);
   }, [loadFromStorage]);
 
-  const handleSync = async () => {
-    if (!isOnline) {
-      Alert.alert('غير متصل', 'لا يمكن المزامنة بدون اتصال بالإنترنت');
-      return;
+  const handleSync = async (force = false) => {
+    if (!isOnline && !force) {
+      // مؤشر "غير متصل" قد يكون عالقاً — تحقق بطلب حقيقي للسيرفر أولاً
+      const ok = await verifyConnection();
+      if (!ok) {
+        Alert.alert(
+          'تعذر الوصول للخادم',
+          'إن كنت متأكداً أن الإنترنت يعمل لديك، جرّب المزامنة الإجبارية — سترسل السجلات مباشرة للنظام.',
+          [
+            { text: 'إلغاء', style: 'cancel' },
+            { text: '⚡ مزامنة إجبارية', onPress: () => handleSync(true) },
+          ]
+        );
+        return;
+      }
     }
 
-    const result = await syncPendingRecords();
+    const result = await syncPendingRecords(true);
     
     if (result.failed > 0) {
       Alert.alert(
@@ -165,6 +177,18 @@ export default function OfflineSyncScreen() {
               </Text>
             )}
           </View>
+          {!isOnline && (
+            <TouchableOpacity
+              onPress={async () => {
+                const ok = await verifyConnection();
+                Alert.alert(ok ? '✅ الاتصال يعمل' : '❌ لا يوجد اتصال', ok ? 'تم تصحيح الحالة — يمكنك المزامنة الآن' : 'تعذر الوصول للخادم');
+              }}
+              style={{ backgroundColor: '#1565c0', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 }}
+              testID="recheck-connection-btn"
+            >
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>إعادة فحص</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Stats Cards */}
@@ -191,9 +215,10 @@ export default function OfflineSyncScreen() {
         {/* Action Buttons */}
         <View style={styles.actions}>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.syncBtn, (!isOnline || pendingCount === 0) && styles.disabledBtn]}
-            onPress={handleSync}
-            disabled={!isOnline || pendingCount === 0 || isSyncing}
+            style={[styles.actionBtn, styles.syncBtn, pendingCount === 0 && styles.disabledBtn]}
+            onPress={() => handleSync(false)}
+            disabled={pendingCount === 0 || isSyncing}
+            testID="sync-now-btn"
           >
             {isSyncing ? (
               <ActivityIndicator size="small" color="#fff" />
