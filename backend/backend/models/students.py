@@ -30,6 +30,7 @@ class StudentResponse(StudentBase):
     reference_number: Optional[str] = None
     # حقول حالة الطالب (active/repeat/graduated/expelled/frozen)
     status: Optional[str] = None
+    status_label: Optional[str] = None
     status_changed_at: Optional[str] = None
     status_reason: Optional[str] = None
     graduation_date: Optional[str] = None

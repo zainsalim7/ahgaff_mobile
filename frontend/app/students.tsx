@@ -1385,6 +1385,14 @@ export default function StudentsScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.headerBtn, styles.btnGhost]}
+                onPress={() => router.push('/student-statuses')}
+                testID="nonactive-students-btn"
+              >
+                <Ionicons name="pause-circle-outline" size={16} color="#e65100" />
+                <Text style={[styles.btnGhostText, { color: '#e65100' }]}>غير المستمرين</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.headerBtn, styles.btnGhost]}
                 onPress={handleExportStudents}
                 data-testid="export-students-btn"
               >

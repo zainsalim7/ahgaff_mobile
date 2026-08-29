@@ -1418,7 +1418,7 @@ async def get_users(role: Optional[str] = None, current_user: dict = Depends(get
             try:
                 faculty = await db.faculties.find_one({"_id": ObjectId(u["faculty_id"])})
                 user_data["faculty_name"] = faculty["name"] if faculty else None
-            except:
+            except Exception:
                 user_data["faculty_name"] = None
 
         # 🏛️ أسماء الكليات المتعددة
@@ -2124,7 +2124,7 @@ async def get_departments(current_user: dict = Depends(get_current_user)):
             try:
                 faculty = await db.faculties.find_one({"_id": ObjectId(d["faculty_id"])})
                 dept_data["faculty_name"] = faculty["name"] if faculty else None
-            except:
+            except Exception:
                 dept_data["faculty_name"] = None
         result.append(dept_data)
     return result
@@ -2227,7 +2227,7 @@ async def get_department_details(dept_id: str, current_user: dict = Depends(get_
                         "academic_title": teacher.get("academic_title", ""),
                         "specialization": teacher.get("specialization", ""),
                     })
-            except:
+            except Exception:
                 pass
     
     # Get students enrolled in courses of this department
@@ -2250,7 +2250,7 @@ async def get_department_details(dept_id: str, current_user: dict = Depends(get_
                     "level": student.get("level", 1),
                     "section": student.get("section", "")
                 })
-        except:
+        except Exception:
             pass
     
     # Format courses
@@ -2479,7 +2479,7 @@ async def get_department_head_dashboard(current_user: dict = Depends(get_current
             try:
                 faculty = await db.faculties.find_one({"_id": ObjectId(dept["faculty_id"])})
                 faculty_name = faculty["name"] if faculty else None
-            except:
+            except Exception:
                 pass
         
         departments_data.append({
@@ -3688,7 +3688,7 @@ async def get_students(
             for cid in all_course_ids:
                 try:
                     course_obj_ids.append(ObjectId(cid))
-                except:
+                except Exception:
                     pass
             if course_obj_ids:
                 course_docs = await db.courses.find(
@@ -3754,7 +3754,11 @@ async def get_my_student_record(current_user: dict = Depends(get_current_user)):
         "user_id": student.get("user_id"),
         "qr_code": student["qr_code"],
         "created_at": student["created_at"],
-        "is_active": student.get("is_active", True)
+        "is_active": student.get("is_active", True),
+        "status": student.get("status") or "active",
+        "status_label": {"active": "مستمر", "repeat": "إعادة", "graduated": "متخرج", "expelled": "مفصول", "frozen": "مجمَّد"}.get(student.get("status") or "active", "مستمر"),
+        "status_reason": student.get("status_reason"),
+        "status_changed_at": student.get("status_changed_at"),
     }
 
 @api_router.get("/students/me/courses")
@@ -3804,7 +3808,7 @@ async def get_my_courses(
                 course = await db.courses.find_one({"_id": ObjectId(cid)})
                 if course:
                     courses_list.append(course)
-            except:
+            except Exception:
                 pass
     
     allowed = parse_fields(fields)
@@ -3825,7 +3829,7 @@ async def get_my_courses(
                     user_doc = await db.users.find_one({"_id": ObjectId(c["teacher_id"])})
                     if user_doc:
                         teacher_name = user_doc.get("full_name", user_doc.get("username", "غير محدد"))
-            except:
+            except Exception:
                 pass
 
         semester_name = None
@@ -3834,7 +3838,7 @@ async def get_my_courses(
                 sem = await db.semesters.find_one({"_id": ObjectId(c["semester_id"])})
                 if sem:
                     semester_name = sem.get("name")
-            except:
+            except Exception:
                 pass
 
         result.append({
@@ -5762,7 +5766,7 @@ async def create_course(course: CourseCreate, current_user: dict = Depends(get_c
                 dept = await db.departments.find_one({"_id": ObjectId(teacher["department_id"])})
                 teacher_dept_name = dept["name"] if dept else "غير معروف"
                 warning = f"تنبيه: المعلم {teacher['full_name']} ينتمي لقسم {teacher_dept_name} وليس لقسم هذا المقرر"
-        except:
+        except Exception:
             pass
     
     result = await db.courses.insert_one(course_dict)
@@ -5788,7 +5792,7 @@ async def create_course(course: CourseCreate, current_user: dict = Depends(get_c
                     "enrolled_by": current_user["id"]
                 })
                 auto_enrolled_count += 1
-    except:
+    except Exception:
         pass
     
     response = {
@@ -5987,7 +5991,7 @@ async def get_courses(
                     teacher = await db.users.find_one({"_id": ObjectId(c["teacher_id"])})
                     if teacher:
                         teacher_name = teacher.get("full_name")
-            except:
+            except Exception:
                 pass
         
         # اسم الفصل الدراسي
@@ -5997,7 +6001,7 @@ async def get_courses(
                 sem = await db.semesters.find_one({"_id": ObjectId(c["semester_id"])})
                 if sem:
                     semester_name = sem.get("name")
-            except:
+            except Exception:
                 pass
         
         # 🆕 اسم القسم واسم الكلية
@@ -6120,7 +6124,7 @@ async def get_course(course_id: str, current_user: dict = Depends(get_current_us
                 teacher_user = await db.users.find_one({"_id": ObjectId(course["teacher_id"])})
                 if teacher_user:
                     teacher_name = teacher_user.get("full_name")
-        except:
+        except Exception:
             pass
     
     # جلب اسم القسم والكلية
@@ -6136,7 +6140,7 @@ async def get_course(course_id: str, current_user: dict = Depends(get_current_us
                     course_faculty_id = str(dept["faculty_id"])
                     fac = await db.faculties.find_one({"_id": ObjectId(dept["faculty_id"])})
                     faculty_name = fac.get("name") if fac else None
-        except:
+        except Exception:
             pass
     
     # عدد الطلاب المسجلين
@@ -6286,7 +6290,7 @@ async def safe_delete_course(course_id: str, current_user: dict = Depends(get_cu
     for e in enrollments:
         try:
             student_ids.append(ObjectId(e["student_id"]))
-        except:
+        except Exception:
             pass
     students = await db.students.find({"_id": {"$in": student_ids}}).to_list(10000) if student_ids else []
     lectures = await db.lectures.find({"course_id": course_id}).to_list(10000)
@@ -6600,7 +6604,7 @@ async def bulk_move_students(request: Request, current_user: dict = Depends(get_
                     {"_id": ObjectId(sid)},
                     {"$set": {"section": target_section}}
                 )
-            except:
+            except Exception:
                 pass
         moved += 1
     return {"message": f"تم نقل {moved} طالب", "moved": moved, "already_enrolled": already}
@@ -6841,7 +6845,7 @@ async def enroll_students(
         student = None
         try:
             student = await db.students.find_one({"_id": ObjectId(student_id)})
-        except:
+        except Exception:
             student = await db.students.find_one({"student_id": student_id})
         
         if not student:
@@ -7119,7 +7123,7 @@ async def update_course(course_id: str, data: CourseUpdate, current_user: dict =
                 dept = await db.departments.find_one({"_id": ObjectId(teacher["department_id"])})
                 teacher_dept_name = dept["name"] if dept else "غير معروف"
                 warning = f"تنبيه: المعلم {teacher['full_name']} ينتمي لقسم {teacher_dept_name} وليس لقسم هذا المقرر"
-        except:
+        except Exception:
             pass
     
     if update_data:
@@ -7884,7 +7888,7 @@ async def get_today_lectures(
                         {"$set": {"status": LectureStatus.ABSENT}}
                     )
                     lecture["status"] = LectureStatus.ABSENT
-            except:
+            except Exception:
                 pass
 
     result = []
@@ -8128,7 +8132,7 @@ async def get_month_lectures(
                         {"$set": {"status": LectureStatus.ABSENT}}
                     )
                     lecture["status"] = LectureStatus.ABSENT
-            except:
+            except Exception:
                 pass
 
     # تجميع التواريخ والمحاضرات
@@ -8311,7 +8315,7 @@ async def get_course_lectures(
                         {"$set": {"status": LectureStatus.ABSENT}}
                     )
                     lecture["status"] = LectureStatus.ABSENT
-            except:
+            except Exception:
                 pass
     
     result = []
@@ -8969,7 +8973,7 @@ async def generate_semester_lectures_advanced(
     try:
         start = datetime.strptime(data.start_date, "%Y-%m-%d")
         end = datetime.strptime(data.end_date, "%Y-%m-%d")
-    except:
+    except Exception:
         raise HTTPException(status_code=400, detail="صيغة التاريخ غير صحيحة")
     
     # تحويل أسماء الأيام إلى أرقام Python weekday
@@ -9805,7 +9809,7 @@ async def get_lecture_details(
     for e in enrollments:
         try:
             valid_student_ids.append(ObjectId(e["student_id"]))
-        except:
+        except Exception:
             pass
     students = await db.students.find({"_id": {"$in": valid_student_ids}}).to_list(10000)
     
@@ -9863,7 +9867,7 @@ async def _get_faculty_attendance_settings(course: dict) -> tuple:
                 if faculty:
                     attendance_duration = faculty.get("attendance_duration_minutes", 15)
                     max_delay = faculty.get("max_attendance_delay_minutes", 30)
-    except:
+    except Exception:
         pass
     return (attendance_duration, max_delay, attendance_edit_minutes)
 
@@ -9875,7 +9879,7 @@ async def _resolve_faculty_id(department_id: str) -> Optional[str]:
         dept = await db.departments.find_one({"_id": ObjectId(department_id)})
         if dept:
             return dept.get("faculty_id")
-    except:
+    except Exception:
         pass
     return None
 
@@ -9931,7 +9935,7 @@ async def export_lecture_attendance_pdf(
             teacher = await db.teachers.find_one({"_id": ObjectId(course["teacher_id"])})
             if teacher:
                 teacher_name = teacher.get("full_name", "")
-        except:
+        except Exception:
             pass
 
     # جلب بيانات القسم والكلية
@@ -9939,7 +9943,7 @@ async def export_lecture_attendance_pdf(
     if course and course.get("department_id"):
         try:
             department = await db.departments.find_one({"_id": ObjectId(course["department_id"])})
-        except:
+        except Exception:
             pass
 
     # Register Arabic font
@@ -10130,7 +10134,7 @@ def get_lecture_attendance_status(lecture: dict, attendance_duration: int = 15, 
         lecture_end = datetime.strptime(f"{lecture['date']} {lecture['end_time']}", "%Y-%m-%d %H:%M")
         lecture_start = lecture_start.replace(tzinfo=YEMEN_TIMEZONE)
         lecture_end = lecture_end.replace(tzinfo=YEMEN_TIMEZONE)
-    except:
+    except Exception:
         return {
             "can_take_attendance": False,
             "reason": "خطأ في تنسيق التاريخ أو الوقت",
@@ -10241,7 +10245,7 @@ async def get_lecture_attendance_status_api(
         course = await db.courses.find_one({"_id": ObjectId(lecture["course_id"])})
         if course:
             attendance_duration, max_delay, attendance_edit_minutes = await _get_faculty_attendance_settings(course)
-    except:
+    except Exception:
         pass
     
     return get_lecture_attendance_status(lecture, attendance_duration, max_delay, attendance_edit_minutes)
@@ -10331,7 +10335,7 @@ async def record_attendance_session(
             if (now - offline_time).total_seconds() < 48 * 3600:
                 check_time = offline_time
                 is_offline_sync = True
-        except:
+        except Exception:
             pass
     
     lecture_date = datetime.strptime(lecture["date"], "%Y-%m-%d")
@@ -12471,7 +12475,7 @@ async def get_teacher_workload_report(
                     end_time = datetime.strptime(lecture.get("end_time", "00:00"), "%H:%M")
                     duration = (end_time - start_time).seconds / 3600
                     scheduled_hours += duration
-                except:
+                except Exception:
                     scheduled_hours += 1
             
             for lecture in executed_lectures:
@@ -12480,7 +12484,7 @@ async def get_teacher_workload_report(
                     end_time = datetime.strptime(lecture.get("end_time", "00:00"), "%H:%M")
                     duration = (end_time - start_time).seconds / 3600
                     actual_hours += duration
-                except:
+                except Exception:
                     actual_hours += 1
             
             total_scheduled_hours += scheduled_hours
@@ -13031,7 +13035,7 @@ async def export_semester_report_pdf(
     if font_path.exists():
         try:
             pdfmetrics.registerFont(TTFont('Amiri', str(font_path)))
-        except:
+        except Exception:
             pass
         arabic_font = 'Amiri'
     else:
@@ -13138,7 +13142,7 @@ async def export_semester_report_pdf(
                 try:
                     t = await db.teachers.find_one({"_id": ObjectId(course["teacher_id"])})
                     teacher_cache[course["teacher_id"]] = t.get("full_name", "") if t else ""
-                except:
+                except Exception:
                     teacher_cache[course["teacher_id"]] = ""
             teacher_name = teacher_cache[course["teacher_id"]]
         
@@ -13150,7 +13154,7 @@ async def export_semester_report_pdf(
                 try:
                     d = await db.departments.find_one({"_id": ObjectId(course["department_id"])})
                     dept_cache[course["department_id"]] = d if d else {}
-                except:
+                except Exception:
                     dept_cache[course["department_id"]] = {}
             dept_obj = dept_cache[course["department_id"]]
             dept_name = dept_obj.get("name", "")
@@ -14063,7 +14067,7 @@ async def import_lectures_from_excel(
                     end_date_str = end_date_str.split(' ')[0]
                     start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
                     end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
-                except:
+                except Exception:
                     errors.append(f"سطر {row_num}: صيغة التاريخ غير صحيحة (المتوقع: YYYY-MM-DD)")
                     continue
                 
@@ -14770,7 +14774,7 @@ def arabic_text(text):
     try:
         reshaped = arabic_reshaper.reshape(str(text))
         return get_display(reshaped)
-    except:
+    except Exception:
         return str(text)
 
 
@@ -16096,7 +16100,7 @@ async def get_my_scope(current_user: dict = Depends(get_current_user)):
                         faculty = await db.faculties.find_one({"_id": ObjectId(dept["faculty_id"])})
                         if faculty and not any(f["id"] == str(faculty["_id"]) for f in scope["faculties"]):
                             scope["faculties"].append({"id": str(faculty["_id"]), "name": faculty["name"]})
-            except:
+            except Exception:
                 pass
     elif permission_level == "faculty" or faculty_ids:
         # مستوى الكلية
@@ -16107,7 +16111,7 @@ async def get_my_scope(current_user: dict = Depends(get_current_user)):
                 faculty = await db.faculties.find_one({"_id": ObjectId(fid)})
                 if faculty:
                     scope["faculties"].append({"id": str(faculty["_id"]), "name": faculty["name"]})
-            except:
+            except Exception:
                 pass
         # جلب الأقسام التابعة للكليات المحددة
         if scope["faculties"]:
@@ -16121,7 +16125,7 @@ async def get_my_scope(current_user: dict = Depends(get_current_user)):
                 course = await db.courses.find_one({"_id": ObjectId(cid)})
                 if course:
                     scope["courses"].append({"id": str(course["_id"]), "name": course["name"]})
-            except:
+            except Exception:
                 pass
     
     return scope
@@ -16232,7 +16236,7 @@ async def update_my_institution(data: dict = Body(...), current_user: dict = Dep
         return {"message": "تم تحديث إعدادات الكلية بنجاح"}
 
 @api_router.get("/")
-async def root():
+async def api_root():
     return {"message": "نظام حضور كلية الشريعة والقانون", "version": "1.0"}
 
 # ==================== APIs إدارة الصلاحيات المتقدمة ====================
@@ -17020,7 +17024,7 @@ async def fix_student_sections(current_user: dict = Depends(get_current_user)):
             )
             if result.modified_count > 0:
                 fixed += 1
-        except:
+        except Exception:
             pass
     
     return {
@@ -17438,6 +17442,8 @@ async def startup_event():
     await migrate_teacher_prefs_defaults_v2()
     # 🔗 مزامنة روابط المشاركة للمقررات من واقع خانات الجدول (المحاضرات المشتركة تظهر في مقررات كل قسم مشارك)
     try:
+        # 🔄 ترحيل: المعيدون القدامى يصبحون غير نشطين (خارج قوائم التحضير) — idempotent
+        await db.students.update_many({"status": "repeat", "is_active": True}, {"$set": {"is_active": False}})
         from routes.weekly_schedule import _sync_course_shared_links
         _cids_to_sync = set()
         async for _ws in db.weekly_schedule.find({}, {"course_id": 1, "department_id": 1, "level": 1, "merge_group_id": 1}):

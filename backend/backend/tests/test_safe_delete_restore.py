@@ -276,7 +276,7 @@ class TestTeacherSafeDeleteRestore:
                 for tid in [teacher_id, new_teacher_id] if 'new_teacher_id' in locals() else [teacher_id]:
                     if tid:
                         requests.delete(f"{BASE_URL}/api/teachers/{tid}", headers=auth_headers)
-            except:
+            except Exception:
                 pass
     
     def test_restore_invalid_backup_type(self, auth_headers):
@@ -405,7 +405,7 @@ class TestStudentSafeDeleteRestore:
                 for sid in [student_id, new_student_id] if 'new_student_id' in locals() else [student_id]:
                     if sid:
                         requests.delete(f"{BASE_URL}/api/students/{sid}", headers=auth_headers)
-            except:
+            except Exception:
                 pass
     
     def test_restore_invalid_backup_type(self, auth_headers):

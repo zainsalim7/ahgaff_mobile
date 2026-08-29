@@ -97,11 +97,30 @@ async def login(user_data: UserLogin, request: Request):
         )
     
     if not user.get("is_active", True):
-        record_login_attempt(client_ip, False)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="الحساب غير مفعل"
-        )
+        # 🎓 حسابات الطلاب: الحالة هي مصدر الحقيقة — المعيد والمجمّد مسموح لهما بالدخول
+        _student_status = None
+        if user.get("role") == "student":
+            _srec = await db.students.find_one({"user_id": str(user["_id"])}, {"status": 1})
+            _student_status = (_srec or {}).get("status")
+        if _student_status not in ("frozen", "repeat"):
+            record_login_attempt(client_ip, False)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="الحساب غير مفعل"
+            )
+
+    # 🛑 بوابة حالة الطالب: المفصول والمتخرج يُمنعان من دخول التطبيق
+    if user.get("role") == "student":
+        _srec2 = await db.students.find_one({"user_id": str(user["_id"])}, {"status": 1})
+        _st = (_srec2 or {}).get("status") or "active"
+        if _st == "expelled":
+            record_login_attempt(client_ip, False)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="لا يمكنك الدخول — تم فصلك من الجامعة. يرجى مراجعة شؤون الطلاب")
+        if _st == "graduated":
+            record_login_attempt(client_ip, False)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                                detail="لا يمكنك الدخول — لقد تخرجت من الجامعة، نبارك لك التخرج 🎓 لأي مستندات راجع شؤون الخريجين")
     
     # منع المعلمين والطلاب من دخول الويب - لهم تطبيق خاص
     user_agent = request.headers.get("user-agent", "").lower()

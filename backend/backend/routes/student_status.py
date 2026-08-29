@@ -31,8 +31,8 @@ STATUS_LABELS = {
     "frozen": "مجمَّد",
 }
 
-# الحالات التي تجعل is_active=False
-INACTIVE_STATUSES = {"graduated", "expelled", "frozen"}
+# الحالات التي تجعل is_active=False (المعيد أيضاً يخرج من قوائم التحضير والتسجيل)
+INACTIVE_STATUSES = {"graduated", "expelled", "frozen", "repeat"}
 
 
 # ==================== Models ====================
@@ -147,8 +147,25 @@ async def _apply_status_change(
 
     await db.students.update_one({"_id": oid}, {"$set": update_data})
 
+    # 🧹 عند الانتقال لحالة غير نشطة: إزالة تسجيلات الفصل النشط (يختفي من قوائم التحضير)
+    # التاريخية (الفصول المغلقة) محفوظة — وعند الاسترجاع يُعاد التسجيل تلقائياً
+    if new_status in INACTIVE_STATUSES:
+        try:
+            from .student_transfer import cleanup_active_enrollments
+            await cleanup_active_enrollments(db, student_id)
+        except Exception:
+            pass
+
     if new_status == "active":
         await db.students.update_one({"_id": oid}, {"$unset": {"status_snapshot": ""}})
+        # 🎓 عودة للنشاط عبر تغيير الحالة: إعادة التسجيل في مقررات موقعه الحالي
+        try:
+            from .deps import enroll_student_in_matching_courses
+            fresh = await db.students.find_one({"_id": oid})
+            if fresh:
+                await enroll_student_in_matching_courses(db, fresh)
+        except Exception:
+            pass
 
     # تسجيل التاريخ
     history_doc = {
@@ -514,12 +531,24 @@ async def restore_student_to_active(
         "created_at": eff_date,
     })
 
+    # 🎓 إعادة التسجيل التلقائي في مقررات الفصل النشط المطابقة لموقعه الجديد
+    enrolled_count = 0
+    try:
+        from .deps import enroll_student_in_matching_courses
+        fresh = await db.students.find_one({"_id": oid})
+        if fresh:
+            enrolled_count = await enroll_student_in_matching_courses(db, fresh)
+    except Exception:
+        pass
+
     return {
         "success": True,
-        "message": f"تم استرجاع الطالب '{student.get('full_name', '')}' إلى المستوى {payload.new_level} {payload.new_section or ''}",
+        "message": f"تم استرجاع الطالب '{student.get('full_name', '')}' إلى المستوى {payload.new_level} {payload.new_section or ''}"
+                   + (f" — وسُجّل تلقائياً في {enrolled_count} مقرر" if enrolled_count else ""),
         "student_id": student_id,
         "new_level": payload.new_level,
         "new_section": payload.new_section,
+        "enrolled_courses": enrolled_count,
     }
 
 
