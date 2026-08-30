@@ -227,6 +227,7 @@ from routes.global_search import router as global_search_router
 from routes.entity_details import router as entity_details_router
 from routes.archives import router as archives_router
 from routes.archive_pdf import router as archive_pdf_router
+from routes.integration_api import router as integration_api_router
 from routes.curriculum import router as curriculum_router
 from routes.student_status import router as student_status_router
 from routes.alumni import router as alumni_router
@@ -17468,6 +17469,7 @@ app.include_router(alumni_router, prefix="/api")
 app.include_router(entity_details_router, prefix="/api")
 app.include_router(archives_router, prefix="/api")
 app.include_router(archive_pdf_router, prefix="/api")
+app.include_router(integration_api_router, prefix="/api")
 app.include_router(curriculum_router, prefix="/api")
 app.include_router(student_status_router, prefix="/api")
 app.include_router(student_transfer_router, prefix="/api")
