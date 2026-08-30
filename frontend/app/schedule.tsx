@@ -1,7 +1,7 @@
 import { goBack } from '../src/utils/navigation';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, Alert, FlatList,
+  View, Text, StyleSheet, TouchableOpacity, Alert,
   Platform, ScrollView, KeyboardAvoidingView, TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -203,109 +203,98 @@ export default function ScheduleScreen() {
     );
   }, [lectures, searchQuery]);
 
-  const renderLectureCard = ({ item, index }: { item: any; index: number }) => {
+  // 🗂️ تجميع المحاضرات حسب الفترة الزمنية (قروبات مرتبة زمنياً)
+  const timeGroups = useMemo(() => {
+    const map: Record<string, { start: string; end: string; items: any[] }> = {};
+    filteredLectures.forEach((l) => {
+      const key = `${l.start_time || '؟'}|${l.end_time || '؟'}`;
+      if (!map[key]) map[key] = { start: l.start_time || '', end: l.end_time || '', items: [] };
+      map[key].items.push(l);
+    });
+    return Object.values(map).sort((a, b) => (a.start || 'zz').localeCompare(b.start || 'zz'));
+  }, [filteredLectures]);
+
+  const renderSmallCard = (item: any) => {
     const st = STATUS_CONFIG[item.status] || STATUS_CONFIG.scheduled;
     const courseColor = getCourseColor(item.course_id);
     const canManage = user?.role === 'admin' || user?.permissions?.includes('manage_lectures') || user?.permissions?.includes('edit_lectures');
     return (
-      <View style={s.lectureRow} data-testid={`lecture-card-${item.id}`}>
-        <View style={s.timeline}>
-          <View style={[s.timelineDot, { backgroundColor: courseColor }]} />
-          {index < filteredLectures.length - 1 && <View style={s.timelineLine} />}
-        </View>
-        <View style={s.card}>
-          <View style={[s.cardBorder, { backgroundColor: courseColor }]} />
-          <View style={s.cardContent}>
-            <View style={s.cardTopRow}>
-              <View style={s.cardTimeBox}>
-                <Ionicons name="time-outline" size={14} color={courseColor} />
-                <Text style={[s.cardTime, { color: courseColor }]}>
-                  {item.start_time} - {item.end_time}
-                </Text>
-              </View>
-              <View style={[s.cardStatusBadge, { backgroundColor: st.bg }]}>
-                <Ionicons name={st.icon} size={11} color={st.color} />
-                <Text style={[s.cardStatusText, { color: st.color }]}>{st.label}</Text>
-              </View>
-            </View>
-            <Text style={s.cardTitle}>{item.course_name}{item.section ? ` (${item.section})` : ''}</Text>
-            {(item.faculty_name || item.department_name) ? (
-              <View style={s.facultyRow} data-testid={`lecture-faculty-${item.id}`}>
-                <Ionicons name="business-outline" size={12} color="#6a1b9a" />
-                <Text style={s.facultyRowText}>
-                  {[item.faculty_name, item.department_name].filter(Boolean).join(' • ')}
-                </Text>
-              </View>
-            ) : null}
-            <View style={s.cardDetailsRow}>
-              {item.teacher_name ? (
-                <View style={s.cardDetail}>
-                  <Ionicons name="person-outline" size={13} color="#5b6678" />
-                  <Text style={s.cardDetailText}>{item.teacher_name}</Text>
-                </View>
-              ) : null}
-              {item.room ? (
-                <View style={s.cardDetail}>
-                  <Ionicons name="location-outline" size={13} color="#5b6678" />
-                  <Text style={s.cardDetailText}>{item.room}</Text>
-                </View>
-              ) : null}
-              {item.course_code ? (
-                <View style={s.cardDetail}>
-                  <Ionicons name="code-outline" size={13} color="#5b6678" />
-                  <Text style={s.cardDetailText}>{item.course_code}</Text>
-                </View>
-              ) : null}
-              {typeof item.attendance_count !== 'undefined' && (
-                <View style={s.cardDetail}>
-                  <Ionicons name="people-outline" size={13} color="#5b6678" />
-                  <Text style={s.cardDetailText}>{item.attendance_count || 0}/{item.total_enrolled || 0}</Text>
-                </View>
-              )}
-            </View>
-            {canManage && (
-              <View style={s.cardActions}>
-                <TouchableOpacity
-                  style={[s.cardActionBtn, { backgroundColor: '#e3f2fd' }]}
-                  onPress={() => router.push({ pathname: '/take-attendance', params: { lectureId: item.id, courseId: item.course_id, courseName: item.course_name } })}
-                  data-testid={`view-attendance-${item.id}`}
-                >
-                  <Ionicons name="eye-outline" size={14} color="#1565c0" />
-                  <Text style={[s.cardActionText, { color: '#1565c0' }]}>عرض الحضور</Text>
-                </TouchableOpacity>
-                {item.status !== 'cancelled' && (
-                  <TouchableOpacity
-                    style={[s.cardActionBtn, { backgroundColor: '#fff3e0' }]}
-                    onPress={() => handleCancelLecture(item.id)}
-                    data-testid={`cancel-lecture-${item.id}`}
-                  >
-                    <Ionicons name="close-circle-outline" size={14} color="#e65100" />
-                    <Text style={[s.cardActionText, { color: '#e65100' }]}>إلغاء</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  style={[s.cardActionBtn, { backgroundColor: '#ffebee' }]}
-                  onPress={() => handleDeleteLecture(item.id)}
-                  data-testid={`delete-lecture-${item.id}`}
-                >
-                  <Ionicons name="trash-outline" size={14} color="#c62828" />
-                  <Text style={[s.cardActionText, { color: '#c62828' }]}>حذف</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {isTeacher && (
+      <View key={item.id} style={[s.gCard, { borderTopColor: courseColor }]} testID={`lecture-card-${item.id}`}>
+        <View style={s.gCardHead}>
+          <Text style={s.gCardName} numberOfLines={1}>{item.course_name}</Text>
+          {canManage && (
+            <View style={s.gCardIcons}>
               <TouchableOpacity
-                style={[s.cardActions, s.takeAttendanceBtn]}
-                onPress={() => router.push({ pathname: '/take-attendance', params: { lectureId: item.id, courseId: item.course_id } })}
-                data-testid={`teacher-lecture-${item.id}`}
+                style={[s.gIconBtn, { backgroundColor: '#e3f2fd' }]}
+                onPress={() => router.push({ pathname: '/take-attendance', params: { lectureId: item.id, courseId: item.course_id, courseName: item.course_name } })}
+                testID={`view-attendance-${item.id}`}
               >
-                <Ionicons name="clipboard-outline" size={15} color="#fff" />
-                <Text style={s.takeAttendanceBtnText}>تسجيل الحضور</Text>
-                <Ionicons name="chevron-back" size={15} color="#fff" />
+                <Ionicons name="eye-outline" size={13} color="#1565c0" />
               </TouchableOpacity>
-            )}
-          </View>
+              {item.status !== 'cancelled' && (
+                <TouchableOpacity
+                  style={[s.gIconBtn, { backgroundColor: '#fff3e0' }]}
+                  onPress={() => handleCancelLecture(item.id)}
+                  testID={`cancel-lecture-${item.id}`}
+                >
+                  <Ionicons name="close-circle-outline" size={13} color="#e65100" />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[s.gIconBtn, { backgroundColor: '#ffebee' }]}
+                onPress={() => handleDeleteLecture(item.id)}
+                testID={`delete-lecture-${item.id}`}
+              >
+                <Ionicons name="trash-outline" size={13} color="#c62828" />
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
+        {item.course_code ? <Text style={s.gCardCode}>{item.course_code}</Text> : null}
+        {item.teacher_name ? (
+          <View style={s.gCardRow}>
+            <Ionicons name="person-outline" size={12} color="#5b6678" />
+            <Text style={s.gCardRowText} numberOfLines={1}>{item.teacher_name}</Text>
+          </View>
+        ) : null}
+        <View style={s.gChips}>
+          {item.room ? (
+            <View style={[s.gChip, { backgroundColor: '#fff3e0' }]}>
+              <Text style={[s.gChipText, { color: '#e65100' }]}>🚪 {item.room}</Text>
+            </View>
+          ) : null}
+          {item.department_name ? (
+            <View style={[s.gChip, { backgroundColor: '#ede7f6' }]}>
+              <Text style={[s.gChipText, { color: '#5e35b1' }]} numberOfLines={1}>{item.department_name}</Text>
+            </View>
+          ) : null}
+          {item.section ? (
+            <View style={[s.gChip, { backgroundColor: '#e0f2f1' }]}>
+              <Text style={[s.gChipText, { color: '#00695c' }]}>شعبة {item.section}</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={s.gCardFoot}>
+          <View style={[s.cardStatusBadge, { backgroundColor: st.bg }]}>
+            <Ionicons name={st.icon} size={10} color={st.color} />
+            <Text style={[s.cardStatusText, { color: st.color }]}>{st.label}</Text>
+          </View>
+          {typeof item.attendance_count !== 'undefined' && (
+            <Text style={s.gAttText}>
+              {item.status === 'completed' ? `حضور ${item.attendance_count || 0}/${item.total_enrolled || 0}` : `مسجل ${item.total_enrolled || 0}`}
+            </Text>
+          )}
+        </View>
+        {isTeacher && (
+          <TouchableOpacity
+            style={s.gTakeBtn}
+            onPress={() => router.push({ pathname: '/take-attendance', params: { lectureId: item.id, courseId: item.course_id } })}
+            testID={`teacher-lecture-${item.id}`}
+          >
+            <Ionicons name="clipboard-outline" size={13} color="#fff" />
+            <Text style={s.takeAttendanceBtnText}>تسجيل الحضور</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -469,13 +458,27 @@ export default function ScheduleScreen() {
                 </Text>
               </View>
             ) : (
-              <FlatList
-                data={filteredLectures}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{ padding: 14 }}
-                renderItem={renderLectureCard}
-                scrollEnabled={false}
-              />
+              <View style={{ padding: 14 }} testID="time-groups-container">
+                {timeGroups.map((g, gi) => (
+                  <View key={`${g.start}-${g.end}-${gi}`} style={{ marginBottom: 18 }} testID={`time-group-${g.start || 'na'}`}>
+                    <View style={s.gGroupHead}>
+                      <View style={s.gTimePill}>
+                        <Ionicons name="time" size={13} color="#fff" />
+                        <Text style={s.gTimePillText}>
+                          {g.start && g.end ? `${g.start} – ${g.end}` : 'بدون وقت محدد'}
+                        </Text>
+                      </View>
+                      <View style={s.gCountPill}>
+                        <Text style={s.gCountPillText}>{g.items.length} {g.items.length === 1 ? 'محاضرة' : 'محاضرات'}</Text>
+                      </View>
+                      <View style={s.gGroupLine} />
+                    </View>
+                    <View style={s.gGrid}>
+                      {g.items.map(renderSmallCard)}
+                    </View>
+                  </View>
+                ))}
+              </View>
             )}
           </View>
         </ScrollView>
@@ -572,6 +575,59 @@ export default function ScheduleScreen() {
 }
 
 const s = StyleSheet.create({
+  gGroupHead: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8, marginBottom: 10 },
+  gTimePill: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5, backgroundColor: '#1565c0', borderRadius: 20, paddingVertical: 5, paddingHorizontal: 14 },
+  gTimePillText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  gCountPill: { backgroundColor: '#e3f2fd', borderRadius: 12, paddingVertical: 3, paddingHorizontal: 10 },
+  gCountPillText: { color: '#1565c0', fontSize: 11, fontWeight: '700' },
+  gGroupLine: { flex: 1, height: 1, backgroundColor: '#dde4ee' },
+  gGrid: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 10 },
+  gCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderTopWidth: 3,
+    padding: 10,
+    minWidth: 225,
+    maxWidth: 320,
+    flexGrow: 1,
+    flexBasis: 225,
+    shadowColor: '#000',
+    shadowOpacity: 0.07,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  gCardHead: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6 },
+  gCardName: { flex: 1, fontSize: 13.5, fontWeight: '800', color: '#222b3d', textAlign: 'right' },
+  gCardIcons: { flexDirection: 'row-reverse', gap: 4 },
+  gIconBtn: { width: 22, height: 22, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  gCardCode: { fontSize: 10.5, color: '#9aa4b5', textAlign: 'right', marginTop: 1 },
+  gCardRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 4, marginTop: 5 },
+  gCardRowText: { fontSize: 11.5, color: '#5b6678', flex: 1, textAlign: 'right' },
+  gChips: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 4, marginTop: 6 },
+  gChip: { borderRadius: 8, paddingVertical: 2, paddingHorizontal: 8, maxWidth: '100%' },
+  gChipText: { fontSize: 10, fontWeight: '700' },
+  gCardFoot: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingTop: 7,
+    borderTopWidth: 1,
+    borderTopColor: '#edf0f5',
+    borderStyle: 'dashed',
+  },
+  gAttText: { fontSize: 10.5, color: '#8a95a8', fontWeight: '700' },
+  gTakeBtn: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#1565c0',
+    borderRadius: 8,
+    paddingVertical: 7,
+    marginTop: 8,
+  },
   container: { flex: 1, backgroundColor: '#f4f6fb' },
   pageScroll: { padding: 20, paddingBottom: 60, maxWidth: 1440, width: '100%', alignSelf: 'center' },
   center: { padding: 40, alignItems: 'center' },
