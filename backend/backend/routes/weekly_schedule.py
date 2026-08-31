@@ -3607,6 +3607,46 @@ async def _resync_slot_times_for_day(db, faculty_id: str, day: str) -> int:
     return updated
 
 
+@router.post("/weekly-schedule/tag-generated-lectures")
+async def tag_generated_lectures(current_user: dict = Depends(get_current_user)):
+    """🏷️ توسيم المحاضرات القديمة المطابقة للجدول الشامل (course + يوم الأسبوع) لتشملها مزامنة الأوقات"""
+    if current_user.get("role") != "admin" and not has_permission(current_user, Permission.MANAGE_SCHEDULE.value):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    course_days: dict = {}
+    async for s in db.weekly_schedule.find({}, {"course_id": 1, "day": 1}):
+        cid = s.get("course_id")
+        wd = _ARABIC_DAY_TO_WEEKDAY.get(s.get("day", ""))
+        if cid and wd is not None:
+            course_days.setdefault(cid, set()).add(wd)
+    if not course_days:
+        return {"tagged": 0, "scanned": 0, "message": "لا توجد خانات في الجدول الشامل"}
+    to_tag = []
+    scanned = 0
+    cursor = db.lectures.find({
+        "course_id": {"$in": list(course_days.keys())},
+        "generated_from_schedule": {"$ne": True},
+        "original_date": {"$exists": False},
+        "last_rescheduled_from": {"$exists": False},
+    }, {"course_id": 1, "date": 1})
+    async for lec in cursor:
+        scanned += 1
+        try:
+            wd = datetime.strptime(lec.get("date", ""), "%Y-%m-%d").weekday()
+        except (ValueError, TypeError):
+            continue
+        if wd in course_days.get(lec.get("course_id"), set()):
+            to_tag.append(lec["_id"])
+    tagged = 0
+    if to_tag:
+        res = await db.lectures.update_many({"_id": {"$in": to_tag}}, {"$set": {"generated_from_schedule": True}})
+        tagged = res.modified_count
+    await log_activity(current_user, "tag_generated_lectures", "weekly_schedule", None, None,
+                       {"tagged": tagged, "scanned": scanned})
+    return {"tagged": tagged, "scanned": scanned,
+            "message": f"🏷️ وُسمت {tagged} محاضرة (من {scanned} مفحوصة) — ستتبع الآن تعديلات أوقات الجدول الشامل تلقائياً"}
+
+
 async def _sync_course_shared_links(db, course_id: str) -> None:
     """🔗 نموذج المقرر الواحد: اشتقاق الأقسام/المستويات المشاركة من خانات الجدول وتخزينها على المقرر"""
     try:

@@ -876,6 +876,25 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>فحص التكامل</Text>
           </TouchableOpacity>
         )}
+        {can_manage && (
+          <TouchableOpacity
+            onPress={async () => {
+              if (!window.confirm('توسيم المحاضرات القديمة المطابقة للجدول الشامل؟\nستتبع أوقاتها تلقائياً أي تعديل (تمديد/إزاحة) في الجدول من الآن فصاعداً.')) return;
+              try {
+                const res = await api.post('/weekly-schedule/tag-generated-lectures');
+                window.alert(res.data.message);
+              } catch (e: any) {
+                window.alert(typeof e?.response?.data?.detail === 'string' ? e.response.data.detail : 'فشل التوسيم');
+              }
+            }}
+            disabled={busy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#5e35b1' }}
+            testID="tag-generated-lectures-btn"
+          >
+            <Ionicons name="pricetag" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>ربط المحاضرات بالجدول</Text>
+          </TouchableOpacity>
+        )}
         <View style={{ marginLeft: 'auto', backgroundColor: '#e3f2fd', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 }}>
           <Text style={{ fontSize: 12, color: '#1565c0', fontWeight: '600' }}>{groups.length} شعبة • {entries.length} محاضرة</Text>
         </View>

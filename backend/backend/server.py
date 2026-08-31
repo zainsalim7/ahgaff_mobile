@@ -9125,6 +9125,7 @@ async def generate_semester_lectures_advanced(
                     continue
                 lecture = {
                     "course_id": data.course_id,
+                    "generated_from_schedule": True,
                     "date": date_str,
                     "start_time": slot.start_time,
                     "end_time": slot.end_time,
