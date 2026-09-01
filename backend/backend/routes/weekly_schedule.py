@@ -133,6 +133,7 @@ class ScheduleSlotUpdate(BaseModel):
     teacher_id: Optional[str] = None
     room_id: Optional[str] = None
     duration_minutes: Optional[int] = None
+    pinned_start_time: Optional[str] = None  # ⏰ بداية مخصصة "HH:MM" — "" لمسحها والعودة لوقت الفترة
     slot_type: Optional[str] = None  # theory | practical
 
 
@@ -976,6 +977,7 @@ async def get_weekly_schedule(
             "room_id": s.get("room_id", ""),
             "room_name": room.get("name", ""),
             "duration_minutes": s.get("duration_minutes"),
+            "pinned_start_time": s.get("pinned_start_time"),
             "computed_start_time": s.get("computed_start_time"),
             "computed_end_time": s.get("computed_end_time"),
             "merge_group_id": s.get("merge_group_id", ""),
@@ -1304,7 +1306,14 @@ async def update_schedule_slot(
     clear_duration = update.get("duration_minutes") == 0
     if clear_duration:
         update.pop("duration_minutes")
-    if not update and not clear_duration:
+    clear_pin = update.get("pinned_start_time") == ""
+    if clear_pin:
+        update.pop("pinned_start_time")
+    if "pinned_start_time" in update:
+        import re as _re
+        if not _re.match(r"^\d{1,2}:\d{2}$", update["pinned_start_time"]):
+            raise HTTPException(status_code=400, detail="صيغة البداية المخصصة يجب أن تكون HH:MM")
+    if not update and not clear_duration and not clear_pin:
         raise HTTPException(status_code=400, detail="لا توجد بيانات")
 
     # Check conflicts for new values
@@ -1370,6 +1379,13 @@ async def update_schedule_slot(
         if clear_duration:
             _dq = {"merge_group_id": _mg} if _mg else {"_id": ObjectId(slot_id)}
             await db.weekly_schedule.update_many(_dq, {"$unset": {"duration_minutes": "", "pinned_start_time": ""}})
+        # ⏰ مسح البداية المخصصة فقط (العودة لوقت الفترة الرسمي)
+        if clear_pin and not clear_duration:
+            _pq = {"merge_group_id": _mg} if _mg else {"_id": ObjectId(slot_id)}
+            await db.weekly_schedule.update_many(_pq, {"$unset": {"pinned_start_time": ""}})
+        # ⏰ البداية المخصصة تسري على كل أعضاء مجموعة الدمج (محاضرة واحدة فعلياً)
+        if "pinned_start_time" in update and _mg:
+            await db.weekly_schedule.update_many({"merge_group_id": _mg}, {"$set": {"pinned_start_time": update["pinned_start_time"]}})
         # 🆕 محاضرة مشتركة: المقرر/المعلم/القاعة/المدة تسري على كل المجموعة
         if _mg:
             shared = {k: v for k, v in update.items() if k in ("course_id", "teacher_id", "room_id", "duration_minutes", "slot_type")}
@@ -1409,9 +1425,9 @@ async def update_schedule_slot(
     shifted = []
     for d in days_to_resolve:
         shifted += await _resolve_day_times(db, existing.get("faculty_id", ""), d)
-    if "duration_minutes" in update or clear_duration:
+    if "duration_minutes" in update or clear_duration or "pinned_start_time" in update or clear_pin:
         message += _shift_summary(shifted)
-        if clear_duration and not shifted:
+        if (clear_duration or clear_pin) and not shifted:
             message += " — عادت الأوقات الافتراضية"
         # 🕑 مزامنة أوقات المحاضرات القادمة المولّدة (تنعكس على النصاب والعبء تلقائياً)
         synced = 0
@@ -3689,7 +3705,7 @@ async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
             dur = max(base_end - base_start, 0)
         # 📌 تقديم مثبّت (رصّ): يبدأ قبل بداية الفترة الرسمية إن وُجد
         pin = _t2m(s.get("pinned_start_time") or "")
-        eff_start = pin if (pin is not None and pin < base_start) else base_start
+        eff_start = pin if pin is not None else base_start
         for p in processed:
             if p["_end_m"] > eff_start and _slots_conflict(s, p):
                 eff_start = p["_end_m"]
@@ -3739,8 +3755,9 @@ async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
 
 class PreviewImpactRequest(BaseModel):
     slot_id: str
-    action: str  # duration | delete | move
+    action: str  # duration | delete | move | start
     duration_minutes: Optional[int] = None  # 0 أو None = العودة لمدة الفترة الافتراضية
+    pinned_start_time: Optional[str] = None  # ⏰ لإجراء start — None/"" = العودة لوقت الفترة
     target_day: Optional[str] = None
     target_slot_number: Optional[int] = None
 
@@ -3758,7 +3775,7 @@ def _simulate_day_times_mem(slots: list, slot_times: dict) -> list:
         except (TypeError, ValueError):
             dur = max(base_end - base_start, 0)
         pin = _t2m(s.get("pinned_start_time") or "")
-        eff_start = pin if (pin is not None and pin < base_start) else base_start
+        eff_start = pin if pin is not None else base_start
         pusher = None
         for p in processed:
             if p["_end_m"] > eff_start and _slots_conflict(s, p["slot"]):
@@ -3779,7 +3796,7 @@ async def preview_schedule_impact(
     محاضرات قادمة متأثرة) قبل تنفيذ تغيير المدة أو الحذف أو النقل — دون أي كتابة."""
     if not can_manage_schedule(current_user):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
-    if data.action not in ("duration", "delete", "move"):
+    if data.action not in ("duration", "delete", "move", "start"):
         raise HTTPException(status_code=400, detail="إجراء غير معروف")
     db = get_db()
     try:
@@ -3834,6 +3851,11 @@ async def preview_schedule_impact(
                         c["duration_minutes"] = data.duration_minutes
                     else:
                         c.pop("duration_minutes", None)
+                if data.action == "start":
+                    if data.pinned_start_time:
+                        c["pinned_start_time"] = data.pinned_start_time
+                    else:
+                        c.pop("pinned_start_time", None)
                 if data.action == "move":
                     if data.target_day != day:
                         continue  # تغادر هذا اليوم
@@ -4994,6 +5016,7 @@ async def _build_master_data(db, faculty_id: str, department_id: Optional[str] =
         entries.append({
             "id": str(s["_id"]),
             "duration_minutes": s.get("duration_minutes"),
+            "pinned_start_time": s.get("pinned_start_time"),
             "computed_start_time": s.get("computed_start_time"),
             "computed_end_time": s.get("computed_end_time"),
             "department_id": s.get("department_id", ""),

@@ -51,6 +51,8 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
   const [roomModalRooms, setRoomModalRooms] = useState<any[] | null>(null);
   const [newRoomId, setNewRoomId] = useState('');
   const [durationModal, setDurationModal] = useState<any>(null);   // ⏱ نافذة المدة المستقلة
+  const [startModal, setStartModal] = useState<any>(null);         // ⏰ نافذة البداية المخصصة
+  const [newStart, setNewStart] = useState('');
   const [newDuration, setNewDuration] = useState('');
   const [newDurationCustom, setNewDurationCustom] = useState('');
   const [addType, setAddType] = useState('theory'); // 🧪 نوع المحاضرة عند الإضافة (افتراضي: نظري)
@@ -122,6 +124,42 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
       const res = await api.post('/weekly-schedule/compact-chain', buildCompactPayload(compactModal.entry, compactModal.excludeAnchor, g, true));
       showMsg('success', `✅ ${res.data?.message || 'تم تقديم المحاضرات'}`);
       setCompactModal(null);
+      await load();
+    } catch (e: any) { handleConflictError(e); }
+    finally { setBusy(false); }
+  };
+
+  // ⏰ البداية المخصصة — نفس نمط المدة: معاينة الأثر ثم التنفيذ
+  const confirmStartChange = async (val: string) => {
+    if (!startModal) return;
+    if (val && !/^\d{1,2}:\d{2}$/.test(val)) {
+      showMsg('error', '❌ صيغة الوقت يجب أن تكون HH:MM');
+      return;
+    }
+    setBusy(true);
+    try {
+      const prev = await api.post('/weekly-schedule/preview-impact', {
+        slot_id: startModal.id, action: 'start', pinned_start_time: val || null,
+      });
+      const impacts = (prev.data?.changes || []);
+      if (impacts.length === 0) {
+        await executeStartChange(val);
+        return;
+      }
+      setBusy(false);
+      setImpactPreview({ title: '⏰ معاينة تغيير البداية — لن يُنفَّذ شيء قبل موافقتك', preview: prev.data, run: () => executeStartChange(val) });
+    } catch (e: any) { handleConflictError(e); setBusy(false); }
+  };
+
+  const executeStartChange = async (val: string) => {
+    if (!startModal) return;
+    const anchor = startModal;
+    setImpactPreview(null);
+    setBusy(true);
+    try {
+      const res = await api.put(`/weekly-schedule/${anchor.id}`, { pinned_start_time: val });
+      showMsg('success', `✅ ${res.data?.message || 'تم تحديث البداية'}`);
+      setStartModal(null);
       await load();
     } catch (e: any) { handleConflictError(e); }
     finally { setBusy(false); }
@@ -756,6 +794,17 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           >
             <Ionicons name={editMode ? 'close-circle' : 'move'} size={15} color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{editMode ? 'إنهاء وضع التحرير' : 'وضع التحرير (نقل/تبديل)'}</Text>
+          </TouchableOpacity>
+        )}
+        {editMode && selected && (
+          <TouchableOpacity
+            onPress={() => { setStartModal(selected); setNewStart(selected.pinned_start_time || ''); }}
+            disabled={busy}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: '#00838f' }}
+            testID="master-change-start-btn"
+          >
+            <Ionicons name="alarm" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>البداية</Text>
           </TouchableOpacity>
         )}
         {editMode && selected && (
@@ -1416,6 +1465,55 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                 flex: 0.6, padding: '10px 0', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer',
                 backgroundColor: '#fff', color: '#555', fontSize: 13, fontWeight: 600,
               }}>↩️ تراجع</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⏰ نافذة البداية المخصصة */}
+      {startModal && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.45)', zIndex: 99999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setStartModal(null)}>
+          <div onClick={(ev: any) => ev.stopPropagation()} style={{
+            backgroundColor: '#fff', borderRadius: 12, padding: 20, width: 400, maxWidth: '92%',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.25)', direction: 'rtl',
+          }} data-testid="master-start-modal">
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>⏰ بداية مخصصة للمحاضرة</div>
+            <div style={{ fontSize: 12.5, color: '#5b6678', marginBottom: 10, textAlign: 'right' }}>
+              <b>{startModal.course_name}</b> — {startModal.day} · الفترة {startModal.slot_number}
+              {startModal.pinned_start_time ? ` · الحالية: ${startModal.pinned_start_time}` : ' · تتبع وقت الفترة الرسمي'}
+            </div>
+            <div style={{ fontSize: 11.5, color: '#8a95a8', marginBottom: 8, textAlign: 'right' }}>
+              مثال: الفترة تبدأ 08:00 والأستاذ يريد 08:30 — المحاضرات اللاحقة المتعارضة ستُزاح تلقائياً (بمعاينة قبل التنفيذ)
+            </div>
+            <input
+              type="time"
+              value={newStart}
+              onChange={(ev: any) => setNewStart(ev.target.value)}
+              data-testid="master-start-input"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d5dbe6', fontSize: 15, boxSizing: 'border-box', marginBottom: 12 }}
+            />
+            <div style={{ display: 'flex', gap: 8, flexDirection: 'row-reverse' }}>
+              <button
+                onClick={() => confirmStartChange(newStart)}
+                disabled={busy || !newStart}
+                data-testid="master-start-apply-btn"
+                style={{ flex: 1.3, padding: '10px 0', borderRadius: 8, border: 'none', backgroundColor: '#00838f', color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: (busy || !newStart) ? 0.6 : 1 }}
+              >معاينة وتطبيق</button>
+              {startModal.pinned_start_time && (
+                <button
+                  onClick={() => confirmStartChange('')}
+                  disabled={busy}
+                  data-testid="master-start-clear-btn"
+                  style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: '1px solid #ef9a9a', backgroundColor: '#fff', color: '#c62828', fontWeight: 700, cursor: 'pointer' }}
+                >مسح (وقت الفترة)</button>
+              )}
+              <button
+                onClick={() => setStartModal(null)}
+                style={{ flex: 0.8, padding: '10px 0', borderRadius: 8, border: '1px solid #d5dbe6', backgroundColor: '#f7f8fa', color: '#5b6678', fontWeight: 700, cursor: 'pointer' }}
+              >إلغاء</button>
             </div>
           </div>
         </div>
