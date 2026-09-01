@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
 from .deps import get_db, get_current_user, has_permission, log_activity, ACTION_TRANSLATIONS
+from .schedule_notify import notify_time_shifts, notify_slot_teachers
 from models.permissions import Permission
 
 router = APIRouter(tags=["الجدول الأسبوعي"])
@@ -1272,8 +1273,12 @@ async def create_schedule_slot(
         if n_depts > 1:
             msg += f" عبر {n_depts} أقسام"
     # ⏱ حلحلة أوقات اليوم (قد تُزاح المحاضرة الجديدة إذا سبقتها محاضرة ممتدة)
-    shifted = await _resolve_day_times(db, data.faculty_id, data.day)
+    _tch = []
+    shifted = await _resolve_day_times(db, data.faculty_id, data.day, changes_out=_tch)
     msg += _shift_summary(shifted)
+    # 🔔 إشعار المعلمين الذين أُزيحت أوقاتهم بسبب الخانة الجديدة
+    await notify_time_shifts(db, _tch, exclude_slot_ids={inserted_id},
+                             exclude_merge_group_ids={merge_gid} if merge_gid else None)
     if data.course_id:
         await _sync_course_shared_links(db, data.course_id)
     # 📜 سجل تغييرات الجدول
@@ -1423,8 +1428,9 @@ async def update_schedule_slot(
     if "day" in update:
         days_to_resolve.add(update["day"])
     shifted = []
+    _tch = []
     for d in days_to_resolve:
-        shifted += await _resolve_day_times(db, existing.get("faculty_id", ""), d)
+        shifted += await _resolve_day_times(db, existing.get("faculty_id", ""), d, changes_out=_tch)
     if "duration_minutes" in update or clear_duration or "pinned_start_time" in update or clear_pin:
         message += _shift_summary(shifted)
         if (clear_duration or clear_pin) and not shifted:
@@ -1495,6 +1501,35 @@ async def update_schedule_slot(
         await log_activity(current_user, "update_schedule_slot", "weekly_schedule", slot_id, _cn,
                            {"summary": _sum, "day": existing.get("day"), "slot_number": existing.get("slot_number"), "shifted": len(shifted)})
 
+    # 🔔 إشعار المعلم بأي تعديل على خانته + إشعار من أُزيحت أوقاتهم
+    _nparts = list(_parts)
+    if "day" in update and update["day"] != existing.get("day"):
+        _nparts.append(f"اليوم: {existing.get('day')} ← {update['day']}")
+    if "slot_number" in update and update["slot_number"] != existing.get("slot_number"):
+        _nparts.append(f"الفترة: {existing.get('slot_number')} ← {update['slot_number']}")
+    if "pinned_start_time" in update:
+        _nparts.append(f"وقت البداية: ← {update['pinned_start_time']}")
+    if clear_pin and not clear_duration:
+        _nparts.append("وقت البداية: عاد لوقت الفترة الرسمي")
+    if _nparts:
+        _ncn = ""
+        try:
+            _c = await db.courses.find_one({"_id": ObjectId(existing.get("course_id", ""))}, {"name": 1})
+            _ncn = (_c or {}).get("name", "")
+        except Exception:
+            pass
+        _n_teachers = {existing.get("teacher_id")}
+        if "teacher_id" in update:
+            _n_teachers.add(update["teacher_id"])
+        _n_slots = [{**existing, "teacher_id": t} for t in _n_teachers if t]
+        if _n_slots:
+            await notify_slot_teachers(
+                db, _n_slots,
+                f"📋 تعديل على محاضرتك — {_ncn or '؟'}",
+                f"محاضرة «{_ncn or '؟'}» ({existing.get('day')} فترة {existing.get('slot_number')}): " + "، ".join(_nparts))
+    await notify_time_shifts(db, _tch, exclude_slot_ids={slot_id},
+                             exclude_merge_group_ids={_mg} if _mg else None)
+
     return {"message": message, "shifted": shifted, "load_check": load_check}
 
 
@@ -1534,8 +1569,9 @@ async def apply_rebalance(
         applied.append({"slot_id": ch.slot_id, "day": s.get("day", ""), "slot_number": s.get("slot_number"), "duration_minutes": dur})
     shifted = []
     synced = 0
+    _tch = []
     for d in days:
-        shifted += await _resolve_day_times(db, faculty_id, d)
+        shifted += await _resolve_day_times(db, faculty_id, d, changes_out=_tch)
         if d:
             synced += await _resync_slot_times_for_day(db, faculty_id, d)
     msg = f"⚖️ تمت الموازنة: تعديل مدة {len(applied)} محاضرة لتوافق الساعات المعتمدة" + _shift_summary(shifted)
@@ -1544,6 +1580,24 @@ async def apply_rebalance(
     await log_activity(current_user, "rebalance_schedule", "weekly_schedule", "", None,
                        {"summary": f"موازنة الساعات الأسبوعية: تعديل مدة {len(applied)} محاضرة" + (f" — أزاحت {len(shifted)} محاضرة" if shifted else ""),
                         "applied": len(applied)})
+    # 🔔 إشعار معلمي المحاضرات المعدّلة + من أُزيحت أوقاتهم
+    for ap in applied:
+        try:
+            _s = await db.weekly_schedule.find_one({"_id": ObjectId(ap["slot_id"])})
+        except Exception:
+            _s = None
+        if _s:
+            _ncn = ""
+            try:
+                _c = await db.courses.find_one({"_id": ObjectId(_s.get("course_id", ""))}, {"name": 1})
+                _ncn = (_c or {}).get("name", "")
+            except Exception:
+                pass
+            await notify_slot_teachers(
+                db, [_s],
+                f"📋 تعديل مدة محاضرتك — {_ncn or '؟'}",
+                f"عُدّلت مدة محاضرة «{_ncn or '؟'}» ({_s.get('day')} فترة {_s.get('slot_number')}) إلى {ap['duration_minutes']} دقيقة (موازنة الساعات الأسبوعية).")
+    await notify_time_shifts(db, _tch, exclude_slot_ids={a["slot_id"] for a in applied})
     return {"message": msg, "applied": applied, "shifted": shifted}
 
 
@@ -2038,7 +2092,8 @@ async def delete_schedule_slot(
         sync = await _sync_future_lectures(db, slot, "delete")
         message += _sync_summary(sync)
         # ⏱ إعادة حساب أوقات اليوم (فك الإزاحات المرتبطة بالمحاضرة المحذوفة)
-        await _resolve_day_times(db, slot.get("faculty_id", ""), slot.get("day", ""))
+        _tch = []
+        await _resolve_day_times(db, slot.get("faculty_id", ""), slot.get("day", ""), changes_out=_tch)
         if slot.get("course_id"):
             await _sync_course_shared_links(db, slot["course_id"])
         # 📜 سجل تغييرات الجدول
@@ -2051,6 +2106,12 @@ async def delete_schedule_slot(
         await log_activity(current_user, "delete_schedule_slot", "weekly_schedule", slot_id, _cn,
                            {"summary": f"حذف «{_cn}» من الجدول ({slot.get('day')} فترة {slot.get('slot_number')})" + (" — شمل كل الشُعب المشتركة" if slot.get("merge_group_id") else ""),
                             "day": slot.get("day"), "slot_number": slot.get("slot_number")})
+        # 🔔 إشعار المعلم بالحذف + إشعار من عادت/تغيّرت أوقاتهم
+        await notify_slot_teachers(
+            db, [slot],
+            f"🗑 حذف محاضرة من جدولك — {_cn or '؟'}",
+            f"أُزيلت محاضرة «{_cn or '؟'}» ({slot.get('day')} فترة {slot.get('slot_number')}) من الجدول الأسبوعي.")
+        await notify_time_shifts(db, _tch)
     return {"message": message}
 
 
@@ -3682,10 +3743,11 @@ async def _sync_course_shared_links(db, course_id: str) -> None:
     await db.courses.update_one({"_id": course["_id"]}, {"$set": {"shared_links": links}})
 
 
-async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
+async def _resolve_day_times(db, faculty_id: str, day: str, changes_out: list = None) -> list:
     """⏱ حلحلة أوقات اليوم: إزاحة متسلسلة لبدايات المحاضرات المتأثرة بالمدد المخصصة
     (بدون نقل أو حذف — فقط تعديل الأوقات). يخزن computed_start_time/computed_end_time
-    عند اختلافها عن أوقات الفترة الافتراضية، ويرجع قائمة المحاضرات المزاحة حالياً."""
+    عند اختلافها عن أوقات الفترة الافتراضية، ويرجع قائمة المحاضرات المزاحة حالياً.
+    changes_out: قائمة اختيارية تُملأ بالخانات التي تغيّر وقت بدايتها فعلياً (للإشعارات)."""
     if not faculty_id or not day:
         return []
     slot_times = await _faculty_slot_times(db, faculty_id)
@@ -3726,6 +3788,17 @@ async def _resolve_day_times(db, faculty_id: str, day: str) -> list:
             if unsets:
                 upd["$unset"] = unsets
             await db.weekly_schedule.update_one({"_id": s["_id"]}, upd)
+            # 🔔 التقاط تغيّر وقت البداية الفعلي (للإشعارات) — إزاحة أو عودة للوقت الرسمي
+            if changes_out is not None:
+                _old_eff = s.get("computed_start_time") or st_def
+                _new_eff = new_cs or st_def
+                if _new_eff != _old_eff:
+                    changes_out.append({
+                        "slot": s, "day": day,
+                        "old_start": _old_eff,
+                        "new_start": _new_eff,
+                        "new_end": new_ce or en_def,
+                    })
         if new_cs:
             shifted.append({
                 "slot_id": str(s["_id"]),
@@ -4180,8 +4253,10 @@ async def compact_schedule_chain(
             {"_id": ObjectId(c["slot_id"])},
             {"$set": {"pinned_start_time": c["new_start"]}},
         )
-    await _resolve_day_times(db, data.faculty_id, data.day)
+    _tch = []
+    await _resolve_day_times(db, data.faculty_id, data.day, changes_out=_tch)
     synced = await _resync_slot_times_for_day(db, data.faculty_id, data.day)
+    await notify_time_shifts(db, _tch)
     await log_activity(current_user, "compact_schedule", "weekly_schedule", data.anchor_slot_id or "", None,
                        {"summary": f"تقديم {len(changes)} محاضرة ({data.day}) بفاصل {gap} دقيقة: " +
                                    "، ".join(f"«{c['course_name']}» {c['old_start']}←{c['new_start']}" for c in changes[:5]),
@@ -4802,9 +4877,17 @@ async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Dep
         s = await _sync_future_lectures(db, g, "move", new_day=b["day"], new_slot_number=b["slot_number"])
         sync = {k: sync.get(k, 0) + v for k, v in s.items()} if sync else s
     total = len(group_a) + len(group_b)
-    await _resolve_day_times(db, a.get("faculty_id", ""), b.get("day", ""))
+    _tch = []
+    await _resolve_day_times(db, a.get("faculty_id", ""), b.get("day", ""), changes_out=_tch)
     if a.get("day") != b.get("day"):
-        await _resolve_day_times(db, a.get("faculty_id", ""), a.get("day", ""))
+        await _resolve_day_times(db, a.get("faculty_id", ""), a.get("day", ""), changes_out=_tch)
+    # 🔔 إشعار معلمي الخانة المنقولة للدمج + من أُزيحت أوقاتهم
+    if a.get("day") != b.get("day") or a.get("slot_number") != b.get("slot_number"):
+        await notify_slot_teachers(
+            db, group_a,
+            f"🔗 دمج محاضرتك — {_mg_cn or '؟'}",
+            f"دُمجت محاضرة «{_mg_cn or '؟'}» في محاضرة مشتركة ونُقلت من {a.get('day')} فترة {a.get('slot_number')} إلى {b.get('day')} فترة {b.get('slot_number')}.")
+    await notify_time_shifts(db, _tch, exclude_slot_ids={str(g["_id"]) for g in group_a + group_b})
     for _cid in {a.get("course_id", ""), b.get("course_id", "")}:
         if _cid:
             await _sync_course_shared_links(db, _cid)
@@ -5219,8 +5302,15 @@ async def move_schedule_slot(
     msg = "تم نقل المحاضرة بنجاح" if len(group) == 1 else f"تم نقل المحاضرة المشتركة ({len(group)} جداول) بنجاح"
     # ⏱ حلحلة أوقات اليومين (القديم والجديد)
     shifted = []
+    _tch = []
     for d in {slot.get("day"), data.target_day}:
-        shifted += await _resolve_day_times(db, slot.get("faculty_id", ""), d)
+        shifted += await _resolve_day_times(db, slot.get("faculty_id", ""), d, changes_out=_tch)
+    # 🔔 إشعار المعلم بالنقل + من أُزيحت أوقاتهم
+    await notify_slot_teachers(
+        db, group,
+        f"📋 نقل محاضرتك — {_mv_cn or '؟'}",
+        f"نُقلت محاضرة «{_mv_cn or '؟'}» من {slot.get('day')} فترة {slot.get('slot_number')} إلى {data.target_day} فترة {data.target_slot_number}.")
+    await notify_time_shifts(db, _tch, exclude_slot_ids={str(g["_id"]) for g in group})
     return {"message": msg + _sync_summary(sync) + _shift_summary(shifted), "shifted": shifted}
 
 
@@ -5294,8 +5384,19 @@ async def swap_schedule_slots(
         combined = {k: combined.get(k, 0) + v for k, v in s.items()}
     # ⏱ حلحلة أوقات اليومين بعد التبديل
     shifted = []
+    _tch = []
     for d in {pos_a["day"], pos_b["day"]}:
-        shifted += await _resolve_day_times(db, slot_a.get("faculty_id", ""), d)
+        shifted += await _resolve_day_times(db, slot_a.get("faculty_id", ""), d, changes_out=_tch)
+    # 🔔 إشعار معلمي الطرفين بالتبديل + من أُزيحت أوقاتهم
+    await notify_slot_teachers(
+        db, group_a,
+        f"📋 نقل محاضرتك — {_sw_a or '؟'}",
+        f"نُقلت محاضرة «{_sw_a or '؟'}» من {pos_a['day']} فترة {pos_a['slot_number']} إلى {pos_b['day']} فترة {pos_b['slot_number']} (تبديل).")
+    await notify_slot_teachers(
+        db, group_b,
+        f"📋 نقل محاضرتك — {_sw_b or '؟'}",
+        f"نُقلت محاضرة «{_sw_b or '؟'}» من {pos_b['day']} فترة {pos_b['slot_number']} إلى {pos_a['day']} فترة {pos_a['slot_number']} (تبديل).")
+    await notify_time_shifts(db, _tch, exclude_slot_ids=exclude)
     return {"message": "تم تبديل المحاضرتين بنجاح" + _sync_summary(combined) + _shift_summary(shifted), "shifted": shifted}
 
 
