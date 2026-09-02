@@ -3781,12 +3781,11 @@ async def get_my_courses(
     active_sem = await db.semesters.find_one({"status": "active"})
     active_sem_id = str(active_sem["_id"]) if active_sem else None
     
-    # جلب التسجيلات (مفلترة بالفصل النشط إن وُجد)
-    enroll_query: dict = {"student_id": student_id}
-    if active_sem_id:
-        enroll_query["semester_id"] = active_sem_id
-    enrollments = await db.enrollments.find(enroll_query).to_list(100)
-    course_ids = [e["course_id"] for e in enrollments]
+    # جلب كل تسجيلات الطالب (بدون فلتر semester_id على التسجيل — تسجيلات كثيرة قديمة
+    # ومن أدوات التسجيل التلقائي بلا هذا الحقل؛ الفلترة بالفصل النشط تتم على مستوى المقرر
+    # نفسه — نفس نمط نقطة الإدارة /students/{id}/courses)
+    enrollments = await db.enrollments.find({"student_id": student_id}).to_list(500)
+    course_ids = [e["course_id"] for e in enrollments if e.get("course_id")]
     
     # إذا لا يوجد تسجيلات، جلب المقررات حسب القسم والمستوى (مفلترة بالفصل النشط)
     if not course_ids:
@@ -3803,14 +3802,13 @@ async def get_my_courses(
             ]
         courses_list = await db.courses.find(query).to_list(100)
     else:
-        courses_list = []
-        for cid in course_ids:
-            try:
-                course = await db.courses.find_one({"_id": ObjectId(cid)})
-                if course:
-                    courses_list.append(course)
-            except Exception:
-                pass
+        course_filter: dict = {
+            "_id": {"$in": [ObjectId(cid) for cid in course_ids if ObjectId.is_valid(cid)]},
+            "is_active": {"$ne": False},
+        }
+        if active_sem_id:
+            course_filter["semester_id"] = {"$in": [active_sem_id, active_sem["_id"]]}
+        courses_list = await db.courses.find(course_filter).to_list(200)
     
     allowed = parse_fields(fields)
     need_teacher_name = (allowed is None) or ("teacher_name" in allowed)
@@ -6563,12 +6561,15 @@ async def bulk_copy_students(request: Request, current_user: dict = Depends(get_
             if existing:
                 already += 1
                 continue
-            await db.enrollments.insert_one({
+            _bc_doc = {
                 "course_id": target_course_id,
                 "student_id": sid,
                 "enrolled_at": get_yemen_time(),
                 "enrolled_by": current_user["id"]
-            })
+            }
+            if target.get("semester_id"):
+                _bc_doc["semester_id"] = str(target["semester_id"])
+            await db.enrollments.insert_one(_bc_doc)
             copied += 1
         total_copied += copied
         total_already += already
@@ -6723,12 +6724,15 @@ async def auto_enroll_matching_students(course_id: str, current_user: dict = Dep
         if existing:
             already += 1
             continue
-        await db.enrollments.insert_one({
+        _en_doc = {
             "course_id": course_id,
             "student_id": sid,
             "enrolled_at": get_yemen_time(),
             "enrolled_by": current_user["id"]
-        })
+        }
+        if course.get("semester_id"):
+            _en_doc["semester_id"] = str(course["semester_id"])
+        await db.enrollments.insert_one(_en_doc)
         enrolled += 1
     
     return {
@@ -6859,11 +6863,13 @@ async def auto_enroll_all_courses(
         # Batch insert
         if new_ids:
             now = get_yemen_time()
+            _sem = str(course["semester_id"]) if course.get("semester_id") else None
             docs = [{
                 "course_id": cid,
                 "student_id": sid,
                 "enrolled_at": now,
-                "enrolled_by": current_user["id"]
+                "enrolled_by": current_user["id"],
+                **({"semester_id": _sem} if _sem else {}),
             } for sid in new_ids]
             await db.enrollments.insert_many(docs)
         
@@ -6947,6 +6953,8 @@ async def enroll_students(
             "enrolled_at": get_yemen_time(),
             "enrolled_by": current_user["id"]
         }
+        if course.get("semester_id"):
+            enrollment["semester_id"] = str(course["semester_id"])
         if is_cross:
             enrollment["cross_department"] = True
             cross_department += 1
