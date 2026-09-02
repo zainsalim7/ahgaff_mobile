@@ -6681,6 +6681,7 @@ async def get_course_enrollments(course_id: str, current_user: dict = Depends(ge
     student_ids = [ObjectId(e["student_id"]) for e in enrollments]
     students = await db.students.find({"_id": {"$in": student_ids}}).to_list(10000)
     students_map = {str(s["_id"]): s for s in students}
+    dep_names = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}, {"name": 1}).to_list(500)}
     
     result = []
     for enrollment in enrollments:
@@ -6693,7 +6694,9 @@ async def get_course_enrollments(course_id: str, current_user: dict = Depends(ge
                 "full_name": student["full_name"],
                 "level": student["level"],
                 "section": student["section"],
-                "enrolled_at": enrollment["enrolled_at"]
+                "enrolled_at": enrollment["enrolled_at"],
+                "cross_department": bool(enrollment.get("cross_department")),
+                "department_name": dep_names.get(student.get("department_id", ""), "") if enrollment.get("cross_department") else "",
             })
     
     return result
@@ -6778,7 +6781,8 @@ async def sync_students_enrollments(
         # تسجيلات الفصل النشط فقط (بالحقل أو عبر فصل المقرر)
         active_enr = [e for e in enrs if e.get("semester_id") == active_id or e.get("course_id") in course_map]
         have = {e["course_id"] for e in active_enr}
-        stale = [e for e in active_enr if e["course_id"] not in should]
+        # 🔓 التسجيلات الاستثنائية من قسم آخر (cross_department) محمية من الإزالة
+        stale = [e for e in active_enr if e["course_id"] not in should and not e.get("cross_department")]
         missing = should - have
         if stale:
             await db.enrollments.delete_many({"_id": {"$in": [e["_id"] for e in stale]}})
@@ -6895,11 +6899,14 @@ async def enroll_students(
     
     course_dept = course.get("department_id", "")
     course_level = course.get("level")
+    shared_depts = {l.get("department_id") for l in (course.get("shared_links") or [])}
     
     enrolled_count = 0
     already_enrolled = 0
     not_found = 0
     wrong_department = 0
+    cross_department = 0
+    cross_names = []
     level_mismatch = []
     
     for student_id in data.student_ids:
@@ -6914,10 +6921,10 @@ async def enroll_students(
             not_found += 1
             continue
         
-        # منع التسجيل من قسم آخر
-        if course_dept and student.get("department_id") and student["department_id"] != course_dept:
-            wrong_department += 1
-            continue
+        # 🔓 تسجيل استثنائي من قسم آخر (بدل الرفض) — يُوسم ويُحمى من أدوات المزامنة
+        is_cross = bool(course_dept and student.get("department_id")
+                        and student["department_id"] != course_dept
+                        and student["department_id"] not in shared_depts)
         
         # Check if already enrolled
         existing = await db.enrollments.find_one({
@@ -6940,6 +6947,10 @@ async def enroll_students(
             "enrolled_at": get_yemen_time(),
             "enrolled_by": current_user["id"]
         }
+        if is_cross:
+            enrollment["cross_department"] = True
+            cross_department += 1
+            cross_names.append(student.get("full_name", ""))
         await db.enrollments.insert_one(enrollment)
         # التسجيل اليدوي الصريح يلغي أي استثناء سابق من هذا المقرر
         if course_id in (student.get("excluded_course_ids") or []):
@@ -6948,6 +6959,8 @@ async def enroll_students(
     
     message = f"تم تسجيل {enrolled_count} طالب"
     warnings = []
+    if cross_department > 0:
+        warnings.append(f"🔓 سُجّل {cross_department} طالب من قسم آخر (تسجيل استثنائي محمي من المزامنة): {'، '.join(cross_names[:5])}")
     if wrong_department > 0:
         warnings.append(f"تم رفض {wrong_department} طالب (من قسم آخر)")
     if level_mismatch:
@@ -6959,6 +6972,7 @@ async def enroll_students(
         "already_enrolled": already_enrolled,
         "not_found": not_found,
         "wrong_department": wrong_department,
+        "cross_department": cross_department,
         "warnings": warnings
     }
 

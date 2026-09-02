@@ -163,7 +163,8 @@ async def cleanup_active_enrollments(db, student_id: str) -> int:
     active_id = str(active_sem["_id"]) if active_sem else None
     deleted = 0
     if active_id:
-        res = await db.enrollments.delete_many({"student_id": student_id, "semester_id": active_id})
+        res = await db.enrollments.delete_many({"student_id": student_id, "semester_id": active_id,
+                                                "cross_department": {"$ne": True}})
         deleted += res.deleted_count
     legacy = await db.enrollments.find({
         "student_id": student_id,
@@ -174,6 +175,8 @@ async def cleanup_active_enrollments(db, student_id: str) -> int:
         ],
     }).to_list(1000)
     for e in legacy:
+        if e.get("cross_department"):
+            continue
         cid = str(e.get("course_id") or "")
         course = None
         if cid and ObjectId.is_valid(cid):

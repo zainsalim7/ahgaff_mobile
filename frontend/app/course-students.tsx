@@ -34,6 +34,8 @@ interface EnrolledStudent {
   level: number;
   section: string;
   enrolled_at: string;
+  cross_department?: boolean;
+  department_name?: string;
 }
 
 interface Student {
@@ -42,6 +44,7 @@ interface Student {
   full_name: string;
   level: number;
   section: string;
+  department_id?: string;
 }
 
 interface Lecture {
@@ -667,6 +670,11 @@ export default function CourseStudentsScreen() {
         <View style={styles.studentMainInfo}>
           <Text style={styles.studentName}>{item.full_name}</Text>
           <Text style={styles.studentDetail}>{item.student_number} | م{item.level}</Text>
+          {item.cross_department && (
+            <View style={{ backgroundColor: '#fff3e0', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'flex-start', marginTop: 3 }} testID={`cross-dept-badge-${item.student_id}`}>
+              <Text style={{ fontSize: 10, color: '#e65100', fontWeight: '800' }}>🔓 من قسم آخر{item.department_name ? ` — ${item.department_name}` : ''}</Text>
+            </View>
+          )}
         </View>
         
         {stats && stats.total > 0 ? (
@@ -778,6 +786,9 @@ export default function CourseStudentsScreen() {
         <View style={styles.studentInfo}>
           <Text style={styles.studentName}>{item.full_name}</Text>
           <Text style={styles.studentDetail}>{item.student_id} | م{item.level}</Text>
+          {!!item.department_id && !!course?.department_id && item.department_id !== course.department_id && (
+            <Text style={{ fontSize: 10, color: '#e65100', fontWeight: '700', marginTop: 2 }} testID={`picker-cross-dept-${item.id}`}>🔓 من قسم آخر — سيُسجَّل تسجيلاً استثنائياً محمياً</Text>
+          )}
         </View>
       </TouchableOpacity>
     );
