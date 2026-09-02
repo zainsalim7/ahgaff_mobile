@@ -17482,6 +17482,8 @@ app.include_router(notifications_router, prefix="/api")
 app.include_router(teaching_load_router, prefix="/api")
 app.include_router(attendance_approval_router, prefix="/api")
 app.include_router(weekly_schedule_router, prefix="/api")
+from routes.fee_receipts import router as fee_receipts_router
+app.include_router(fee_receipts_router, prefix="/api")
 app.include_router(schedule_import_router, prefix="/api")
 app.include_router(schedule_resolver_router, prefix="/api")
 app.include_router(lectures_purge_router, prefix="/api")

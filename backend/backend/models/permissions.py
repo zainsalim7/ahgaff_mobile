@@ -101,6 +101,8 @@ class Permission:
     REPORT_ABSENT_STUDENTS = "report_absent_students"
     REPORT_WARNINGS = "report_warnings"
     REPORT_DAILY = "report_daily"
+    # 💰 الصلاحيات المالية
+    MANAGE_FEE_RECEIPTS = "manage_fee_receipts"
     REPORT_STUDENT = "report_student"
     REPORT_COURSE = "report_course"
     REPORT_TEACHER_WORKLOAD = "report_teacher_workload"
@@ -331,6 +333,7 @@ ALL_PERMISSIONS = [
     {"key": Permission.REPORT_ABSENT_STUDENTS, "label": "تقرير الطلاب المتغيبين", "category": "التقارير الفردية"},
     {"key": Permission.REPORT_WARNINGS, "label": "تقرير الإنذارات والحرمان", "category": "التقارير الفردية"},
     {"key": Permission.REPORT_DAILY, "label": "التقرير اليومي", "category": "التقارير الفردية"},
+    {"key": Permission.MANAGE_FEE_RECEIPTS, "label": "إدارة السندات المالية (تعميد سندات الرسوم)", "category": "المالية"},
     {"key": Permission.REPORT_STUDENT, "label": "تقرير طالب", "category": "التقارير الفردية"},
     {"key": Permission.REPORT_COURSE, "label": "تقرير مقرر", "category": "التقارير الفردية"},
     {"key": Permission.REPORT_TEACHER_WORKLOAD, "label": "تقرير نصاب المدرس", "category": "التقارير الفردية"},

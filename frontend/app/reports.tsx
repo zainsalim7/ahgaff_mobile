@@ -647,6 +647,21 @@ export default function ReportsScreen() {
             </TouchableOpacity>
             )}
 
+            {/* 💰 السندات المالية */}
+            {!['teacher', 'student'].includes(userRole) && (
+            <TouchableOpacity
+              style={styles.reportTypeCard}
+              onPress={() => router.push('/fee-receipts')}
+              data-testid="fee-receipts-btn"
+            >
+              <View style={[styles.reportTypeIcon, { backgroundColor: '#fff8e1' }]}>
+                <Ionicons name="cash" size={28} color="#f57f17" />
+              </View>
+              <Text style={styles.reportTypeTitle}>السندات المالية</Text>
+              <Text style={styles.reportTypeDesc}>تعميد سندات تجديد القيد والقسم الداخلي</Text>
+            </TouchableOpacity>
+            )}
+
             {/* سجل الإفادات الصادرة */}
             {!['teacher', 'student'].includes(userRole) && (
             <TouchableOpacity
