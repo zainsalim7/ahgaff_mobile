@@ -79,10 +79,10 @@ export default function TeacherCoursesScreen() {
       const coursesWithLectures = await Promise.all(
         teacherCourses.map(async (course: Course) => {
           try {
-            const lecturesRes = await lecturesAPI.getByCourse(course.id);
+            const lecturesRes = await lecturesAPI.getByCourse(course.id, 1, 1);
             return {
               ...course,
-              lectures_count: lecturesRes.data.length,
+              lectures_count: lecturesRes.data?.total ?? (Array.isArray(lecturesRes.data) ? lecturesRes.data.length : 0),
             };
           } catch {
             return { ...course, lectures_count: 0 };

@@ -164,16 +164,18 @@ export default function CourseStudentsScreen() {
         coursesAPI.getById(courseId),
         enrollmentAPI.getEnrolled(courseId),
         studentsAPI.getAll(),
-        lecturesAPI.getByCourse(courseId),
+        lecturesAPI.getByCourse(courseId, 1, 500),
       ]);
       
+      // الباك إند يرجع استجابة مقسمة صفحات { lectures: [...] } — ندعم الشكلين
+      const lecturesArr = lecturesRes.data?.lectures || (Array.isArray(lecturesRes.data) ? lecturesRes.data : []);
       setCourse(courseRes.data);
       setEnrolledStudents(enrolledRes.data);
       setAllStudents(studentsRes.data);
-      setLectures(lecturesRes.data || []);
+      setLectures(lecturesArr);
       
       // حساب إحصائيات الحضور لكل طالب
-      await calculateStudentStats(enrolledRes.data, lecturesRes.data || []);
+      await calculateStudentStats(enrolledRes.data, lecturesArr);
     } catch (error) {
       console.error('Error fetching data:', error);
       Alert.alert('خطأ', 'فشل في تحميل البيانات');
@@ -1087,7 +1089,7 @@ export default function CourseStudentsScreen() {
             <Text style={styles.emptyText}>لا يوجد طلاب مسجلين</Text>
             {canManageEnrollments && (
               <Text style={styles.emptySubtext}>
-                اضغط على "إضافة طلاب" أو "استيراد Excel"
+                اضغط على «إضافة طلاب» أو «استيراد Excel»
               </Text>
             )}
           </View>

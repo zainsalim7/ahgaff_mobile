@@ -109,8 +109,9 @@ export default function MyScheduleScreen() {
       const allLectures: Lecture[] = [];
       for (const course of studentCourses) {
         try {
-          const lecturesRes = await lecturesAPI.getByCourse(course.id);
-          const courseLectures = lecturesRes.data.map((l: any) => ({
+          const lecturesRes = await lecturesAPI.getByCourse(course.id, 1, 500);
+          const lecturesArr = lecturesRes.data?.lectures || (Array.isArray(lecturesRes.data) ? lecturesRes.data : []);
+          const courseLectures = lecturesArr.map((l: any) => ({
             ...l,
             course_name: course.name,
             course_code: course.code,
