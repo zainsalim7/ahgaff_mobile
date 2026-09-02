@@ -1805,6 +1805,16 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                     </div>
                   </div>
                 )}
+                {importReport.adopted_from_plan?.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#00695c', textAlign: 'right', marginBottom: 4 }}>📚 تبنّي مقررات الخطة ({importReport.adopted_from_plan.length}):</div>
+                    <div style={{ maxHeight: 110, overflowY: 'auto', border: '1px solid #80cbc4', borderRadius: 8, padding: 8, backgroundColor: '#f1faf9' }} data-testid="import-adopted-plan-list">
+                      {importReport.adopted_from_plan.map((c: string, i: number) => (
+                        <div key={i} style={{ fontSize: 11, color: '#004d40', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #b2dfdb' }}>{c}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {importReport.reassigned?.length > 0 && (
                   <div style={{ marginBottom: 8 }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#1565c0', textAlign: 'right', marginBottom: 4 }}>🧑‍🏫 إسنادات ستتغير ({importReport.reassigned.length}):</div>

@@ -378,6 +378,7 @@ async def import_master_schedule(
     # ===== 3) المرور على كتل المجموعات (3 صفوف لكل مجموعة) =====
     to_create = []
     new_courses = {}  # 🆕 مقررات غير موجودة ستُنشأ من الملف: (اسم مطبع، مستوى، شعبة) -> مواصفات
+    adopted_plan_ids = {}  # 📚 مقررات خطة عديمة الشعبة تُبُنّيت بدل إنشاء نسخ مكررة: id -> رسالة
     shared_links_add = set()  # 🔗 (course_id, dept, level, section) روابط مشاركة ستُضاف لمقررات قائمة
     all_courses_map = {str(c["_id"]): c for c in await db.courses.find({}, {"name": 1, "room_id": 1}).to_list(5000)}
 
@@ -440,6 +441,20 @@ async def import_master_schedule(
             if not matches:
                 # 🔗 مقرر مشترك: مستوى الخلية ضمن المستويات المشتركة للمقرر
                 matches = [x for x in candidates if level in (x.get("shared_levels") or []) and _norm(x.get("section") or "") == nsec]
+            adopted_plan = False
+            if not matches and nsec:
+                # 📚 تبنّي مقرر الخطة عديم الشعبة (نفس الاسم والمستوى) بدل إنشاء نسخة مكررة CRS-xxxx
+                plan_c = [x for x in candidates if (x.get("level") or 1) == level and not _norm(x.get("section") or "")]
+                if len(plan_c) > 1 and teacher_txt:
+                    tpc = [x for x in plan_c if _norm(teachers_map.get(x.get("teacher_id", "") or "", {}).get("full_name", "")) == _norm(teacher_txt)]
+                    if tpc:
+                        plan_c = tpc
+                if len(plan_c) == 1:
+                    matches = plan_c
+                    adopted_plan = True
+                    _apid = str(plan_c[0]["_id"])
+                    if _apid not in adopted_plan_ids:
+                        adopted_plan_ids[_apid] = f"«{plan_c[0].get('name', '')}» ({plan_c[0].get('code', '') or 'بلا رمز'}) — شعبة {section}: استُخدم مقرر الخطة القائم بدل إنشاء نسخة جديدة"
             cross_level = False
             if not matches:
                 # 🔗 محاضرة مشتركة عبر المستويات: قبول مقرر من مستوى آخر بشرط الدمج (يُتحقق لاحقاً)
@@ -487,7 +502,7 @@ async def import_master_schedule(
                 else:
                     errors.append(f"{loc} المقرر '{course_txt}' غير موجود في القسم — تُخُطيت الخلية")
                 continue
-            section_val = course.get("section") or ""
+            section_val = (section or "") if adopted_plan else (course.get("section") or "")
             cid_str = str(course["_id"])
             file_positions.setdefault(cid_str, set()).add((day, slot_number))
             assigned = teachers_map.get(course.get("teacher_id", "") or "", {})
@@ -894,6 +909,7 @@ async def import_master_schedule(
         "to_merge": len(merge_msgs),
         "merged": merge_msgs,
         "multi_teacher": multi_teacher_msgs,
+        "adopted_from_plan": list(adopted_plan_ids.values()),
         "created": 0,
         "skipped_existing": skipped_existing,
         "errors": errors,

@@ -15472,6 +15472,14 @@ async def activate_semester(semester_id: str, auto_generate_from_curriculum: boo
                         "semester_id": semester_id,
                         "curriculum_course_id": cc_id,
                     })
+                    if not exists:
+                        # 🛡️ حارس التكرار: مقرر بنفس الاسم والمستوى والقسم في نفس الفصل (ولو بلا معرف خطة)
+                        exists = await db.courses.find_one({
+                            "semester_id": semester_id,
+                            "department_id": cc.get("department_id"),
+                            "level": cc.get("level"),
+                            "name": cc.get("name"),
+                        })
                     if exists:
                         skipped += 1
                         continue

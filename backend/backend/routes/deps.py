@@ -42,6 +42,13 @@ def build_course_student_query(course: dict) -> dict:
             if sec in ("ا", "أ", "إ", "آ"):
                 for v in ("ا", "أ"):
                     vs |= {v, f"{v} ", f" {v}"}
+            # 🔤 معادلة الحروف اللاتينية بالعربية (A=أ، B=ب...) — بعض بيانات الطلاب مستوردة بشعب لاتينية
+            _lat = {"ا": ("A", "a"), "أ": ("A", "a"), "إ": ("A", "a"), "آ": ("A", "a"),
+                    "ب": ("B", "b"), "ج": ("C", "c"), "د": ("D", "d"),
+                    "A": ("ا", "أ"), "a": ("ا", "أ"), "B": ("ب",), "b": ("ب",),
+                    "C": ("ج",), "c": ("ج",), "D": ("د",), "d": ("د",)}
+            for v in _lat.get(sec, ()):
+                vs |= {v, f"{v} ", f" {v}"}
             q["section"] = {"$in": list(vs)}
         ors.append(q)
     return {
@@ -53,11 +60,14 @@ def build_course_student_query(course: dict) -> dict:
 
 
 def _sec_matches(course_sec: str, student_sec: str) -> bool:
-    """مطابقة الشعبة بمرونة الهمزة — شعبة المقرر الفارغة تعني كل الشعب"""
+    """مطابقة الشعبة بمرونة الهمزة واللاتينية (A=أ) — شعبة المقرر الفارغة تعني كل الشعب"""
     cs = (course_sec or "").strip()
     if not cs:
         return True
-    n = lambda x: (x or "").strip().replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+
+    def n(x):
+        x = (x or "").strip().replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+        return {"A": "ا", "B": "ب", "C": "ج", "D": "د"}.get(x.upper() if len(x) == 1 else x, x)
     return n(cs) == n(student_sec)
 
 
