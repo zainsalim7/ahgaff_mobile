@@ -295,6 +295,64 @@ async def fee_stats(current_user: dict = Depends(get_current_user)):
     return {"academic_year": year, "total_students": total_students, "stats": out}
 
 
+@router.get("/fees/unpaid-export")
+async def export_unpaid(type_id: str, current_user: dict = Depends(get_current_user)):
+    """📄 تصدير Excel بغير الدافعين لنوع رسوم (لتسليمه لإدارة المالية)"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    year = await _academic_year(db)
+    type_name = await _type_name(db, type_id)
+    receipts = {r["student_id"]: r["status"] async for r in db.fee_receipts.find(
+        {"type_id": type_id, "academic_year": year}, {"student_id": 1, "status": 1})}
+    deps = {str(d["_id"]): d async for d in db.departments.find({}, {"name": 1, "faculty_id": 1})}
+    facs = {str(f["_id"]): f.get("name", "") async for f in db.faculties.find({}, {"name": 1})}
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "غير الدافعين"
+    ws.sheet_view.rightToLeft = True
+    ws.merge_cells("A1:G1")
+    ws["A1"] = f"كشف غير الدافعين — {type_name} — العام الجامعي {year}"
+    ws["A1"].font = Font(bold=True, size=13)
+    ws["A1"].alignment = Alignment(horizontal="center")
+    headers = ["م", "رقم القيد", "اسم الطالب", "الكلية", "القسم", "المستوى", "حالة السند"]
+    fill = PatternFill(start_color="1565C0", end_color="1565C0", fill_type="solid")
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=2, column=i, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = fill
+        c.alignment = Alignment(horizontal="center")
+    status_txt = {"pending": "قيد المراجعة", "rejected": "مرفوض — بانتظار إعادة الرفع"}
+    row = 3
+    n = 1
+    async for s in db.students.find({"is_active": True}).sort([("department_id", 1), ("level", 1), ("full_name", 1)]):
+        st = receipts.get(str(s["_id"]))
+        if st == "approved":
+            continue
+        d = deps.get(s.get("department_id", ""), {})
+        vals = [n, s.get("student_id", ""), s.get("full_name", ""),
+                facs.get(str(d.get("faculty_id", "")), ""), d.get("name", ""),
+                s.get("level", ""), status_txt.get(st, "لم يرفع السند")]
+        for i, v in enumerate(vals, 1):
+            ws.cell(row=row, column=i, value=v).alignment = Alignment(horizontal="center")
+        row += 1
+        n += 1
+    for col, w in zip("ABCDEFG", [6, 14, 34, 22, 24, 10, 24]):
+        ws.column_dimensions[col].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    await log_activity(current_user, "fee_unpaid_export", "fee_receipt", "", None,
+                       {"summary": f"تصدير كشف غير الدافعين لـ«{type_name}» ({n - 1} طالباً)"})
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": "attachment; filename=unpaid.xlsx"})
+
+
 class RemindBody(BaseModel):
     type_id: str
 

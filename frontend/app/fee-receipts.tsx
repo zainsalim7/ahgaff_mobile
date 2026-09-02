@@ -50,6 +50,17 @@ export default function FeeReceiptsScreen() {
     if (Platform.OS === 'web' && !window.confirm(`إرسال تذكير لكل غير الدافعين لـ«${name}»؟`)) return;
     try { const r = await api.post('/fees/remind-unpaid', { type_id: typeId }); notify(r.data.message); } catch { notify('فشل الإرسال'); }
   };
+  const exportUnpaid = async (typeId: string, name: string) => {
+    try {
+      const r = await api.get('/fees/unpaid-export', { params: { type_id: typeId }, responseType: 'blob' });
+      if (Platform.OS === 'web') {
+        const url = window.URL.createObjectURL(new Blob([r.data]));
+        const a = document.createElement('a');
+        a.href = url; a.download = `غير_الدافعين_${name}.xlsx`; a.click();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch { notify('فشل التصدير'); }
+  };
   const addType = async () => {
     if (!newType.trim()) return;
     try { await api.post('/fees/types', { name: newType.trim() }); setNewType(''); load(); }
@@ -73,6 +84,10 @@ export default function FeeReceiptsScreen() {
                   <TouchableOpacity onPress={() => remind(s.type_id, s.type_name)} testID={`fee-remind-${s.type_id}`}
                     style={{ backgroundColor: '#fff3e0', borderRadius: 6, padding: 5, marginTop: 6 }}>
                     <Text style={{ color: '#e65100', fontSize: 11, fontWeight: '800', textAlign: 'center' }}>🔔 تذكير غير الدافعين</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => exportUnpaid(s.type_id, s.type_name)} testID={`fee-export-${s.type_id}`}
+                    style={{ backgroundColor: '#e8f5e9', borderRadius: 6, padding: 5, marginTop: 5 }}>
+                    <Text style={{ color: '#2e7d32', fontSize: 11, fontWeight: '800', textAlign: 'center' }}>📄 Excel غير الدافعين</Text>
                   </TouchableOpacity>
                 </View>
               ))}
