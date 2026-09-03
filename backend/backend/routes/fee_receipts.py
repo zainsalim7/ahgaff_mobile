@@ -35,6 +35,16 @@ async def _academic_year(db) -> str:
     return (sem or {}).get("academic_year", "") or ""
 
 
+def _date_warning(receipt_date: str, year: str) -> bool:
+    """⚠️ تاريخ السند خارج العام الجامعي الحالي (مثال year: 2024-2025)"""
+    try:
+        y = int((receipt_date or "")[:4])
+        years = [int(p) for p in (year or "").split("-") if p.strip().isdigit()]
+        return bool(years) and y not in years
+    except Exception:
+        return False
+
+
 async def _notify_student(db, student: dict, title: str, message: str):
     try:
         uid = student.get("user_id")
@@ -126,6 +136,7 @@ class ReceiptUpload(BaseModel):
     image_base64: str
     receipt_no: Optional[str] = ""
     amount: Optional[str] = ""
+    receipt_date: Optional[str] = ""  # 📅 تاريخ السند الورقي YYYY-MM-DD
     statement: Optional[str] = ""  # 📝 بيان الدفعة (إلزامي للرسوم المتكررة: «تغذية شهر يناير»)
     notes: Optional[str] = ""
 
@@ -177,6 +188,7 @@ async def upload_receipt(data: ReceiptUpload, current_user: dict = Depends(get_c
         "student_id": sid, "type_id": data.type_id, "type_name": type_name,
         "academic_year": year, "image_base64": data.image_base64,
         "receipt_no": (data.receipt_no or "").strip(), "amount": (data.amount or "").strip(),
+        "receipt_date": (data.receipt_date or "").strip(),
         "statement": statement, "recurring": recurring,
         "notes": (data.notes or "").strip(), "status": "pending",
         "rejection_reason": "", "uploaded_at": _now(), "reviewed_by": "", "reviewed_at": "",
@@ -266,6 +278,8 @@ async def list_receipts(status: Optional[str] = None, type_id: Optional[str] = N
             "department_name": deps.get(s.get("department_id", ""), ""), "level": s.get("level"),
             "type_name": r["type_name"], "receipt_no": r.get("receipt_no", ""), "amount": r.get("amount", ""),
             "statement": r.get("statement", ""),
+            "receipt_date": r.get("receipt_date", ""),
+            "date_warning": _date_warning(r.get("receipt_date", ""), year),
             "notes": r.get("notes", ""), "status": r["status"], "status_label": STATUS_LABELS.get(r["status"], ""),
             "rejection_reason": r.get("rejection_reason", ""), "uploaded_at": r.get("uploaded_at", ""),
             "reviewed_by": r.get("reviewed_by", ""), "reviewed_at": r.get("reviewed_at", ""),
@@ -361,6 +375,7 @@ class ManualPayment(BaseModel):
     other_label: Optional[str] = ""
     receipt_no: Optional[str] = ""
     amount: Optional[str] = ""
+    receipt_date: Optional[str] = ""
     statement: Optional[str] = ""
     notes: Optional[str] = ""
 
@@ -396,6 +411,7 @@ async def manual_payment(data: ManualPayment, current_user: dict = Depends(get_c
         "student_id": sid, "type_id": data.type_id, "type_name": type_name,
         "academic_year": year, "image_base64": existing.get("image_base64", "") if existing else "",
         "receipt_no": (data.receipt_no or "").strip(), "amount": (data.amount or "").strip(),
+        "receipt_date": (data.receipt_date or "").strip(),
         "statement": statement, "recurring": recurring,
         "notes": (data.notes or "").strip(), "status": "approved", "manual_entry": True,
         "rejection_reason": "", "uploaded_at": _now(), "reviewed_by": reviewer, "reviewed_at": _now(),
@@ -473,6 +489,167 @@ async def export_unpaid(type_id: str, current_user: dict = Depends(get_current_u
     from fastapi.responses import StreamingResponse
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": "attachment; filename=unpaid.xlsx"})
+
+
+@router.post("/fees/receipts/{receipt_id}/unapprove")
+async def unapprove_receipt(receipt_id: str, current_user: dict = Depends(get_current_user)):
+    """↩️ التراجع عن اعتماد سند بالخطأ — يعود إلى «قيد المراجعة»"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    r = await db.fee_receipts.find_one({"_id": ObjectId(receipt_id)})
+    if not r:
+        raise HTTPException(status_code=404, detail="السند غير موجود")
+    if r.get("status") != "approved":
+        raise HTTPException(status_code=400, detail="السند ليس معتمداً")
+    await db.fee_receipts.update_one({"_id": r["_id"]}, {"$set": {
+        "status": "pending", "reviewed_by": "", "reviewed_at": "", "rejection_reason": ""}})
+    student = await db.students.find_one({"_id": ObjectId(r["student_id"])}) if ObjectId.is_valid(r["student_id"]) else None
+    if student:
+        await _notify_student(db, student, f"🔄 أُعيد سندك للمراجعة — {r['type_name']}",
+                              f"أعادت الإدارة سند «{r['type_name']}»{(' — ' + r.get('statement')) if r.get('statement') else ''} إلى قيد المراجعة.")
+    await log_activity(current_user, "fee_receipt_unapprove", "fee_receipt", receipt_id,
+                       (student or {}).get("full_name", ""),
+                       {"summary": f"التراجع عن اعتماد سند «{r['type_name']}» للطالب {(student or {}).get('full_name', '؟')}"})
+    return {"message": "أُعيد السند إلى قيد المراجعة"}
+
+
+@router.get("/fees/payment-report")
+async def payment_report(date_from: str, date_to: str, student_ids: Optional[str] = None,
+                         status: Optional[str] = "approved", fmt: str = "json",
+                         current_user: dict = Depends(get_current_user)):
+    """📊 تقرير سدادات طالب/عدة طلاب بين تاريخين (التاريخ الفعلي = تاريخ السند الورقي أو تاريخ الرفع)
+    fmt: json | excel | pdf"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    q: dict = {}
+    if status and status != "all":
+        q["status"] = status
+    sid_list = [s.strip() for s in (student_ids or "").split(",") if s.strip()]
+    if sid_list:
+        q["student_id"] = {"$in": sid_list}
+    receipts = await db.fee_receipts.find(q, {"image_base64": 0}).to_list(20000)
+    rows = []
+    for r in receipts:
+        eff = (r.get("receipt_date") or "").strip() or (r.get("uploaded_at") or "")[:10]
+        if not (date_from <= eff <= date_to):
+            continue
+        rows.append({**r, "_eff_date": eff})
+    rows.sort(key=lambda x: x["_eff_date"])
+    sids = [ObjectId(r["student_id"]) for r in rows if ObjectId.is_valid(r["student_id"])]
+    smap = {str(s["_id"]): s for s in await db.students.find({"_id": {"$in": sids}}).to_list(20000)}
+    deps = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}, {"name": 1}).to_list(500)}
+    data = []
+    total_amount = 0.0
+    for r in rows:
+        s = smap.get(r["student_id"], {})
+        amt = r.get("amount", "")
+        try:
+            total_amount += float(str(amt).replace(",", "") or 0)
+        except Exception:
+            pass
+        data.append({
+            "id": str(r["_id"]), "date": r["_eff_date"], "student_name": s.get("full_name", "؟"),
+            "student_number": s.get("student_id", ""), "department_name": deps.get(s.get("department_id", ""), ""),
+            "type_name": r.get("type_name", ""), "statement": r.get("statement", ""),
+            "receipt_no": r.get("receipt_no", ""), "amount": amt,
+            "status_label": STATUS_LABELS.get(r.get("status"), ""),
+            "manual_entry": bool(r.get("manual_entry")), "reviewed_by": r.get("reviewed_by", ""),
+            "academic_year": r.get("academic_year", ""),
+        })
+    title = f"تقرير السدادات من {date_from} إلى {date_to}"
+    if len(sid_list) == 1 and data:
+        title += f" — الطالب: {data[0]['student_name']}"
+    if fmt == "json":
+        return {"title": title, "count": len(data), "total_amount": total_amount, "rows": data}
+
+    headers = ["م", "التاريخ", "رقم القيد", "اسم الطالب", "القسم", "نوع الرسوم", "البيان", "رقم السند", "المبلغ", "الحالة", "عمّده"]
+    table = [[i + 1, d["date"], d["student_number"], d["student_name"], d["department_name"],
+              d["type_name"], d["statement"], d["receipt_no"], d["amount"],
+              d["status_label"] + (" (يدوي)" if d["manual_entry"] else ""), d["reviewed_by"]]
+             for i, d in enumerate(data)]
+
+    import io
+    from fastapi.responses import StreamingResponse
+    if fmt == "excel":
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "السدادات"
+        ws.sheet_view.rightToLeft = True
+        ws.merge_cells("A1:K1")
+        ws["A1"] = title
+        ws["A1"].font = Font(bold=True, size=13)
+        ws["A1"].alignment = Alignment(horizontal="center")
+        fill = PatternFill(start_color="1565C0", end_color="1565C0", fill_type="solid")
+        for i, h in enumerate(headers, 1):
+            c = ws.cell(row=2, column=i, value=h)
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = fill
+            c.alignment = Alignment(horizontal="center")
+        for ri, row in enumerate(table, 3):
+            for ci, v in enumerate(row, 1):
+                ws.cell(row=ri, column=ci, value=v).alignment = Alignment(horizontal="center")
+        ws.cell(row=len(table) + 3, column=8, value="الإجمالي:").font = Font(bold=True)
+        ws.cell(row=len(table) + 3, column=9, value=total_amount).font = Font(bold=True)
+        for col, w in zip("ABCDEFGHIJK", [5, 12, 12, 30, 20, 20, 20, 12, 12, 16, 16]):
+            ws.column_dimensions[col].width = w
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                 headers={"Content-Disposition": "attachment; filename=payments.xlsx"})
+
+    # PDF
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    from pathlib import Path
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    def ar(t):
+        return get_display(arabic_reshaper.reshape(str(t if t is not None else "")))
+
+    font_path = Path(__file__).parent.parent / "fonts" / "Amiri-Regular.ttf"
+    if "Amiri" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("Amiri", str(font_path)))
+    bold_path = Path(__file__).parent.parent / "fonts" / "Amiri-Bold.ttf"
+    if bold_path.exists() and "Amiri-Bold" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("Amiri-Bold", str(bold_path)))
+    BOLD = "Amiri-Bold" if "Amiri-Bold" in pdfmetrics.getRegisteredFontNames() else "Amiri"
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=10 * mm, leftMargin=10 * mm,
+                            topMargin=12 * mm, bottomMargin=10 * mm)
+    elems = [Paragraph(ar(title), ParagraphStyle("t", fontName=BOLD, fontSize=14, alignment=1)), Spacer(1, 6 * mm)]
+    pdf_rows = [[ar(h) for h in headers[::-1]]]
+    for row in table:
+        pdf_rows.append([ar(v) for v in row[::-1]])
+    pdf_rows.append([ar("")] * 9 + [ar(f"{total_amount:,.0f}"), ar("الإجمالي")])
+    tbl = Table(pdf_rows, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Amiri"),
+        ("FONTNAME", (0, 0), (-1, 0), BOLD),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565C0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#B0BEC5")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
+    ]))
+    elems.append(tbl)
+    doc.build(elems)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": "attachment; filename=payments.pdf"})
 
 
 class RemindBody(BaseModel):

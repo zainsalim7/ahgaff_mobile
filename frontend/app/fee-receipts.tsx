@@ -28,7 +28,15 @@ export default function FeeReceiptsScreen() {
   const [mReceiptNo, setMReceiptNo] = useState('');
   const [mAmount, setMAmount] = useState('');
   const [mStatement, setMStatement] = useState('');
+  const [mDate, setMDate] = useState('');
   const [newTypeRecurring, setNewTypeRecurring] = useState(false);
+  // 📊 تقرير السدادات
+  const [showReport, setShowReport] = useState(false);
+  const [rFrom, setRFrom] = useState('');
+  const [rTo, setRTo] = useState('');
+  const [rSearch, setRSearch] = useState('');
+  const [rResults, setRResults] = useState<any[]>([]);
+  const [rStudents, setRStudents] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -89,11 +97,45 @@ export default function FeeReceiptsScreen() {
     try {
       const r = await api.post('/fees/manual-payment', {
         student_id: mStudent.id, type_id: mType.id === 'other' ? 'other' : mType.id,
-        other_label: mOther, receipt_no: mReceiptNo, amount: mAmount, statement: mStatement, notes: 'تسجيل يدوي من الإدارة',
+        other_label: mOther, receipt_no: mReceiptNo, amount: mAmount, statement: mStatement, receipt_date: mDate, notes: 'تسجيل يدوي من الإدارة',
       });
       notify(r.data.message);
-      setShowManual(false); setMStudent(null); setMSearch(''); setMType(null); setMOther(''); setMReceiptNo(''); setMAmount(''); setMStatement('');
+      setShowManual(false); setMStudent(null); setMSearch(''); setMType(null); setMOther(''); setMReceiptNo(''); setMAmount(''); setMStatement(''); setMDate('');
       load();
+    } catch (e: any) { notify(e?.response?.data?.detail || 'فشلت العملية'); }
+    finally { setLoading(false); }
+  };
+  const rSearchStudents = async (txt: string) => {
+    setRSearch(txt);
+    if (txt.trim().length < 2) { setRResults([]); return; }
+    try {
+      const r = await api.get('/students', { params: { search: txt.trim() } });
+      const list = Array.isArray(r.data) ? r.data : (r.data.students || []);
+      const q = txt.trim();
+      setRResults(list.filter((s: any) => (s.full_name || '').includes(q) || (s.student_id || '').includes(q)).slice(0, 6));
+    } catch { setRResults([]); }
+  };
+  const downloadReport = async (fmt: 'excel' | 'pdf') => {
+    if (!rFrom || !rTo) { notify('حدد التاريخين (مثال: 2026-01-01)'); return; }
+    try {
+      const r = await api.get('/fees/payment-report', {
+        params: { date_from: rFrom, date_to: rTo, fmt, student_ids: rStudents.map((s) => s.id).join(',') || undefined },
+        responseType: 'blob',
+      });
+      if (Platform.OS === 'web') {
+        const url = window.URL.createObjectURL(new Blob([r.data]));
+        const a = document.createElement('a');
+        a.href = url; a.download = `تقرير_السدادات.${fmt === 'excel' ? 'xlsx' : 'pdf'}`; a.click();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch { notify('فشل التصدير'); }
+  };
+  const unapprove = async () => {
+    if (Platform.OS === 'web' && !window.confirm('إعادة هذا السند المعتمد إلى «قيد المراجعة»؟')) return;
+    setLoading(true);
+    try {
+      const r = await api.post(`/fees/receipts/${selected.id}/unapprove`);
+      notify(r.data.message); setSelected(null); load();
     } catch (e: any) { notify(e?.response?.data?.detail || 'فشلت العملية'); }
     finally { setLoading(false); }
   };
@@ -133,6 +175,10 @@ export default function FeeReceiptsScreen() {
                   </TouchableOpacity>
                 </View>
               ))}
+              <TouchableOpacity onPress={() => setShowReport(true)} testID="fee-report-btn"
+                style={{ backgroundColor: '#e3f2fd', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
+                <Text style={{ color: '#1565c0', fontWeight: '800', fontSize: 12 }}>📊 تقرير سدادات</Text>
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => setShowManual(true)} testID="fee-manual-btn"
                 style={{ backgroundColor: '#e8f5e9', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
                 <Text style={{ color: '#2e7d32', fontWeight: '800', fontSize: 12 }}>✍️ تسجيل دفع يدوي</Text>
@@ -162,8 +208,12 @@ export default function FeeReceiptsScreen() {
               <Text style={{ textAlign: 'right', fontSize: 11, color: '#666', marginTop: 3 }}>
                 {item.student_number} | {item.department_name} م{item.level}
                 {item.statement ? ` | 📝 ${item.statement}` : ''}
+                {item.receipt_date ? ` | 📅 ${item.receipt_date}` : ''}
                 {item.receipt_no ? ` | سند رقم ${item.receipt_no}` : ''}{item.amount ? ` | ${item.amount}` : ''}
               </Text>
+              {item.date_warning && (
+                <Text style={{ textAlign: 'right', fontSize: 10, color: '#f57f17', fontWeight: '800', marginTop: 2, backgroundColor: '#fff8e1', borderRadius: 4, paddingHorizontal: 4, alignSelf: 'flex-end' }} testID={`fee-datewarn-${item.id}`}>⚠️ تاريخ السند خارج العام الجامعي الحالي</Text>
+              )}
               {item.duplicate_receipt_no && (
                 <Text style={{ textAlign: 'right', fontSize: 10, color: '#c62828', fontWeight: '800', marginTop: 2 }} testID={`fee-dup-${item.id}`}>⚠️ رقم السند مكرر مع سند آخر!</Text>
               )}
@@ -183,6 +233,7 @@ export default function FeeReceiptsScreen() {
               <ScrollView>
                 <Text style={{ fontWeight: '800', fontSize: 15, textAlign: 'right' }}>{selected?.student_name} — {selected?.type_name}</Text>
                 {selected?.statement ? <Text style={{ fontSize: 12, color: '#1565c0', fontWeight: '800', textAlign: 'right', marginTop: 2 }}>📝 البيان: {selected.statement}</Text> : null}
+                {selected?.receipt_date ? <Text style={{ fontSize: 12, color: selected?.date_warning ? '#f57f17' : '#333', fontWeight: '800', textAlign: 'right', marginTop: 2 }}>📅 تاريخ السند: {selected.receipt_date}{selected?.date_warning ? '  ⚠️ خارج العام الحالي!' : ''}</Text> : null}
                 <Text style={{ fontSize: 11, color: '#666', textAlign: 'right', marginTop: 3 }}>
                   {selected?.student_number} | {selected?.department_name} | رفع: {selected?.uploaded_at?.slice(0, 16).replace('T', ' ')}
                 </Text>
@@ -206,6 +257,12 @@ export default function FeeReceiptsScreen() {
                       </TouchableOpacity>
                     </View>
                   </>
+                )}
+                {selected?.status === 'approved' && (
+                  <TouchableOpacity disabled={loading} onPress={unapprove} testID="fee-unapprove-btn"
+                    style={{ backgroundColor: '#fff3e0', borderRadius: 8, padding: 12, marginTop: 10, borderWidth: 1, borderColor: '#f57f17' }}>
+                    <Text style={{ color: '#e65100', fontWeight: '800', textAlign: 'center' }}>↩️ إلغاء الاعتماد (إعادته لقيد المراجعة)</Text>
+                  </TouchableOpacity>
                 )}
                 <TouchableOpacity onPress={() => setSelected(null)} style={{ marginTop: 10, padding: 8 }} testID="fee-close-modal">
                   <Text style={{ textAlign: 'center', color: '#1565c0', fontWeight: '800' }}>إغلاق</Text>
@@ -255,12 +312,60 @@ export default function FeeReceiptsScreen() {
                   <TextInput value={mAmount} onChangeText={setMAmount} placeholder="المبلغ (اختياري)"
                     style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-manual-amount" />
                 </View>
+                <TextInput value={mDate} onChangeText={setMDate} placeholder="📅 تاريخ السند الورقي YYYY-MM-DD (اختياري)"
+                  style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12, marginTop: 6 }} testID="fee-manual-date" />
                 <TouchableOpacity disabled={loading} onPress={submitManual} testID="fee-manual-submit"
                   style={{ backgroundColor: '#2e7d32', borderRadius: 8, padding: 12, marginTop: 12 }}>
                   <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>✅ اعتباره دافعاً</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => setShowManual(false)} style={{ marginTop: 8, padding: 6 }}>
                   <Text style={{ textAlign: 'center', color: '#1565c0', fontWeight: '800' }}>إلغاء</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={showReport} transparent animationType="fade" onRequestClose={() => setShowReport(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, width: '100%', maxWidth: 460, maxHeight: '92%' }} testID="fee-report-modal">
+              <ScrollView>
+                <Text style={{ fontWeight: '800', textAlign: 'right', marginBottom: 8 }}>📊 تقرير السدادات بين تاريخين</Text>
+                <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
+                  <TextInput value={rFrom} onChangeText={setRFrom} placeholder="من: 2026-01-01"
+                    style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-report-from" />
+                  <TextInput value={rTo} onChangeText={setRTo} placeholder="إلى: 2026-12-31"
+                    style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-report-to" />
+                </View>
+                <TextInput value={rSearch} onChangeText={rSearchStudents} placeholder="أضف طالباً (اختياري — فارغ = كل الطلاب)..."
+                  style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12, marginTop: 8 }} testID="fee-report-search" />
+                {rResults.map((s) => (
+                  <TouchableOpacity key={s.id} testID={`fee-report-student-${s.id}`}
+                    onPress={() => { if (!rStudents.find((x) => x.id === s.id)) setRStudents([...rStudents, s]); setRResults([]); setRSearch(''); }}
+                    style={{ padding: 8, borderBottomWidth: 1, borderColor: '#f0f0f0' }}>
+                    <Text style={{ textAlign: 'right', fontSize: 12 }}>{s.full_name} — {s.student_id}</Text>
+                  </TouchableOpacity>
+                ))}
+                <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {rStudents.map((s) => (
+                    <TouchableOpacity key={s.id} onPress={() => setRStudents(rStudents.filter((x) => x.id !== s.id))}
+                      style={{ backgroundColor: '#e3f2fd', borderRadius: 14, paddingVertical: 4, paddingHorizontal: 10 }}>
+                      <Text style={{ fontSize: 11, color: '#1565c0', fontWeight: '700' }}>{s.full_name} ✕</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={{ flexDirection: 'row-reverse', gap: 8, marginTop: 12 }}>
+                  <TouchableOpacity onPress={() => downloadReport('excel')} testID="fee-report-excel"
+                    style={{ flex: 1, backgroundColor: '#2e7d32', borderRadius: 8, padding: 12 }}>
+                    <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>📄 Excel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => downloadReport('pdf')} testID="fee-report-pdf"
+                    style={{ flex: 1, backgroundColor: '#c62828', borderRadius: 8, padding: 12 }}>
+                    <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>📕 PDF</Text>
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity onPress={() => setShowReport(false)} style={{ marginTop: 10, padding: 6 }}>
+                  <Text style={{ textAlign: 'center', color: '#1565c0', fontWeight: '800' }}>إغلاق</Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>
