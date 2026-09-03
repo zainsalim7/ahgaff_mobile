@@ -18,6 +18,15 @@ export default function FeeReceiptsScreen() {
   const [showTypes, setShowTypes] = useState(false);
   const [newType, setNewType] = useState('');
   const [loading, setLoading] = useState(false);
+  // ✍️ تسجيل دفع يدوي
+  const [showManual, setShowManual] = useState(false);
+  const [mSearch, setMSearch] = useState('');
+  const [mResults, setMResults] = useState<any[]>([]);
+  const [mStudent, setMStudent] = useState<any>(null);
+  const [mType, setMType] = useState<any>(null);
+  const [mOther, setMOther] = useState('');
+  const [mReceiptNo, setMReceiptNo] = useState('');
+  const [mAmount, setMAmount] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +70,31 @@ export default function FeeReceiptsScreen() {
       }
     } catch { notify('فشل التصدير'); }
   };
+  const searchStudents = async (txt: string) => {
+    setMSearch(txt); setMStudent(null);
+    if (txt.trim().length < 2) { setMResults([]); return; }
+    try {
+      const r = await api.get('/students', { params: { search: txt.trim() } });
+      const list = Array.isArray(r.data) ? r.data : (r.data.students || []);
+      const q = txt.trim();
+      setMResults(list.filter((s: any) => (s.full_name || '').includes(q) || (s.student_id || '').includes(q)).slice(0, 8));
+    } catch { setMResults([]); }
+  };
+  const submitManual = async () => {
+    if (!mStudent) { notify('اختر الطالب'); return; }
+    if (!mType) { notify('اختر نوع الرسوم'); return; }
+    setLoading(true);
+    try {
+      const r = await api.post('/fees/manual-payment', {
+        student_id: mStudent.id, type_id: mType.id === 'other' ? 'other' : mType.id,
+        other_label: mOther, receipt_no: mReceiptNo, amount: mAmount, notes: 'تسجيل يدوي من الإدارة',
+      });
+      notify(r.data.message);
+      setShowManual(false); setMStudent(null); setMSearch(''); setMType(null); setMOther(''); setMReceiptNo(''); setMAmount('');
+      load();
+    } catch (e: any) { notify(e?.response?.data?.detail || 'فشلت العملية'); }
+    finally { setLoading(false); }
+  };
   const addType = async () => {
     if (!newType.trim()) return;
     try { await api.post('/fees/types', { name: newType.trim() }); setNewType(''); load(); }
@@ -91,6 +125,10 @@ export default function FeeReceiptsScreen() {
                   </TouchableOpacity>
                 </View>
               ))}
+              <TouchableOpacity onPress={() => setShowManual(true)} testID="fee-manual-btn"
+                style={{ backgroundColor: '#e8f5e9', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
+                <Text style={{ color: '#2e7d32', fontWeight: '800', fontSize: 12 }}>✍️ تسجيل دفع يدوي</Text>
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => setShowTypes(true)} testID="fee-types-btn"
                 style={{ backgroundColor: '#e8eaf6', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
                 <Text style={{ color: '#3949ab', fontWeight: '800', fontSize: 12 }}>⚙️ أنواع الرسوم</Text>
@@ -119,6 +157,9 @@ export default function FeeReceiptsScreen() {
               </Text>
               {item.duplicate_receipt_no && (
                 <Text style={{ textAlign: 'right', fontSize: 10, color: '#c62828', fontWeight: '800', marginTop: 2 }} testID={`fee-dup-${item.id}`}>⚠️ رقم السند مكرر مع سند آخر!</Text>
+              )}
+              {item.manual_entry && (
+                <Text style={{ textAlign: 'right', fontSize: 10, color: '#2e7d32', fontWeight: '800', marginTop: 2 }} testID={`fee-manual-${item.id}`}>✍️ تسجيل يدوي من الإدارة ({item.reviewed_by})</Text>
               )}
               {item.status === 'rejected' && !!item.rejection_reason && (
                 <Text style={{ textAlign: 'right', fontSize: 10, color: '#c62828', marginTop: 2 }}>سبب الرفض: {item.rejection_reason}</Text>
@@ -158,6 +199,55 @@ export default function FeeReceiptsScreen() {
                 )}
                 <TouchableOpacity onPress={() => setSelected(null)} style={{ marginTop: 10, padding: 8 }} testID="fee-close-modal">
                   <Text style={{ textAlign: 'center', color: '#1565c0', fontWeight: '800' }}>إغلاق</Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={showManual} transparent animationType="fade" onRequestClose={() => setShowManual(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+            <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, width: '100%', maxWidth: 460, maxHeight: '92%' }} testID="fee-manual-modal">
+              <ScrollView>
+                <Text style={{ fontWeight: '800', textAlign: 'right', marginBottom: 8 }}>✍️ تسجيل دفع يدوي (اعتماد فوري)</Text>
+                <TextInput value={mSearch} onChangeText={searchStudents} placeholder="ابحث بالاسم أو رقم القيد..."
+                  style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-manual-search" />
+                {!mStudent && mResults.map((s) => (
+                  <TouchableOpacity key={s.id} onPress={() => { setMStudent(s); setMResults([]); }} testID={`fee-manual-student-${s.id}`}
+                    style={{ padding: 8, borderBottomWidth: 1, borderColor: '#f0f0f0' }}>
+                    <Text style={{ textAlign: 'right', fontSize: 12 }}>{s.full_name} — {s.student_id} ({s.department_name || ''} م{s.level})</Text>
+                  </TouchableOpacity>
+                ))}
+                {mStudent && (
+                  <View style={{ backgroundColor: '#e8f5e9', borderRadius: 8, padding: 8, marginTop: 6 }}>
+                    <Text style={{ textAlign: 'right', fontSize: 12, fontWeight: '800', color: '#2e7d32' }}>الطالب: {mStudent.full_name} — {mStudent.student_id}</Text>
+                  </View>
+                )}
+                <Text style={{ textAlign: 'right', fontSize: 12, fontWeight: '800', marginTop: 10 }}>نوع الرسوم:</Text>
+                <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                  {[...types, { id: 'other', name: 'أخرى (نوع حر)' }].map((t: any) => (
+                    <TouchableOpacity key={t.id} onPress={() => setMType(t)} testID={`fee-manual-type-${t.id}`}
+                      style={{ backgroundColor: mType?.id === t.id ? '#1565c0' : '#f0f0f0', borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 }}>
+                      <Text style={{ color: mType?.id === t.id ? '#fff' : '#333', fontSize: 11, fontWeight: '700' }}>{t.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {mType?.id === 'other' && (
+                  <TextInput value={mOther} onChangeText={setMOther} placeholder="اكتب نوع الرسوم..."
+                    style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12, marginTop: 6 }} testID="fee-manual-other" />
+                )}
+                <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 8 }}>
+                  <TextInput value={mReceiptNo} onChangeText={setMReceiptNo} placeholder="رقم السند (اختياري)"
+                    style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-manual-receiptno" />
+                  <TextInput value={mAmount} onChangeText={setMAmount} placeholder="المبلغ (اختياري)"
+                    style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-manual-amount" />
+                </View>
+                <TouchableOpacity disabled={loading} onPress={submitManual} testID="fee-manual-submit"
+                  style={{ backgroundColor: '#2e7d32', borderRadius: 8, padding: 12, marginTop: 12 }}>
+                  <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>✅ اعتباره دافعاً</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowManual(false)} style={{ marginTop: 8, padding: 6 }}>
+                  <Text style={{ textAlign: 'center', color: '#1565c0', fontWeight: '800' }}>إلغاء</Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>

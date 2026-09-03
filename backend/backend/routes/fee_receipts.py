@@ -218,6 +218,7 @@ async def list_receipts(status: Optional[str] = None, type_id: Optional[str] = N
             "rejection_reason": r.get("rejection_reason", ""), "uploaded_at": r.get("uploaded_at", ""),
             "reviewed_by": r.get("reviewed_by", ""), "reviewed_at": r.get("reviewed_at", ""),
             "duplicate_receipt_no": bool(r.get("receipt_no")) and dup_nos.get(r.get("receipt_no"), 0) > 1,
+            "manual_entry": bool(r.get("manual_entry")),
         })
     return {"receipts": out, "academic_year": year}
 
@@ -293,6 +294,54 @@ async def fee_stats(current_user: dict = Depends(get_current_user)):
         out.append({"type_id": tid, "type_name": t["name"], "approved": approved, "pending": pending,
                     "rejected": rejected, "not_paid": max(total_students - approved - pending - rejected, 0)})
     return {"academic_year": year, "total_students": total_students, "stats": out}
+
+
+class ManualPayment(BaseModel):
+    student_id: str  # معرف الطالب (Mongo id)
+    type_id: str
+    other_label: Optional[str] = ""
+    receipt_no: Optional[str] = ""
+    amount: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+@router.post("/fees/manual-payment")
+async def manual_payment(data: ManualPayment, current_user: dict = Depends(get_current_user)):
+    """✍️ تسجيل دفع يدوي: الموظف يعتبر الطالب دافعاً (دفع في الصندوق مثلاً) — معتمد فوراً"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    if not ObjectId.is_valid(data.student_id):
+        raise HTTPException(status_code=400, detail="معرف طالب غير صالح")
+    student = await db.students.find_one({"_id": ObjectId(data.student_id)})
+    if not student:
+        raise HTTPException(status_code=404, detail="الطالب غير موجود")
+    if data.type_id == "other" and not (data.other_label or "").strip():
+        raise HTTPException(status_code=400, detail="اكتب نوع الرسوم في الحقل الحر")
+    year = await _academic_year(db)
+    type_name = await _type_name(db, data.type_id, data.other_label)
+    sid = str(student["_id"])
+    reviewer = current_user.get("full_name") or current_user.get("username", "")
+    existing = await db.fee_receipts.find_one({"student_id": sid, "type_id": data.type_id,
+                                              "type_name": type_name, "academic_year": year})
+    if existing and existing.get("status") == "approved":
+        raise HTTPException(status_code=400, detail=f"الطالب دافع مسبقاً لـ«{type_name}»")
+    doc = {
+        "student_id": sid, "type_id": data.type_id, "type_name": type_name,
+        "academic_year": year, "image_base64": existing.get("image_base64", "") if existing else "",
+        "receipt_no": (data.receipt_no or "").strip(), "amount": (data.amount or "").strip(),
+        "notes": (data.notes or "").strip(), "status": "approved", "manual_entry": True,
+        "rejection_reason": "", "uploaded_at": _now(), "reviewed_by": reviewer, "reviewed_at": _now(),
+    }
+    if existing:
+        await db.fee_receipts.update_one({"_id": existing["_id"]}, {"$set": doc})
+    else:
+        await db.fee_receipts.insert_one(doc)
+    await _notify_student(db, student, f"✅ تم تسجيلك دافعاً — {type_name}",
+                          f"سجّلت الإدارة دفعك لرسوم «{type_name}» للعام {year}. حالتك الآن: دافع.")
+    await log_activity(current_user, "fee_manual_payment", "fee_receipt", sid, student.get("full_name", ""),
+                       {"summary": f"تسجيل دفع يدوي «{type_name}» للطالب {student.get('full_name', '؟')}" + (f" — سند {data.receipt_no}" if data.receipt_no else "")})
+    return {"message": f"تم تسجيل {student.get('full_name', '')} دافعاً لـ«{type_name}» ✅"}
 
 
 @router.get("/fees/unpaid-export")
