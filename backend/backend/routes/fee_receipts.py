@@ -54,16 +54,37 @@ async def _notify_student(db, student: dict, title: str, message: str):
 
 class FeeTypeCreate(BaseModel):
     name: str
+    recurring: bool = False
+
+
+class FeeTypeUpdate(BaseModel):
+    recurring: bool
 
 
 @router.get("/fees/types")
 async def list_fee_types(current_user: dict = Depends(get_current_user)):
     db = get_db()
     await _seed_types(db)
-    types = [{"id": str(t["_id"]), "key": t.get("key", ""), "name": t["name"], "builtin": bool(t.get("builtin"))}
+    types = [{"id": str(t["_id"]), "key": t.get("key", ""), "name": t["name"], "builtin": bool(t.get("builtin")),
+              "recurring": bool(t.get("recurring"))}
              for t in await db.fee_types.find({"is_active": {"$ne": False}}).to_list(100)]
-    types.append({"id": "other", "key": "other", "name": "أخرى (نوع حر)", "builtin": True})
+    types.append({"id": "other", "key": "other", "name": "أخرى (نوع حر)", "builtin": True, "recurring": False})
     return {"types": types, "academic_year": await _academic_year(db)}
+
+
+@router.put("/fees/types/{type_id}")
+async def update_fee_type(type_id: str, data: FeeTypeUpdate, current_user: dict = Depends(get_current_user)):
+    """تبديل نوع الرسوم بين سنوي ومتكرر (شهري)"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    t = await db.fee_types.find_one({"_id": ObjectId(type_id)})
+    if not t:
+        raise HTTPException(status_code=404, detail="غير موجود")
+    await db.fee_types.update_one({"_id": t["_id"]}, {"$set": {"recurring": data.recurring}})
+    await log_activity(current_user, "update_fee_type", "fee_type", type_id, t.get("name"),
+                       {"summary": f"«{t.get('name')}» أصبح {'متكرراً (شهرياً)' if data.recurring else 'سنوياً'}"})
+    return {"message": "تم التحديث"}
 
 
 @router.post("/fees/types")
@@ -76,8 +97,10 @@ async def create_fee_type(data: FeeTypeCreate, current_user: dict = Depends(get_
         raise HTTPException(status_code=400, detail="الاسم مطلوب")
     if await db.fee_types.find_one({"name": name, "is_active": {"$ne": False}}):
         raise HTTPException(status_code=400, detail="النوع موجود مسبقاً")
-    r = await db.fee_types.insert_one({"name": name, "builtin": False, "is_active": True, "created_at": _now()})
-    await log_activity(current_user, "create_fee_type", "fee_type", str(r.inserted_id), name, {"summary": f"إضافة نوع رسوم «{name}»"})
+    r = await db.fee_types.insert_one({"name": name, "builtin": False, "recurring": bool(data.recurring),
+                                       "is_active": True, "created_at": _now()})
+    await log_activity(current_user, "create_fee_type", "fee_type", str(r.inserted_id), name,
+                       {"summary": f"إضافة نوع رسوم «{name}»" + (" (متكرر/شهري)" if data.recurring else "")})
     return {"id": str(r.inserted_id), "message": "تمت الإضافة"}
 
 
@@ -103,6 +126,7 @@ class ReceiptUpload(BaseModel):
     image_base64: str
     receipt_no: Optional[str] = ""
     amount: Optional[str] = ""
+    statement: Optional[str] = ""  # 📝 بيان الدفعة (إلزامي للرسوم المتكررة: «تغذية شهر يناير»)
     notes: Optional[str] = ""
 
 
@@ -115,13 +139,18 @@ async def _get_student(db, current_user):
     return student
 
 
-async def _type_name(db, type_id: str, other_label: str = "") -> str:
+async def _type_info(db, type_id: str, other_label: str = "") -> tuple:
+    """(اسم النوع، هل متكرر)"""
     if type_id == "other":
-        return (other_label or "").strip() or "رسوم أخرى"
+        return ((other_label or "").strip() or "رسوم أخرى", False)
     t = await db.fee_types.find_one({"_id": ObjectId(type_id)})
     if not t:
         raise HTTPException(status_code=400, detail="نوع الرسوم غير موجود")
-    return t["name"]
+    return (t["name"], bool(t.get("recurring")))
+
+
+async def _type_name(db, type_id: str, other_label: str = "") -> str:
+    return (await _type_info(db, type_id, other_label))[0]
 
 
 @router.post("/fees/receipts")
@@ -135,20 +164,27 @@ async def upload_receipt(data: ReceiptUpload, current_user: dict = Depends(get_c
     if data.type_id == "other" and not (data.other_label or "").strip():
         raise HTTPException(status_code=400, detail="اكتب نوع الرسوم في الحقل الحر")
     year = await _academic_year(db)
-    type_name = await _type_name(db, data.type_id, data.other_label)
+    type_name, recurring = await _type_info(db, data.type_id, data.other_label)
+    statement = (data.statement or "").strip()
+    if recurring and not statement:
+        raise HTTPException(status_code=400, detail=f"«{type_name}» رسوم متكررة — اكتب بيان الدفعة (مثال: {type_name} شهر يناير)")
     sid = str(student["_id"])
-    existing = await db.fee_receipts.find_one({"student_id": sid, "type_id": data.type_id,
-                                              "type_name": type_name, "academic_year": year})
+    match: dict = {"student_id": sid, "type_id": data.type_id, "type_name": type_name, "academic_year": year}
+    if recurring:
+        match["statement"] = statement  # كل دفعة ببيانها المستقل
+    existing = await db.fee_receipts.find_one(match)
     doc = {
         "student_id": sid, "type_id": data.type_id, "type_name": type_name,
         "academic_year": year, "image_base64": data.image_base64,
         "receipt_no": (data.receipt_no or "").strip(), "amount": (data.amount or "").strip(),
+        "statement": statement, "recurring": recurring,
         "notes": (data.notes or "").strip(), "status": "pending",
         "rejection_reason": "", "uploaded_at": _now(), "reviewed_by": "", "reviewed_at": "",
     }
     if existing:
         if existing.get("status") == "approved":
-            raise HTTPException(status_code=400, detail="سندك لهذا النوع معتمد مسبقاً")
+            raise HTTPException(status_code=400,
+                                detail=f"دفعة «{statement}» معتمدة مسبقاً" if recurring else "سندك لهذا النوع معتمد مسبقاً")
         await db.fee_receipts.update_one({"_id": existing["_id"]}, {"$set": doc})
         rid = str(existing["_id"])
     else:
@@ -164,16 +200,31 @@ async def my_fee_status(current_user: dict = Depends(get_current_user)):
     year = await _academic_year(db)
     receipts = await db.fee_receipts.find({"student_id": str(student["_id"]), "academic_year": year},
                                           {"image_base64": 0}).to_list(50)
-    by_type = {r["type_id"]: r for r in receipts}
+    by_type = {}
+    for r in receipts:
+        by_type.setdefault(r["type_id"], []).append(r)
     out = []
     async for t in db.fee_types.find({"is_active": {"$ne": False}}):
-        r = by_type.get(str(t["_id"]))
-        status = r["status"] if r else "not_paid"
-        out.append({"type_id": str(t["_id"]), "type_name": t["name"], "status": status,
-                    "status_label": STATUS_LABELS.get(status, status),
-                    "rejection_reason": (r or {}).get("rejection_reason", "")})
+        tid = str(t["_id"])
+        rs = sorted(by_type.get(tid, []), key=lambda x: x.get("uploaded_at", ""), reverse=True)
+        recurring = bool(t.get("recurring"))
+        latest = rs[0] if rs else None
+        status = latest["status"] if latest else "not_paid"
+        approved_count = sum(1 for r in rs if r["status"] == "approved")
+        if recurring and approved_count > 0 and status != "pending":
+            status = "approved"
+        out.append({"type_id": tid, "type_name": t["name"], "status": status,
+                    "status_label": (f"دافع ({approved_count} دفعات)" if recurring and approved_count else STATUS_LABELS.get(status, status)),
+                    "recurring": recurring, "paid_count": approved_count,
+                    "payments": [{"statement": r.get("statement", ""), "status": r["status"],
+                                  "status_label": STATUS_LABELS.get(r["status"], ""),
+                                  "rejection_reason": r.get("rejection_reason", ""),
+                                  "uploaded_at": r.get("uploaded_at", "")} for r in rs] if recurring else [],
+                    "rejection_reason": (latest or {}).get("rejection_reason", "")})
     others = [{"type_id": "other", "type_name": r["type_name"], "status": r["status"],
                "status_label": STATUS_LABELS.get(r["status"], r["status"]),
+               "recurring": False, "paid_count": 1 if r["status"] == "approved" else 0, "payments": [],
+               "statement": r.get("statement", ""),
                "rejection_reason": r.get("rejection_reason", "")}
               for r in receipts if r["type_id"] == "other"]
     return {"academic_year": year, "statuses": out + others}
@@ -214,6 +265,7 @@ async def list_receipts(status: Optional[str] = None, type_id: Optional[str] = N
             "student_name": s.get("full_name", "؟"), "student_number": s.get("student_id", ""),
             "department_name": deps.get(s.get("department_id", ""), ""), "level": s.get("level"),
             "type_name": r["type_name"], "receipt_no": r.get("receipt_no", ""), "amount": r.get("amount", ""),
+            "statement": r.get("statement", ""),
             "notes": r.get("notes", ""), "status": r["status"], "status_label": STATUS_LABELS.get(r["status"], ""),
             "rejection_reason": r.get("rejection_reason", ""), "uploaded_at": r.get("uploaded_at", ""),
             "reviewed_by": r.get("reviewed_by", ""), "reviewed_at": r.get("reviewed_at", ""),
@@ -291,8 +343,15 @@ async def fee_stats(current_user: dict = Depends(get_current_user)):
         approved = await db.fee_receipts.count_documents({**base, "status": "approved"})
         pending = await db.fee_receipts.count_documents({**base, "status": "pending"})
         rejected = await db.fee_receipts.count_documents({**base, "status": "rejected"})
+        recurring = bool(t.get("recurring"))
+        if recurring:
+            paid_students = len(await db.fee_receipts.distinct("student_id", {**base, "status": "approved"}))
+        else:
+            paid_students = approved
         out.append({"type_id": tid, "type_name": t["name"], "approved": approved, "pending": pending,
-                    "rejected": rejected, "not_paid": max(total_students - approved - pending - rejected, 0)})
+                    "rejected": rejected, "recurring": recurring, "paid_students": paid_students,
+                    "not_paid": max(total_students - paid_students, 0) if recurring
+                    else max(total_students - approved - pending - rejected, 0)})
     return {"academic_year": year, "total_students": total_students, "stats": out}
 
 
@@ -302,6 +361,7 @@ class ManualPayment(BaseModel):
     other_label: Optional[str] = ""
     receipt_no: Optional[str] = ""
     amount: Optional[str] = ""
+    statement: Optional[str] = ""
     notes: Optional[str] = ""
 
 
@@ -319,17 +379,24 @@ async def manual_payment(data: ManualPayment, current_user: dict = Depends(get_c
     if data.type_id == "other" and not (data.other_label or "").strip():
         raise HTTPException(status_code=400, detail="اكتب نوع الرسوم في الحقل الحر")
     year = await _academic_year(db)
-    type_name = await _type_name(db, data.type_id, data.other_label)
+    type_name, recurring = await _type_info(db, data.type_id, data.other_label)
+    statement = (data.statement or "").strip()
+    if recurring and not statement:
+        raise HTTPException(status_code=400, detail=f"«{type_name}» رسوم متكررة — اكتب بيان الدفعة")
     sid = str(student["_id"])
     reviewer = current_user.get("full_name") or current_user.get("username", "")
-    existing = await db.fee_receipts.find_one({"student_id": sid, "type_id": data.type_id,
-                                              "type_name": type_name, "academic_year": year})
+    match: dict = {"student_id": sid, "type_id": data.type_id, "type_name": type_name, "academic_year": year}
+    if recurring:
+        match["statement"] = statement
+    existing = await db.fee_receipts.find_one(match)
     if existing and existing.get("status") == "approved":
-        raise HTTPException(status_code=400, detail=f"الطالب دافع مسبقاً لـ«{type_name}»")
+        raise HTTPException(status_code=400,
+                            detail=f"دفعة «{statement}» معتمدة مسبقاً للطالب" if recurring else f"الطالب دافع مسبقاً لـ«{type_name}»")
     doc = {
         "student_id": sid, "type_id": data.type_id, "type_name": type_name,
         "academic_year": year, "image_base64": existing.get("image_base64", "") if existing else "",
         "receipt_no": (data.receipt_no or "").strip(), "amount": (data.amount or "").strip(),
+        "statement": statement, "recurring": recurring,
         "notes": (data.notes or "").strip(), "status": "approved", "manual_entry": True,
         "rejection_reason": "", "uploaded_at": _now(), "reviewed_by": reviewer, "reviewed_at": _now(),
     }
@@ -337,11 +404,12 @@ async def manual_payment(data: ManualPayment, current_user: dict = Depends(get_c
         await db.fee_receipts.update_one({"_id": existing["_id"]}, {"$set": doc})
     else:
         await db.fee_receipts.insert_one(doc)
-    await _notify_student(db, student, f"✅ تم تسجيلك دافعاً — {type_name}",
-                          f"سجّلت الإدارة دفعك لرسوم «{type_name}» للعام {year}. حالتك الآن: دافع.")
+    _lbl = f"{type_name}" + (f" — {statement}" if statement else "")
+    await _notify_student(db, student, f"✅ تم تسجيلك دافعاً — {_lbl}",
+                          f"سجّلت الإدارة دفعك لرسوم «{_lbl}» للعام {year}. حالتك الآن: دافع.")
     await log_activity(current_user, "fee_manual_payment", "fee_receipt", sid, student.get("full_name", ""),
-                       {"summary": f"تسجيل دفع يدوي «{type_name}» للطالب {student.get('full_name', '؟')}" + (f" — سند {data.receipt_no}" if data.receipt_no else "")})
-    return {"message": f"تم تسجيل {student.get('full_name', '')} دافعاً لـ«{type_name}» ✅"}
+                       {"summary": f"تسجيل دفع يدوي «{_lbl}» للطالب {student.get('full_name', '؟')}" + (f" — سند {data.receipt_no}" if data.receipt_no else "")})
+    return {"message": f"تم تسجيل {student.get('full_name', '')} دافعاً لـ«{_lbl}» ✅"}
 
 
 @router.get("/fees/unpaid-export")
@@ -352,8 +420,13 @@ async def export_unpaid(type_id: str, current_user: dict = Depends(get_current_u
     db = get_db()
     year = await _academic_year(db)
     type_name = await _type_name(db, type_id)
-    receipts = {r["student_id"]: r["status"] async for r in db.fee_receipts.find(
-        {"type_id": type_id, "academic_year": year}, {"student_id": 1, "status": 1})}
+    receipts = {}
+    approved_ids = set()
+    async for r in db.fee_receipts.find({"type_id": type_id, "academic_year": year}, {"student_id": 1, "status": 1}):
+        if r["status"] == "approved":
+            approved_ids.add(r["student_id"])
+        else:
+            receipts[r["student_id"]] = r["status"]
     deps = {str(d["_id"]): d async for d in db.departments.find({}, {"name": 1, "faculty_id": 1})}
     facs = {str(f["_id"]): f.get("name", "") async for f in db.faculties.find({}, {"name": 1})}
 
@@ -379,9 +452,9 @@ async def export_unpaid(type_id: str, current_user: dict = Depends(get_current_u
     row = 3
     n = 1
     async for s in db.students.find({"is_active": True}).sort([("department_id", 1), ("level", 1), ("full_name", 1)]):
-        st = receipts.get(str(s["_id"]))
-        if st == "approved":
+        if str(s["_id"]) in approved_ids:
             continue
+        st = receipts.get(str(s["_id"]))
         d = deps.get(s.get("department_id", ""), {})
         vals = [n, s.get("student_id", ""), s.get("full_name", ""),
                 facs.get(str(d.get("faculty_id", "")), ""), d.get("name", ""),

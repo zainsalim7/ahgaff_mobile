@@ -27,6 +27,8 @@ export default function FeeReceiptsScreen() {
   const [mOther, setMOther] = useState('');
   const [mReceiptNo, setMReceiptNo] = useState('');
   const [mAmount, setMAmount] = useState('');
+  const [mStatement, setMStatement] = useState('');
+  const [newTypeRecurring, setNewTypeRecurring] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -87,17 +89,21 @@ export default function FeeReceiptsScreen() {
     try {
       const r = await api.post('/fees/manual-payment', {
         student_id: mStudent.id, type_id: mType.id === 'other' ? 'other' : mType.id,
-        other_label: mOther, receipt_no: mReceiptNo, amount: mAmount, notes: 'تسجيل يدوي من الإدارة',
+        other_label: mOther, receipt_no: mReceiptNo, amount: mAmount, statement: mStatement, notes: 'تسجيل يدوي من الإدارة',
       });
       notify(r.data.message);
-      setShowManual(false); setMStudent(null); setMSearch(''); setMType(null); setMOther(''); setMReceiptNo(''); setMAmount('');
+      setShowManual(false); setMStudent(null); setMSearch(''); setMType(null); setMOther(''); setMReceiptNo(''); setMAmount(''); setMStatement('');
       load();
     } catch (e: any) { notify(e?.response?.data?.detail || 'فشلت العملية'); }
     finally { setLoading(false); }
   };
   const addType = async () => {
     if (!newType.trim()) return;
-    try { await api.post('/fees/types', { name: newType.trim() }); setNewType(''); load(); }
+    try { await api.post('/fees/types', { name: newType.trim(), recurring: newTypeRecurring }); setNewType(''); setNewTypeRecurring(false); load(); }
+    catch (e: any) { notify(e?.response?.data?.detail || 'فشل'); }
+  };
+  const toggleRecurring = async (t: any) => {
+    try { await api.put(`/fees/types/${t.id}`, { recurring: !t.recurring }); load(); }
     catch (e: any) { notify(e?.response?.data?.detail || 'فشل'); }
   };
 
@@ -111,9 +117,11 @@ export default function FeeReceiptsScreen() {
             <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
               {stats.stats?.map((s: any) => (
                 <View key={s.type_id} style={{ backgroundColor: '#fff', borderRadius: 10, padding: 10, minWidth: 220 }} testID={`fee-stat-${s.type_id}`}>
-                  <Text style={{ fontWeight: '800', textAlign: 'right', fontSize: 13 }}>{s.type_name}</Text>
+                  <Text style={{ fontWeight: '800', textAlign: 'right', fontSize: 13 }}>{s.type_name}{s.recurring ? '  🔁 شهري' : ''}</Text>
                   <Text style={{ textAlign: 'right', fontSize: 11, color: '#555', marginTop: 3 }}>
-                    🟢 دافع: {s.approved}   🟡 قيد المراجعة: {s.pending}   ⚪ غير دافع: {s.not_paid}
+                    {s.recurring
+                      ? `🟢 دفعات معتمدة: ${s.approved} (لـ${s.paid_students} طالباً)   🟡 معلقة: ${s.pending}   ⚪ لم يدفع: ${s.not_paid}`
+                      : `🟢 دافع: ${s.approved}   🟡 قيد المراجعة: ${s.pending}   ⚪ غير دافع: ${s.not_paid}`}
                   </Text>
                   <TouchableOpacity onPress={() => remind(s.type_id, s.type_name)} testID={`fee-remind-${s.type_id}`}
                     style={{ backgroundColor: '#fff3e0', borderRadius: 6, padding: 5, marginTop: 6 }}>
@@ -153,6 +161,7 @@ export default function FeeReceiptsScreen() {
               </View>
               <Text style={{ textAlign: 'right', fontSize: 11, color: '#666', marginTop: 3 }}>
                 {item.student_number} | {item.department_name} م{item.level}
+                {item.statement ? ` | 📝 ${item.statement}` : ''}
                 {item.receipt_no ? ` | سند رقم ${item.receipt_no}` : ''}{item.amount ? ` | ${item.amount}` : ''}
               </Text>
               {item.duplicate_receipt_no && (
@@ -173,6 +182,7 @@ export default function FeeReceiptsScreen() {
             <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, width: '100%', maxWidth: 560, maxHeight: '92%' }} testID="fee-review-modal">
               <ScrollView>
                 <Text style={{ fontWeight: '800', fontSize: 15, textAlign: 'right' }}>{selected?.student_name} — {selected?.type_name}</Text>
+                {selected?.statement ? <Text style={{ fontSize: 12, color: '#1565c0', fontWeight: '800', textAlign: 'right', marginTop: 2 }}>📝 البيان: {selected.statement}</Text> : null}
                 <Text style={{ fontSize: 11, color: '#666', textAlign: 'right', marginTop: 3 }}>
                   {selected?.student_number} | {selected?.department_name} | رفع: {selected?.uploaded_at?.slice(0, 16).replace('T', ' ')}
                 </Text>
@@ -236,6 +246,9 @@ export default function FeeReceiptsScreen() {
                   <TextInput value={mOther} onChangeText={setMOther} placeholder="اكتب نوع الرسوم..."
                     style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12, marginTop: 6 }} testID="fee-manual-other" />
                 )}
+                <TextInput value={mStatement} onChangeText={setMStatement}
+                  placeholder={mType?.recurring ? 'بيان الدفعة (إلزامي — مثال: تغذية شهر يناير)' : 'بيان الدفعة (اختياري)'}
+                  style={{ borderWidth: 1, borderColor: mType?.recurring ? '#f57f17' : '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12, marginTop: 6 }} testID="fee-manual-statement" />
                 <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 8 }}>
                   <TextInput value={mReceiptNo} onChangeText={setMReceiptNo} placeholder="رقم السند (اختياري)"
                     style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-manual-receiptno" />
@@ -259,15 +272,26 @@ export default function FeeReceiptsScreen() {
             <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, width: '100%', maxWidth: 420 }} testID="fee-types-modal">
               <Text style={{ fontWeight: '800', textAlign: 'right', marginBottom: 8 }}>أنواع الرسوم</Text>
               {types.map((t) => (
-                <View key={t.id} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderColor: '#f0f0f0' }}>
-                  <Text style={{ fontSize: 13 }}>{t.name}{t.builtin ? '  (أساسي)' : ''}</Text>
-                  {!t.builtin && (
-                    <TouchableOpacity onPress={async () => { await api.delete(`/fees/types/${t.id}`); load(); }} testID={`fee-type-del-${t.id}`}>
-                      <Ionicons name="trash" size={16} color="#c62828" />
+                <View key={t.id} style={{ flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderColor: '#f0f0f0' }}>
+                  <Text style={{ fontSize: 13 }}>{t.name}{t.builtin ? '  (أساسي)' : ''}{t.recurring ? '  🔁' : ''}</Text>
+                  <View style={{ flexDirection: 'row-reverse', gap: 8, alignItems: 'center' }}>
+                    <TouchableOpacity onPress={() => toggleRecurring(t)} testID={`fee-type-recurring-${t.id}`}
+                      style={{ backgroundColor: t.recurring ? '#e8f5e9' : '#f0f0f0', borderRadius: 12, paddingVertical: 3, paddingHorizontal: 8 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: t.recurring ? '#2e7d32' : '#666' }}>{t.recurring ? 'شهري 🔁' : 'سنوي'}</Text>
                     </TouchableOpacity>
-                  )}
+                    {!t.builtin && (
+                      <TouchableOpacity onPress={async () => { await api.delete(`/fees/types/${t.id}`); load(); }} testID={`fee-type-del-${t.id}`}>
+                        <Ionicons name="trash" size={16} color="#c62828" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
               ))}
+              <TouchableOpacity onPress={() => setNewTypeRecurring(!newTypeRecurring)} testID="fee-type-recurring-check"
+                style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                <Ionicons name={newTypeRecurring ? 'checkbox' : 'square-outline'} size={18} color="#1565c0" />
+                <Text style={{ fontSize: 12 }}>رسوم متكررة (شهرية) — تسمح بدفعات متعددة كلٌّ ببيانها</Text>
+              </TouchableOpacity>
               <View style={{ flexDirection: 'row-reverse', gap: 6, marginTop: 10 }}>
                 <TextInput value={newType} onChangeText={setNewType} placeholder="نوع جديد (مثال: رسوم مختبر)"
                   style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-type-input" />
