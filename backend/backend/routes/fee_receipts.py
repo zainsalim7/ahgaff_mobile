@@ -514,6 +514,30 @@ async def unapprove_receipt(receipt_id: str, current_user: dict = Depends(get_cu
     return {"message": "أُعيد السند إلى قيد المراجعة"}
 
 
+class RenewalStatusBody(BaseModel):
+    student_ids: list
+
+
+@router.post("/fees/renewal-status")
+async def renewal_status(data: RenewalStatusBody, current_user: dict = Depends(get_current_user)):
+    """🟢 حالة تجديد القيد لمجموعة طلاب دفعة واحدة (لشارة جدول الطلاب)"""
+    if current_user.get("role") == "student":
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    await _seed_types(db)
+    t = await db.fee_types.find_one({"key": "renewal"})
+    year = await _academic_year(db)
+    ids = [str(s) for s in (data.student_ids or [])][:2000]
+    out = {sid: "not_paid" for sid in ids}
+    rank = {"approved": 3, "pending": 2, "rejected": 1}
+    async for r in db.fee_receipts.find({"type_id": str(t["_id"]), "academic_year": year,
+                                         "student_id": {"$in": ids}}, {"student_id": 1, "status": 1}):
+        cur = out.get(r["student_id"], "not_paid")
+        if rank.get(r["status"], 0) > rank.get(cur, 0):
+            out[r["student_id"]] = r["status"]
+    return {"statuses": out, "academic_year": year}
+
+
 @router.get("/fees/students/{student_id}/receipts")
 async def student_receipts(student_id: str, current_user: dict = Depends(get_current_user)):
     """💰 سجل سدادات طالب عبر كل الأعوام (للإدارة/المالية)"""

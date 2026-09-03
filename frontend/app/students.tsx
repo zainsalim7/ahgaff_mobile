@@ -153,6 +153,7 @@ export default function StudentsScreen() {
 
   // 🆕 عدد الإشعارات غير المقروءة لكل طالب
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [renewalStatuses, setRenewalStatuses] = useState<Record<string, string>>({});
 
   // حذف آمن
   const [deleteTarget, setDeleteTarget] = useState<Student | null>(null);
@@ -297,6 +298,14 @@ export default function StudentsScreen() {
     try {
       const studentsRes = await studentsAPI.getAll();
       setStudents(studentsRes.data);
+      // 💰 حالة تجديد القيد للشارة (لا توقف الصفحة عند الفشل)
+      try {
+        const ids = (studentsRes.data || []).map((s: any) => s.id);
+        if (ids.length) {
+          const fr = await api.post('/fees/renewal-status', { student_ids: ids });
+          setRenewalStatuses(fr.data.statuses || {});
+        }
+      } catch { /* صلاحية غير متاحة أو خطأ — تجاهل */ }
     } catch (error) {
       console.error('Error fetching students:', error);
       showMessage('خطأ', 'فشل في تحميل بيانات الطلاب');
@@ -1242,6 +1251,15 @@ export default function StudentsScreen() {
             </View>
           )}
           <Text style={styles.studentNameCell} numberOfLines={1}>{item.full_name}</Text>
+          {/* 💰 شارة حالة تجديد القيد: أخضر=دافع، أصفر=قيد المراجعة، رمادي=غير دافع */}
+          {renewalStatuses[item.id] !== undefined && (
+            <View testID={`renewal-dot-${item.id}`} style={{
+              width: 9, height: 9, borderRadius: 5, marginHorizontal: 4,
+              backgroundColor: renewalStatuses[item.id] === 'approved' ? '#2e7d32'
+                : renewalStatuses[item.id] === 'pending' ? '#f9a825'
+                : renewalStatuses[item.id] === 'rejected' ? '#c62828' : '#b0bec5',
+            }} />
+          )}
           {/* 🆕 شارة الإشعارات غير المقروءة */}
           {unreadCounts[item.id] > 0 && (
             <View style={styles.unreadNotifBadge} testID={`unread-notif-${item.id}`}>
@@ -1302,7 +1320,7 @@ export default function StudentsScreen() {
         </View>
       </View>
     );
-  }, [selectedIds, selectionMode, canManageStudents, getDepartmentName, openMenuId, formatRegDate, unreadCounts]);
+  }, [selectedIds, selectionMode, canManageStudents, getDepartmentName, openMenuId, formatRegDate, unreadCounts, renewalStatuses]);
 
   // الطالب الحالي للقائمة المنبثقة
   const menuStudent = useMemo(() => students.find(s => s.id === openMenuId) || null, [students, openMenuId]);
