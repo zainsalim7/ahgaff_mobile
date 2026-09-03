@@ -325,7 +325,7 @@ export default function TeachingLoadPage() {
       if (res.ok) {
         setApplyResult(data);
         // refresh teaching loads
-        await fetchSummary();
+        await loadSummary();
       } else {
         Alert.alert('خطأ', data.detail || 'فشل تطبيق القالب');
       }

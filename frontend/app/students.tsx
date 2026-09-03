@@ -1569,6 +1569,15 @@ export default function StudentsScreen() {
                   <Ionicons name="shuffle" size={14} color="#fff" />
                   <Text style={styles.selActionText}>تغيير الحالة</Text>
                 </TouchableOpacity>
+                {/* 💰 تقرير سدادات المحددين */}
+                <TouchableOpacity style={[styles.selActionBtn, { backgroundColor: '#2e7d32' }]} testID="bulk-payments-report-btn"
+                  onPress={() => {
+                    const sel = students.filter(s => selectedIds.has(s.id));
+                    router.push({ pathname: '/payments-report', params: { studentIds: sel.map(s => s.id).join(','), names: sel.map(s => s.full_name).join('،') } } as any);
+                  }}>
+                  <Ionicons name="cash" size={14} color="#fff" />
+                  <Text style={styles.selActionText}>تقرير سدادات</Text>
+                </TouchableOpacity>
                 {/* 🆕 زر التخريج الجماعي */}
                 <TouchableOpacity style={[styles.selActionBtn, { backgroundColor: '#0d47a1' }]} onPress={() => setShowBulkGraduateModal(true)} testID="bulk-graduate-btn">
                   <Ionicons name="school" size={14} color="#fff" />

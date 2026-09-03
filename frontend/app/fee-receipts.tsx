@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, Image, Modal, TextInput, Platform, Alert, ScrollView } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../src/services/api';
@@ -30,13 +30,6 @@ export default function FeeReceiptsScreen() {
   const [mStatement, setMStatement] = useState('');
   const [mDate, setMDate] = useState('');
   const [newTypeRecurring, setNewTypeRecurring] = useState(false);
-  // 📊 تقرير السدادات
-  const [showReport, setShowReport] = useState(false);
-  const [rFrom, setRFrom] = useState('');
-  const [rTo, setRTo] = useState('');
-  const [rSearch, setRSearch] = useState('');
-  const [rResults, setRResults] = useState<any[]>([]);
-  const [rStudents, setRStudents] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -105,31 +98,6 @@ export default function FeeReceiptsScreen() {
     } catch (e: any) { notify(e?.response?.data?.detail || 'فشلت العملية'); }
     finally { setLoading(false); }
   };
-  const rSearchStudents = async (txt: string) => {
-    setRSearch(txt);
-    if (txt.trim().length < 2) { setRResults([]); return; }
-    try {
-      const r = await api.get('/students', { params: { search: txt.trim() } });
-      const list = Array.isArray(r.data) ? r.data : (r.data.students || []);
-      const q = txt.trim();
-      setRResults(list.filter((s: any) => (s.full_name || '').includes(q) || (s.student_id || '').includes(q)).slice(0, 6));
-    } catch { setRResults([]); }
-  };
-  const downloadReport = async (fmt: 'excel' | 'pdf') => {
-    if (!rFrom || !rTo) { notify('حدد التاريخين (مثال: 2026-01-01)'); return; }
-    try {
-      const r = await api.get('/fees/payment-report', {
-        params: { date_from: rFrom, date_to: rTo, fmt, student_ids: rStudents.map((s) => s.id).join(',') || undefined },
-        responseType: 'blob',
-      });
-      if (Platform.OS === 'web') {
-        const url = window.URL.createObjectURL(new Blob([r.data]));
-        const a = document.createElement('a');
-        a.href = url; a.download = `تقرير_السدادات.${fmt === 'excel' ? 'xlsx' : 'pdf'}`; a.click();
-        window.URL.revokeObjectURL(url);
-      }
-    } catch { notify('فشل التصدير'); }
-  };
   const unapprove = async () => {
     if (Platform.OS === 'web' && !window.confirm('إعادة هذا السند المعتمد إلى «قيد المراجعة»؟')) return;
     setLoading(true);
@@ -175,7 +143,7 @@ export default function FeeReceiptsScreen() {
                   </TouchableOpacity>
                 </View>
               ))}
-              <TouchableOpacity onPress={() => setShowReport(true)} testID="fee-report-btn"
+              <TouchableOpacity onPress={() => router.push('/payments-report' as any)} testID="fee-report-btn"
                 style={{ backgroundColor: '#e3f2fd', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
                 <Text style={{ color: '#1565c0', fontWeight: '800', fontSize: 12 }}>📊 تقرير سدادات</Text>
               </TouchableOpacity>
@@ -320,52 +288,6 @@ export default function FeeReceiptsScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => setShowManual(false)} style={{ marginTop: 8, padding: 6 }}>
                   <Text style={{ textAlign: 'center', color: '#1565c0', fontWeight: '800' }}>إلغاء</Text>
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-
-        <Modal visible={showReport} transparent animationType="fade" onRequestClose={() => setShowReport(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
-            <View style={{ backgroundColor: '#fff', borderRadius: 14, padding: 16, width: '100%', maxWidth: 460, maxHeight: '92%' }} testID="fee-report-modal">
-              <ScrollView>
-                <Text style={{ fontWeight: '800', textAlign: 'right', marginBottom: 8 }}>📊 تقرير السدادات بين تاريخين</Text>
-                <View style={{ flexDirection: 'row-reverse', gap: 6 }}>
-                  <TextInput value={rFrom} onChangeText={setRFrom} placeholder="من: 2026-01-01"
-                    style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-report-from" />
-                  <TextInput value={rTo} onChangeText={setRTo} placeholder="إلى: 2026-12-31"
-                    style={{ flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12 }} testID="fee-report-to" />
-                </View>
-                <TextInput value={rSearch} onChangeText={rSearchStudents} placeholder="أضف طالباً (اختياري — فارغ = كل الطلاب)..."
-                  style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, textAlign: 'right', fontSize: 12, marginTop: 8 }} testID="fee-report-search" />
-                {rResults.map((s) => (
-                  <TouchableOpacity key={s.id} testID={`fee-report-student-${s.id}`}
-                    onPress={() => { if (!rStudents.find((x) => x.id === s.id)) setRStudents([...rStudents, s]); setRResults([]); setRSearch(''); }}
-                    style={{ padding: 8, borderBottomWidth: 1, borderColor: '#f0f0f0' }}>
-                    <Text style={{ textAlign: 'right', fontSize: 12 }}>{s.full_name} — {s.student_id}</Text>
-                  </TouchableOpacity>
-                ))}
-                <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                  {rStudents.map((s) => (
-                    <TouchableOpacity key={s.id} onPress={() => setRStudents(rStudents.filter((x) => x.id !== s.id))}
-                      style={{ backgroundColor: '#e3f2fd', borderRadius: 14, paddingVertical: 4, paddingHorizontal: 10 }}>
-                      <Text style={{ fontSize: 11, color: '#1565c0', fontWeight: '700' }}>{s.full_name} ✕</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={{ flexDirection: 'row-reverse', gap: 8, marginTop: 12 }}>
-                  <TouchableOpacity onPress={() => downloadReport('excel')} testID="fee-report-excel"
-                    style={{ flex: 1, backgroundColor: '#2e7d32', borderRadius: 8, padding: 12 }}>
-                    <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>📄 Excel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => downloadReport('pdf')} testID="fee-report-pdf"
-                    style={{ flex: 1, backgroundColor: '#c62828', borderRadius: 8, padding: 12 }}>
-                    <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>📕 PDF</Text>
-                  </TouchableOpacity>
-                </View>
-                <TouchableOpacity onPress={() => setShowReport(false)} style={{ marginTop: 10, padding: 6 }}>
-                  <Text style={{ textAlign: 'center', color: '#1565c0', fontWeight: '800' }}>إغلاق</Text>
                 </TouchableOpacity>
               </ScrollView>
             </View>
