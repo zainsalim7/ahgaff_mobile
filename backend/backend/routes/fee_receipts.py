@@ -514,6 +514,24 @@ async def unapprove_receipt(receipt_id: str, current_user: dict = Depends(get_cu
     return {"message": "أُعيد السند إلى قيد المراجعة"}
 
 
+@router.get("/fees/students/{student_id}/receipts")
+async def student_receipts(student_id: str, current_user: dict = Depends(get_current_user)):
+    """💰 سجل سدادات طالب عبر كل الأعوام (للإدارة/المالية)"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    receipts = await db.fee_receipts.find({"student_id": student_id}, {"image_base64": 0}).sort("uploaded_at", -1).to_list(500)
+    return {"receipts": [{
+        "id": str(r["_id"]), "type_name": r.get("type_name", ""), "statement": r.get("statement", ""),
+        "academic_year": r.get("academic_year", ""), "receipt_no": r.get("receipt_no", ""),
+        "amount": r.get("amount", ""), "receipt_date": r.get("receipt_date", ""),
+        "date_warning": _date_warning(r.get("receipt_date", ""), r.get("academic_year", "")),
+        "status": r.get("status", ""), "status_label": STATUS_LABELS.get(r.get("status"), ""),
+        "rejection_reason": r.get("rejection_reason", ""), "manual_entry": bool(r.get("manual_entry")),
+        "reviewed_by": r.get("reviewed_by", ""), "uploaded_at": r.get("uploaded_at", ""),
+    } for r in receipts]}
+
+
 @router.get("/fees/payment-report")
 async def payment_report(date_from: str, date_to: str, student_ids: Optional[str] = None,
                          status: Optional[str] = "approved", fmt: str = "json",

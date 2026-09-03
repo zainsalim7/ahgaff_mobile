@@ -1774,6 +1774,13 @@ export default function StudentsScreen() {
                 </TouchableOpacity>
               )}
               {canManageStudents && (
+                <TouchableOpacity style={styles.menuItem} testID="menu-student-payments"
+                  onPress={() => { setOpenMenuId(null); router.push({ pathname: '/student-payments', params: { studentId: menuStudent.id, name: menuStudent.full_name } } as any); }}>
+                  <Ionicons name="cash-outline" size={18} color="#2e7d32" />
+                  <Text style={styles.menuText}>السدادات والتقرير المالي</Text>
+                </TouchableOpacity>
+              )}
+              {canManageStudents && (
                 <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); handleOpenWarningModal(menuStudent); }}>
                   <Ionicons name="warning-outline" size={18} color="#f57c00" />
                   <Text style={styles.menuText}>إرسال إنذار</Text>
