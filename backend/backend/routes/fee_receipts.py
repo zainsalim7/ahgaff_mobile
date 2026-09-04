@@ -180,10 +180,20 @@ async def upload_receipt(data: ReceiptUpload, current_user: dict = Depends(get_c
     if recurring and not statement:
         raise HTTPException(status_code=400, detail=f"«{type_name}» رسوم متكررة — اكتب بيان الدفعة (مثال: {type_name} شهر يناير)")
     sid = str(student["_id"])
-    match: dict = {"student_id": sid, "type_id": data.type_id, "type_name": type_name, "academic_year": year}
+    match: dict = {"student_id": sid, "type_id": data.type_id, "academic_year": year}
+    if data.type_id == "other":
+        match["type_name"] = type_name
     if recurring:
         match["statement"] = statement  # كل دفعة ببيانها المستقل
-    existing = await db.fee_receipts.find_one(match)
+    blocking = await db.fee_receipts.find_one({**match, "status": {"$in": ["pending", "approved"]}})
+    if blocking:
+        if blocking["status"] == "approved":
+            raise HTTPException(status_code=400,
+                                detail=f"دفعة «{statement}» معتمدة مسبقاً" if recurring else "سندك لهذا النوع معتمد مسبقاً")
+        raise HTTPException(status_code=400,
+                            detail=f"دفعة «{statement}» قيد المراجعة حالياً — لا يمكن رفع سند جديد" if recurring
+                            else "لديك سند لهذا النوع قيد المراجعة حالياً — لا يمكن رفع سند جديد")
+    existing = await db.fee_receipts.find_one({**match, "status": "rejected"})
     doc = {
         "student_id": sid, "type_id": data.type_id, "type_name": type_name,
         "academic_year": year, "image_base64": data.image_base64,
@@ -194,9 +204,6 @@ async def upload_receipt(data: ReceiptUpload, current_user: dict = Depends(get_c
         "rejection_reason": "", "uploaded_at": _now(), "reviewed_by": "", "reviewed_at": "",
     }
     if existing:
-        if existing.get("status") == "approved":
-            raise HTTPException(status_code=400,
-                                detail=f"دفعة «{statement}» معتمدة مسبقاً" if recurring else "سندك لهذا النوع معتمد مسبقاً")
         await db.fee_receipts.update_one({"_id": existing["_id"]}, {"$set": doc})
         rid = str(existing["_id"])
     else:
@@ -228,7 +235,9 @@ async def my_fee_status(current_user: dict = Depends(get_current_user)):
         out.append({"type_id": tid, "type_name": t["name"], "status": status,
                     "status_label": (f"دافع ({approved_count} دفعات)" if recurring and approved_count else STATUS_LABELS.get(status, status)),
                     "recurring": recurring, "paid_count": approved_count,
-                    "payments": [{"statement": r.get("statement", ""), "status": r["status"],
+                    "receipt_id": str(latest["_id"]) if latest else None,
+                    "payments": [{"receipt_id": str(r["_id"]),
+                                  "statement": r.get("statement", ""), "status": r["status"],
                                   "status_label": STATUS_LABELS.get(r["status"], ""),
                                   "rejection_reason": r.get("rejection_reason", ""),
                                   "uploaded_at": r.get("uploaded_at", "")} for r in rs] if recurring else [],
@@ -236,6 +245,7 @@ async def my_fee_status(current_user: dict = Depends(get_current_user)):
     others = [{"type_id": "other", "type_name": r["type_name"], "status": r["status"],
                "status_label": STATUS_LABELS.get(r["status"], r["status"]),
                "recurring": False, "paid_count": 1 if r["status"] == "approved" else 0, "payments": [],
+               "receipt_id": str(r["_id"]),
                "statement": r.get("statement", ""),
                "rejection_reason": r.get("rejection_reason", "")}
               for r in receipts if r["type_id"] == "other"]
