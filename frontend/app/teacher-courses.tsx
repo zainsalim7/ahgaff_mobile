@@ -91,6 +91,7 @@ export default function TeacherCoursesScreen() {
   };
 
   const [data, setData] = useState<TeacherCoursesData | null>(null);
+  const [teacherPhone, setTeacherPhone] = useState('');
   const [loading, setLoading] = useState(true);
   const [teacherDept, setTeacherDept] = useState<string>('');
 
@@ -132,7 +133,9 @@ export default function TeacherCoursesScreen() {
         console.warn('Failed to fetch teacher courses:', coursesRes.reason);
         setData(null);
       }
-      // teacherRes ما زالت مستخدمة للتحقق من صحة teacherId فقط
+      if (teacherRes.status === 'fulfilled') {
+        setTeacherPhone(teacherRes.value.data?.phone || '');
+      }
       if (teacherRes.status === 'rejected') {
         console.warn('Failed to fetch teacher details:', teacherRes.reason);
       }
@@ -424,7 +427,14 @@ export default function TeacherCoursesScreen() {
             <Text style={styles.teacherAvatarText}>{(data?.teacher_name || teacherDisplay).charAt(0)}</Text>
           </View>
           <View style={{ flex: 1, alignItems: 'flex-end' }}>
-            <Text style={styles.teacherCardName}>{data?.teacher_name || teacherDisplay}</Text>
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Text style={styles.teacherCardName}>{data?.teacher_name || teacherDisplay}</Text>
+              {!!teacherPhone && (
+                <View style={{ flexDirection: 'row-reverse', alignItems: 'center', backgroundColor: '#e8f5e9', borderRadius: 12, paddingVertical: 3, paddingHorizontal: 10 }} testID="teacher-phone-badge">
+                  <Text style={{ fontSize: 12, color: '#2e7d32', fontWeight: '800' }}>📞 {teacherPhone}</Text>
+                </View>
+              )}
+            </View>
             <View style={styles.teacherCardSubRow}>
               <Text style={styles.teacherCardSub}>يدرّس {data?.total_courses || 0} مقرر</Text>
               <View style={styles.teacherCardDot} />
