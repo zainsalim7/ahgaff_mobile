@@ -12,7 +12,6 @@ router = APIRouter(tags=["السندات المالية"])
 
 BUILTIN_TYPES = [
     {"key": "renewal", "name": "تجديد القيد الدراسي", "builtin": True},
-    {"key": "dormitory", "name": "رسوم القسم الداخلي", "builtin": True},
 ]
 STATUS_LABELS = {"pending": "قيد المراجعة", "approved": "مقبول", "rejected": "مرفوض", "not_paid": "غير دافع"}
 
@@ -28,6 +27,9 @@ def can_manage_fees(user: dict) -> bool:
 async def _seed_types(db):
     for t in BUILTIN_TYPES:
         await db.fee_types.update_one({"key": t["key"]}, {"$setOnInsert": {**t, "is_active": True, "created_at": _now()}}, upsert=True)
+    # هجرة لمرة واحدة: القسم الداخلي لم يعد نوعاً محمياً — يتحول لشهري قابل للحذف
+    await db.fee_types.update_many({"key": "dormitory", "builtin": True},
+                                   {"$set": {"builtin": False, "recurring": True}})
 
 
 async def _academic_year(db) -> str:
