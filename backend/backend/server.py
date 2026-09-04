@@ -27,6 +27,7 @@ import time as time_module
 
 # توقيت اليمن (عدن) UTC+3
 YEMEN_TIMEZONE = timezone(timedelta(hours=3))
+OFFLINE_SYNC_MAX_HOURS = 12  # 🔐 أقصى عمر لسجل تحضير أوفلاين قبل رفضه
 
 def get_yemen_time():
     """الحصول على الوقت الحالي بتوقيت اليمن (UTC+3)"""
@@ -10409,29 +10410,43 @@ async def record_attendance_session(
     # جلب إعدادات الكلية
     attendance_duration, max_delay, attendance_edit_minutes = await _get_faculty_attendance_settings(course)
     
-    # إذا كان هذا تسجيل أوفلاين، استخدم وقت التسجيل الأصلي للتحقق
-    check_time = now
-    is_offline_sync = False
-    if session.offline_recorded_at:
-        try:
-            offline_time = datetime.fromisoformat(session.offline_recorded_at.replace('Z', '+00:00'))
-            if offline_time.tzinfo is None:
-                offline_time = offline_time.replace(tzinfo=YEMEN_TIMEZONE)
-            else:
-                offline_time = offline_time.astimezone(YEMEN_TIMEZONE)
-            # التحقق أن الوقت معقول (خلال آخر 48 ساعة)
-            if (now - offline_time).total_seconds() < 48 * 3600:
-                check_time = offline_time
-                is_offline_sync = True
-        except Exception:
-            pass
-    
     lecture_date = datetime.strptime(lecture["date"], "%Y-%m-%d")
     lecture_start = datetime.strptime(f"{lecture['date']} {lecture['start_time']}", "%Y-%m-%d %H:%M")
     lecture_end = datetime.strptime(f"{lecture['date']} {lecture['end_time']}", "%Y-%m-%d %H:%M")
     # توحيد التوقيت
     lecture_start = lecture_start.replace(tzinfo=YEMEN_TIMEZONE)
     lecture_end = lecture_end.replace(tzinfo=YEMEN_TIMEZONE)
+
+    # 🔐 تسجيل أوفلاين: التحقق بوقت السيرفر — حد 12 ساعة + وجوب وقوع الوقت ضمن نافذة المحاضرة
+    check_time = now
+    is_offline_sync = False
+    if session.offline_recorded_at:
+        offline_time = None
+        try:
+            offline_time = datetime.fromisoformat(session.offline_recorded_at.replace('Z', '+00:00'))
+            if offline_time.tzinfo is None:
+                offline_time = offline_time.replace(tzinfo=YEMEN_TIMEZONE)
+            else:
+                offline_time = offline_time.astimezone(YEMEN_TIMEZONE)
+        except Exception:
+            offline_time = None
+        if offline_time is not None:
+            age_seconds = (now - offline_time).total_seconds()
+            if age_seconds > OFFLINE_SYNC_MAX_HOURS * 3600:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"سجل التحضير الأوفلاين أقدم من {OFFLINE_SYNC_MAX_HOURS} ساعة — لا يمكن قبوله"
+                )
+            if age_seconds < -600:
+                raise HTTPException(status_code=400, detail="وقت التسجيل الأوفلاين في المستقبل — تحقق من ساعة الجهاز")
+            offline_window_end = lecture_end + timedelta(minutes=attendance_duration + max_delay)
+            if offline_time < lecture_start or offline_time > offline_window_end:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"وقت التسجيل الأوفلاين خارج نافذة المحاضرة ({lecture['date']} {lecture['start_time']}-{lecture['end_time']}) — مرفوض"
+                )
+            check_time = offline_time
+            is_offline_sync = True
     
     # التحقق: لا يُسمح بالتحضير قبل وقت بداية المحاضرة
     if check_time < lecture_start and not is_offline_sync and not has_edit_perm:
@@ -10881,6 +10896,28 @@ async def get_course_stats(course_id: str, current_user: dict = Depends(get_curr
 
 # ==================== Offline Sync Routes ====================
 
+APP_VERSIONS = {
+    "teacher": {"latest_version": "2.0.0", "min_supported_version": "1.0.0"},
+    "student": {"latest_version": "1.0.0", "min_supported_version": "1.0.0"},
+}
+
+
+@api_router.get("/app-version/{app_name}")
+async def get_app_version(app_name: str):
+    info = APP_VERSIONS.get(app_name)
+    if not info:
+        raise HTTPException(status_code=404, detail="تطبيق غير معروف")
+    return {
+        "app": app_name, **info,
+        "security": {
+            "offline_window_hours": OFFLINE_SYNC_MAX_HOURS,
+            "lecture_window_check": True,
+            "patch": "attendance-time-guard-v1",
+        },
+        "server_time": get_yemen_time().isoformat(),
+    }
+
+
 @api_router.post("/sync/attendance")
 async def sync_offline_attendance(
     data: OfflineSyncData,
@@ -10899,6 +10936,7 @@ async def sync_offline_attendance(
         teacher_record_id = user_doc.get("teacher_record_id") if user_doc else None
 
     course_owner_cache = {}
+    lecture_cache = {}
     completed_lecture_ids = set()
 
     for record in data.attendance_records:
@@ -10926,16 +10964,42 @@ async def sync_offline_attendance(
 
             lecture_id = record.get("lecture_id")
 
+            # 🔐 فحص زمني بوقت السيرفر: المحاضرة موجودة + بدأت فعلاً + لم تمضِ 12 ساعة على نهايتها
+            if not lecture_id:
+                errors.append("سجل بلا معرف محاضرة — مرفوض")
+                continue
+            if lecture_id not in lecture_cache:
+                try:
+                    lecture_cache[lecture_id] = await db.lectures.find_one({"_id": ObjectId(lecture_id)})
+                except Exception:
+                    lecture_cache[lecture_id] = None
+            _lec = lecture_cache[lecture_id]
+            if not _lec:
+                errors.append(f"المحاضرة {lecture_id} غير موجودة — مرفوض")
+                continue
+            try:
+                _lstart = datetime.strptime(f"{_lec['date']} {_lec['start_time']}", "%Y-%m-%d %H:%M").replace(tzinfo=YEMEN_TIMEZONE)
+                _lend = datetime.strptime(f"{_lec['date']} {_lec['end_time']}", "%Y-%m-%d %H:%M").replace(tzinfo=YEMEN_TIMEZONE)
+            except Exception:
+                errors.append(f"وقت المحاضرة {lecture_id} غير صالح — مرفوض")
+                continue
+            _srv_now = get_yemen_time()
+            if _srv_now < _lstart:
+                errors.append(f"محاضرة {_lec['date']} {_lec['start_time']} لم تبدأ بعد — مرفوض")
+                continue
+            if (_srv_now - _lend).total_seconds() > OFFLINE_SYNC_MAX_HOURS * 3600:
+                errors.append(f"انتهت مهلة المزامنة ({OFFLINE_SYNC_MAX_HOURS} ساعة) لمحاضرة {_lec['date']} — مرفوض")
+                continue
+
             # 🧹 منع التكرار: حذف أي سجل سابق لنفس (المحاضرة، الطالب)
-            if lecture_id:
-                await db.attendance.delete_many({"lecture_id": lecture_id, "student_id": record["student_id"]})
+            await db.attendance.delete_many({"lecture_id": lecture_id, "student_id": record["student_id"]})
 
             att_record = {
                 "lecture_id": lecture_id,
                 "course_id": course_id,
                 "student_id": record["student_id"],
                 "status": record.get("status", AttendanceStatus.PRESENT),
-                "date": datetime.fromisoformat(record["date"]) if record.get("date") else get_yemen_time(),
+                "date": _lstart,  # 🔐 تاريخ المحاضرة الفعلي من السيرفر — لا يُؤخذ من الجهاز
                 "recorded_by": current_user["id"],
                 "method": record.get("method", "manual"),
                 "notes": record.get("notes"),
