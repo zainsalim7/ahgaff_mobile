@@ -4,7 +4,7 @@ import hmac
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Dict
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Depends
 from pydantic import BaseModel, Field
 from firebase_admin import messaging
 
@@ -22,7 +22,8 @@ class InternalPushPayload(BaseModel):
     data: Dict[str, str] = Field(default_factory=dict)
 
 
-def _check_key(x_internal_key: Optional[str]):
+def _check_key(x_internal_key: Optional[str] = Header(None)):
+    """يُنفَّذ كاعتمادية قبل التحقق من الجسم: مفتاح خاطئ → 401 دائماً"""
     expected = os.environ.get("INTERNAL_PUSH_KEY")
     if not expected:
         raise HTTPException(status_code=503, detail="INTERNAL_PUSH_KEY غير مُهيّأ")
@@ -58,9 +59,8 @@ def _message(token: str, title: str, body: str, data: dict) -> messaging.Message
     )
 
 
-@router.post("/internal/push")
-async def internal_push(payload: InternalPushPayload, x_internal_key: Optional[str] = Header(None)):
-    _check_key(x_internal_key)
+@router.post("/internal/push", dependencies=[Depends(_check_key)])
+async def internal_push(payload: InternalPushPayload):
     if not (payload.student_number or "").strip():
         raise HTTPException(status_code=422, detail="student_number مطلوب")
     db = get_db()
