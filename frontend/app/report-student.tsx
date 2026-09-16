@@ -77,13 +77,8 @@ export default function StudentReport() {
       const meRes = await studentsAPI.getMe();
       const myStudentId = meRes.data?.id;
       if (myStudentId) {
-        const [reportRes, detRes] = await Promise.all([
-          reportsAPI.getStudentReport(myStudentId),
-          api.get('/reports/student/me/detailed'),
-        ]);
+        const reportRes = await reportsAPI.getStudentReport(myStudentId);
         setStudentData(reportRes.data);
-        setDetailed(detRes.data);
-        setReportMode('summary');
       }
     } catch (error) {
       console.error('Error fetching my report:', error);
@@ -234,9 +229,9 @@ export default function StudentReport() {
 
   // دالة تصدير PDF
   const downloadDetailed = async (fmt: 'pdf' | 'excel') => {
-    const res = await api.get(`/reports/student/${isStudent ? 'me' : detailed.student.id}/detailed/export`, { params: { fmt, view: reportMode }, responseType: 'blob' });
+    const res = await api.get(`/reports/student/${detailed.student.id}/detailed/export`, { params: { fmt, view: reportMode }, responseType: 'blob' });
     const st = detailed.student;
-    const fallback = exportName([isStudent ? 'تقرير حضوري' : reportMode === 'summary' ? 'تقرير حضور الطالب (مختصر)' : 'تقرير حضور الطالب', st.full_name, st.department_name, st.level ? `المستوى ${st.level}` : '', st.section ? `شعبة ${st.section}` : ''], fmt === 'pdf' ? 'pdf' : 'xlsx');
+    const fallback = exportName([reportMode === 'summary' ? 'تقرير حضور الطالب (مختصر)' : 'تقرير حضور الطالب', st.full_name, st.department_name, st.level ? `المستوى ${st.level}` : '', st.section ? `شعبة ${st.section}` : ''], fmt === 'pdf' ? 'pdf' : 'xlsx');
     const name = filenameFromResponse(res, fallback);
     if (Platform.OS === 'web') {
       const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -256,7 +251,7 @@ export default function StudentReport() {
 
   const handleExportPDF = async () => {
     if (!studentData?.student) return;
-    if (detailed) {
+    if (!isStudent && detailed) {
       try { setExportingPDF(true); await downloadDetailed('pdf'); }
       catch { Alert.alert('خطأ', 'فشل في تصدير PDF'); }
       finally { setExportingPDF(false); }
@@ -276,7 +271,7 @@ export default function StudentReport() {
   // دالة تصدير Excel
   const exportToExcel = async () => {
     if (!studentData?.student?.id) return;
-    if (detailed) {
+    if (!isStudent && detailed) {
       try { setExporting(true); await downloadDetailed('excel'); }
       catch { Alert.alert('خطأ', 'فشل في تصدير Excel'); }
       finally { setExporting(false); }
@@ -538,22 +533,22 @@ export default function StudentReport() {
         )}
 
         {/* التقرير المفصّل الجديد (الإدارة) */}
-        {detailed && !loading && (
+        {!isStudent && detailed && !loading && (
           <>
-            <View style={{ flexDirection: 'row-reverse', gap: 8, marginHorizontal: 16, marginBottom: 12, marginTop: isStudent ? 12 : 0 }} testID="sr-mode-switch">
-              {([['summary', isStudent ? '📊 مختصر' : '📊 التقرير المختصر (جدول واحد)'], ['detailed', isStudent ? '📋 مفصّل' : '📋 التقرير المفصّل']] as const).map(([k, label]) => (
+            <View style={{ flexDirection: 'row-reverse', gap: 8, marginHorizontal: 16, marginBottom: 12 }} testID="sr-mode-switch">
+              {([['detailed', '📋 التقرير المفصّل'], ['summary', '📊 التقرير المختصر (جدول واحد)']] as const).map(([k, label]) => (
                 <TouchableOpacity key={k} onPress={() => setReportMode(k)} testID={`sr-mode-${k}`}
-                  style={{ flex: isStudent ? 1 : undefined, alignItems: 'center', backgroundColor: reportMode === k ? '#1565c0' : '#fff', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16, borderWidth: 1, borderColor: '#1565c0' }}>
+                  style={{ backgroundColor: reportMode === k ? '#1565c0' : '#fff', borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16, borderWidth: 1, borderColor: '#1565c0' }}>
                   <Text style={{ color: reportMode === k ? '#fff' : '#1565c0', fontWeight: '800', fontSize: 12 }}>{label}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-            <StudentDetailedReport data={detailed} mode={reportMode} compact={isStudent || width < 700} />
+            <StudentDetailedReport data={detailed} mode={reportMode} compact={width < 700} />
           </>
         )}
 
-        {/* بيانات الطالب (العرض القديم — للإدارة فقط حين يتعذر التقرير المفصّل) */}
-        {studentData && !loading && !detailed && (
+        {/* بيانات الطالب (العرض الكلاسيكي — الطالب، أو الإدارة إن تعذر التقرير المفصّل) */}
+        {studentData && !loading && (isStudent || !detailed) && (
           <>
             {/* معلومات الطالب */}
             <View style={styles.studentCard}>
