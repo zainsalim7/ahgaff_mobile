@@ -166,18 +166,38 @@ def _check(current_user):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
 
 
+async def _resolve_target(db, student_id: str, current_user: dict) -> str:
+    """'me' → سجل الطالب الحالي (بلا صلاحيات إدارية)؛ غيره → فحص الصلاحية والنطاق"""
+    if student_id == "me":
+        uid = str(current_user.get("id") or current_user.get("_id") or "")
+        student = await db.students.find_one({"user_id": uid}, {"_id": 1})
+        if not student:
+            raise HTTPException(status_code=404, detail="لا يوجد سجل طالب مرتبط بحسابك")
+        return str(student["_id"])
+    if current_user.get("role") == "student":
+        uid = str(current_user.get("id") or current_user.get("_id") or "")
+        own = await db.students.find_one({"user_id": uid}, {"_id": 1})
+        if not own or str(own["_id"]) != student_id:
+            raise HTTPException(status_code=403, detail="لا يمكنك عرض تقرير طالب آخر")
+        return student_id
+    _check(current_user)
+    return student_id
+
+
 @router.get("/reports/student/{student_id}/detailed")
 async def student_detailed_report(student_id: str, current_user: dict = Depends(get_current_user)):
-    _check(current_user)
     db = get_db()
-    data = await build_student_report(db, student_id)
-    await _assert_scope(db, current_user, {"_id": ObjectId(data["student"]["id"])})
+    target = await _resolve_target(db, student_id, current_user)
+    data = await build_student_report(db, target)
+    if student_id != "me":
+        await _assert_scope(db, current_user, {"_id": ObjectId(data["student"]["id"])})
     return data
 
 
-def _fname_parts(d: dict, view: str = "detailed"):
+def _fname_parts(d: dict, view: str = "detailed", own: bool = False):
     s = d["student"]
-    return ("تقرير حضور الطالب" + (" (مختصر)" if view == "summary" else ""), s["full_name"], s["department_name"],
+    base = "تقرير حضوري" if own else "تقرير حضور الطالب"
+    return (base + (" (مختصر)" if view == "summary" else ""), s["full_name"], s["department_name"],
             f"المستوى {s['level']}" if s.get("level") else "", f"شعبة {s['section']}" if s.get("section") else "")
 
 
@@ -185,17 +205,19 @@ def _fname_parts(d: dict, view: str = "detailed"):
 async def student_detailed_export(student_id: str, fmt: str = "excel", view: str = "detailed",
                                   current_user: dict = Depends(get_current_user)):
     """view=detailed (كل المحاضرات) | summary (جدول واحد بكل المقررات)"""
-    _check(current_user)
     db = get_db()
-    d = await build_student_report(db, student_id)
-    await _assert_scope(db, current_user, {"_id": ObjectId(d["student"]["id"])})
+    target = await _resolve_target(db, student_id, current_user)
+    d = await build_student_report(db, target)
+    if student_id != "me":
+        await _assert_scope(db, current_user, {"_id": ObjectId(d["student"]["id"])})
     summary_only = view == "summary"
+    parts = _fname_parts(d, view, own=(student_id == "me"))
     if fmt == "pdf":
         buf = _build_pdf(d, summary_only)
-        return StreamingResponse(buf, media_type="application/pdf", headers=export_headers(export_filename(*_fname_parts(d, view), ext="pdf")))
+        return StreamingResponse(buf, media_type="application/pdf", headers=export_headers(export_filename(*parts, ext="pdf")))
     buf = _build_excel(d, summary_only)
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers=export_headers(export_filename(*_fname_parts(d, view), ext="xlsx")))
+                             headers=export_headers(export_filename(*parts, ext="xlsx")))
 
 
 def _build_excel(d: dict, summary_only: bool = False) -> io.BytesIO:
