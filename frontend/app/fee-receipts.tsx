@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { exportName, filenameFromResponse } from '../src/utils/exportName';
+import { BulkPaymentModal } from '../src/components/BulkPaymentModal';
 import { View, Text, TouchableOpacity, Image, Modal, TextInput, Platform, Alert, ScrollView } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,6 +23,7 @@ export default function FeeReceiptsScreen() {
   const [loading, setLoading] = useState(false);
   // ✍️ تسجيل دفع يدوي
   const [showManual, setShowManual] = useState(false);
+  const [showBulkPay, setShowBulkPay] = useState(false);
   const [mSearch, setMSearch] = useState('');
   const [mResults, setMResults] = useState<any[]>([]);
   const [mStudent, setMStudent] = useState<any>(null);
@@ -200,6 +202,10 @@ export default function FeeReceiptsScreen() {
                 style={{ backgroundColor: '#e8f5e9', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
                 <Text style={{ color: '#2e7d32', fontWeight: '800', fontSize: 12 }}>✍️ تسجيل دفع يدوي</Text>
               </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowBulkPay(true)} testID="fee-bulk-pay-btn"
+                style={{ backgroundColor: '#1b5e20', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>💰 تسجيل دفع جماعي</Text>
+              </TouchableOpacity>
               {isAdmin && (
                 <TouchableOpacity onPress={() => setShowTypes(true)} testID="fee-types-btn"
                   style={{ backgroundColor: '#e8eaf6', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
@@ -313,6 +319,8 @@ export default function FeeReceiptsScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        <BulkPaymentModal visible={showBulkPay} onClose={() => setShowBulkPay(false)} onDone={load} departments={stats?.departments || []} />
 
         <Modal visible={showBulkReject} transparent animationType="fade" onRequestClose={() => setShowBulkReject(false)}>
           <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>

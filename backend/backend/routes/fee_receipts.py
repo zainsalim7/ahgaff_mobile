@@ -545,6 +545,112 @@ async def manual_payment(data: ManualPayment, current_user: dict = Depends(get_c
     return {"message": f"تم تسجيل {student.get('full_name', '')} دافعاً لـ«{_lbl}» ✅"}
 
 
+class BulkManualPayment(BaseModel):
+    student_ids: list
+    type_id: str
+    other_label: Optional[str] = ""
+    receipt_no_prefix: Optional[str] = ""
+    amount: Optional[str] = ""
+    receipt_date: Optional[str] = ""
+    statement: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+@router.get("/fees/unpaid-students")
+async def unpaid_students(type_id: str, department_id: Optional[str] = None, level: Optional[int] = None,
+                          section: Optional[str] = None, statement: Optional[str] = None,
+                          current_user: dict = Depends(get_current_user)):
+    """👥 طلاب النطاق غير الدافعين لنوع رسوم (لنافذة الدفع الجماعي)"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    db = get_db()
+    year = await _academic_year(db)
+    sq = await _scope_query(current_user)
+    base: dict = {"is_active": True}
+    if department_id:
+        base["department_id"] = department_id
+    if level is not None:
+        base["level"] = level
+    if section:
+        base["section"] = section
+    q = {"$and": [sq, base]} if sq else base
+    students = await db.students.find(q, {"full_name": 1, "student_id": 1, "level": 1, "section": 1, "department_id": 1}).sort([("level", 1), ("section", 1), ("full_name", 1)]).to_list(3000)
+    rq: dict = {"type_id": type_id, "academic_year": year, "status": "approved"}
+    if type_id != "other" and statement:
+        rq["statement"] = statement.strip()
+    paid = {r["student_id"] async for r in db.fee_receipts.find(rq, {"student_id": 1})}
+    depts = {str(d["_id"]): d.get("name", "") async for d in db.departments.find({}, {"name": 1})}
+    out = [{"id": str(s["_id"]), "full_name": s.get("full_name", ""), "student_id": s.get("student_id", ""),
+            "level": s.get("level"), "section": s.get("section", ""), "department_name": depts.get(s.get("department_id"), ""),
+            "paid": str(s["_id"]) in paid} for s in students]
+    return {"students": out, "unpaid_count": sum(1 for s in out if not s["paid"]), "paid_count": sum(1 for s in out if s["paid"]),
+            "academic_year": year}
+
+
+@router.post("/fees/manual-payment/bulk")
+async def bulk_manual_payment(data: BulkManualPayment, current_user: dict = Depends(get_current_user)):
+    """💰 اعتبار مجموعة طلاب دافعين دفعة واحدة — يتخطى الدافعين مسبقاً ومن هم خارج النطاق"""
+    if not can_manage_fees(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك")
+    ids = [i for i in (data.student_ids or []) if ObjectId.is_valid(i)]
+    if not ids:
+        raise HTTPException(status_code=400, detail="لم يتم تحديد أي طالب")
+    if len(ids) > 1000:
+        raise HTTPException(status_code=400, detail="الحد الأقصى 1000 طالب في العملية الواحدة")
+    if data.type_id == "other" and not (data.other_label or "").strip():
+        raise HTTPException(status_code=400, detail="اكتب نوع الرسوم في الحقل الحر")
+    db = get_db()
+    year = await _academic_year(db)
+    type_name, recurring = await _type_info(db, data.type_id, data.other_label)
+    statement = (data.statement or "").strip()
+    if recurring and not statement:
+        raise HTTPException(status_code=400, detail=f"«{type_name}» رسوم متكررة — اكتب بيان الدفعة")
+    scoped = await _scoped_student_ids(db, current_user)
+    reviewer = current_user.get("full_name") or current_user.get("username", "")
+    prefix = (data.receipt_no_prefix or "").strip()
+    receipt_date = (data.receipt_date or "").strip() or _now()[:10]
+    _lbl = f"{type_name}" + (f" — {statement}" if statement else "")
+    done, skipped, seq = [], [], 0
+    students = {str(s["_id"]): s for s in await db.students.find({"_id": {"$in": [ObjectId(i) for i in ids]}}).to_list(1000)}
+    for sid in ids:
+        student = students.get(sid)
+        if not student:
+            skipped.append({"id": sid, "name": "", "reason": "الطالب غير موجود"})
+            continue
+        name = student.get("full_name", "")
+        if scoped is not None and sid not in scoped:
+            skipped.append({"id": sid, "name": name, "reason": "خارج نطاق صلاحيتك"})
+            continue
+        match: dict = {"student_id": sid, "type_id": data.type_id, "type_name": type_name, "academic_year": year}
+        if recurring:
+            match["statement"] = statement
+        existing = await db.fee_receipts.find_one(match)
+        if existing and existing.get("status") == "approved":
+            skipped.append({"id": sid, "name": name, "reason": "دافع مسبقاً"})
+            continue
+        seq += 1
+        receipt_no = f"{prefix}-{seq:03d}" if prefix else ""
+        doc = {
+            "student_id": sid, "type_id": data.type_id, "type_name": type_name, "academic_year": year,
+            "image_base64": existing.get("image_base64", "") if existing else "",
+            "receipt_no": receipt_no, "amount": (data.amount or "").strip(), "receipt_date": receipt_date,
+            "statement": statement, "recurring": recurring, "notes": (data.notes or "").strip(),
+            "status": "approved", "manual_entry": True, "bulk_entry": True, "rejection_reason": "",
+            "uploaded_at": _now(), "reviewed_by": reviewer, "reviewed_at": _now(),
+        }
+        if existing:
+            await db.fee_receipts.update_one({"_id": existing["_id"]}, {"$set": doc})
+        else:
+            await db.fee_receipts.insert_one(doc)
+        done.append({"id": sid, "name": name, "student_id": student.get("student_id", ""), "receipt_no": receipt_no})
+        await _notify_student(db, student, f"✅ تم تسجيلك دافعاً — {_lbl}",
+                              f"سجّلت الإدارة دفعك لرسوم «{_lbl}» للعام {year}. حالتك الآن: دافع.")
+    await log_activity(current_user, "fee_bulk_manual_payment", "fee_receipt", "", f"{len(done)} طالب",
+                       {"summary": f"تسجيل دفع جماعي «{_lbl}» لـ {len(done)} طالب" + (f" (تخطي {len(skipped)})" if skipped else "")})
+    return {"message": f"تم تسجيل {len(done)} طالباً دافعين لـ«{_lbl}» ✅" + (f" — تخطي {len(skipped)}" if skipped else ""),
+            "done": done, "skipped": skipped, "type_name": type_name, "academic_year": year}
+
+
 @router.get("/fees/unpaid-export")
 async def export_unpaid(type_id: str, current_user: dict = Depends(get_current_user)):
     """📄 تصدير Excel بغير الدافعين لنوع رسوم (لتسليمه لإدارة المالية)"""

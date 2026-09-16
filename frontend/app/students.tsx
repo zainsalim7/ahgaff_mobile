@@ -1,5 +1,6 @@
 import { goBack } from '../src/utils/navigation';
 import { exportName, filenameFromResponse } from '../src/utils/exportName';
+import { BulkPaymentModal } from '../src/components/BulkPaymentModal';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
@@ -165,6 +166,7 @@ export default function StudentsScreen() {
   
   // تغيير المستوى
   const [showLevelModal, setShowLevelModal] = useState(false);
+  const [showBulkPay, setShowBulkPay] = useState(false);
   const [changingLevel, setChangingLevel] = useState(false);
   // المرحلة الثانية من تغيير المستوى الجماعي: اختيار الشعبة
   const [showBulkSectionModal, setShowBulkSectionModal] = useState(false);
@@ -1238,6 +1240,7 @@ export default function StudentsScreen() {
         {/* العمود 1: الطالب - أفاتار + اسم */}
         <TouchableOpacity
           style={[styles.colStudent, styles.cellPad]}
+          testID={`student-row-${item.id}`}
           onPress={() => selectionMode ? toggleSelect(item.id) : handleViewDetails(item)}
           onLongPress={() => { if (!selectionMode) { setSelectionMode(true); setSelectedIds(new Set([item.id])); } }}
           activeOpacity={0.7}
@@ -1588,6 +1591,11 @@ export default function StudentsScreen() {
                   <Ionicons name="shuffle" size={14} color="#fff" />
                   <Text style={styles.selActionText}>تغيير الحالة</Text>
                 </TouchableOpacity>
+                {/* 💰 اعتبار المحددين دافعين */}
+                <TouchableOpacity style={[styles.selActionBtn, { backgroundColor: '#1b5e20' }]} testID="bulk-mark-paid-btn" onPress={() => setShowBulkPay(true)}>
+                  <Ionicons name="checkmark-done" size={14} color="#fff" />
+                  <Text style={styles.selActionText}>اعتبارهم دافعين</Text>
+                </TouchableOpacity>
                 {/* 💰 تقرير سدادات المحددين */}
                 <TouchableOpacity style={[styles.selActionBtn, { backgroundColor: '#2e7d32' }]} testID="bulk-payments-report-btn"
                   onPress={() => {
@@ -1651,7 +1659,7 @@ export default function StudentsScreen() {
                 <TouchableOpacity
                   style={styles.selectModeBtn}
                   onPress={() => setSelectionMode(true)}
-                  data-testid="enter-selection-mode-btn"
+                  testID="enter-selection-mode-btn"
                 >
                   <Ionicons name="checkbox-outline" size={14} color="#2962ff" />
                   <Text style={styles.selectModeText}>تحديد</Text>
@@ -2441,6 +2449,13 @@ export default function StudentsScreen() {
         </View>
       </Modal>
       )}
+
+      <BulkPaymentModal
+        visible={showBulkPay}
+        onClose={() => setShowBulkPay(false)}
+        onDone={() => { setSelectedIds(new Set()); fetchData(); }}
+        preselected={students.filter(s => selectedIds.has(s.id)).map(s => ({ id: s.id, full_name: s.full_name, student_id: s.student_id, level: s.level, section: s.section }))}
+      />
 
       {showLevelModal && (
       <Modal visible={showLevelModal} transparent animationType="fade">
