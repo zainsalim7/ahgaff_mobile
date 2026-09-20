@@ -6704,6 +6704,7 @@ async def get_course_enrollments(course_id: str, current_user: dict = Depends(ge
                 "section": student["section"],
                 "enrolled_at": enrollment["enrolled_at"],
                 "cross_department": bool(enrollment.get("cross_department")),
+                "manual": bool(enrollment.get("manual")),
                 "department_name": dep_names.get(student.get("department_id", ""), "") if enrollment.get("cross_department") else "",
             })
     
@@ -6792,8 +6793,8 @@ async def sync_students_enrollments(
         # تسجيلات الفصل النشط فقط (بالحقل أو عبر فصل المقرر)
         active_enr = [e for e in enrs if e.get("semester_id") == active_id or e.get("course_id") in course_map]
         have = {e["course_id"] for e in active_enr}
-        # 🔓 التسجيلات الاستثنائية من قسم آخر (cross_department) محمية من الإزالة
-        stale = [e for e in active_enr if e["course_id"] not in should and not e.get("cross_department")]
+        # 🔓 التسجيلات الاستثنائية (قسم آخر cross_department، أو يدوية manual) محمية من الإزالة
+        stale = [e for e in active_enr if e["course_id"] not in should and not e.get("cross_department") and not e.get("manual")]
         missing = should - have
         if stale:
             await db.enrollments.delete_many({"_id": {"$in": [e["_id"] for e in stale]}})
@@ -6958,7 +6959,8 @@ async def enroll_students(
             "course_id": course_id,
             "student_id": str(student["_id"]),
             "enrolled_at": get_yemen_time(),
-            "enrolled_by": current_user["id"]
+            "enrolled_by": current_user["id"],
+            "manual": True,  # 🔒 تسجيل يدوي صريح — محمي من إزالة المزامنة
         }
         if course.get("semester_id"):
             enrollment["semester_id"] = str(course["semester_id"])
@@ -9724,6 +9726,38 @@ async def change_lecture_room(
     return {"message": f"تم تغيير القاعة من \"{old_room or 'غير محددة'}\" إلى \"{new_room}\" وإشعار المعلم والطلاب"}
 
 
+async def _find_sibling_lectures(lecture: dict) -> list:
+    """🔗 محاضرات الشعب الأخرى لنفس الموعد ضمن مجموعة دمج المقرر (محاضرة مشتركة فعلياً)"""
+    cid = lecture.get("course_id", "")
+    gids = [s["merge_group_id"] for s in await db.weekly_schedule.find(
+        {"course_id": cid, "merge_group_id": {"$nin": [None, ""]}}, {"merge_group_id": 1}).to_list(50)]
+    if not gids:
+        return []
+    partner_cids = {s["course_id"] for s in await db.weekly_schedule.find(
+        {"merge_group_id": {"$in": gids}, "course_id": {"$ne": cid}}, {"course_id": 1}).to_list(200)}
+    if not partner_cids:
+        return []
+    sibs = await db.lectures.find({
+        "course_id": {"$in": list(partner_cids)}, "date": lecture.get("date"), "start_time": lecture.get("start_time"),
+        "status": {"$ne": LectureStatus.COMPLETED},
+    }).to_list(50)
+    out = []
+    for s in sibs:
+        c = await db.courses.find_one({"_id": ObjectId(s["course_id"])}, {"name": 1, "section": 1, "level": 1}) or {}
+        out.append({"id": str(s["_id"]), "course_id": s["course_id"], "course_name": c.get("name", ""),
+                    "section": c.get("section", ""), "level": c.get("level")})
+    return out
+
+
+@api_router.get("/lectures/{lecture_id}/siblings")
+async def get_lecture_siblings(lecture_id: str, current_user: dict = Depends(get_current_user)):
+    """الشعب المشتركة في نفس المحاضرة (لعرض خيار «تطبيق على كل الشعب»)"""
+    lecture = await db.lectures.find_one({"_id": ObjectId(lecture_id)})
+    if not lecture:
+        raise HTTPException(status_code=404, detail="المحاضرة غير موجودة")
+    return {"siblings": await _find_sibling_lectures(lecture)}
+
+
 @api_router.put("/lectures/{lecture_id}/reschedule")
 async def reschedule_lecture(
     lecture_id: str,
@@ -9749,6 +9783,7 @@ async def reschedule_lecture(
     new_start_time = body.get("start_time")
     new_end_time = body.get("end_time")
     new_room = body.get("room")  # اختياري: تغيير القاعة مع إعادة الجدولة
+    apply_to_shared = body.get("apply_to_shared", True)  # 🔗 تطبيق على الشعب المشتركة (افتراضياً نعم)
     
     if not new_date:
         raise HTTPException(status_code=400, detail="يرجى تحديد التاريخ الجديد")
@@ -9821,10 +9856,26 @@ async def reschedule_lecture(
     if new_room and new_room != (lecture.get("room", "") or ""):
         update_data["room"] = new_room
     
+    # 🔗 الشعب المشتركة (تُحدَّد قبل التحديث لأن البحث بالتاريخ/الوقت القديم)
+    siblings = await _find_sibling_lectures(lecture) if apply_to_shared else []
+
     try:
         await db.lectures.update_one({"_id": ObjectId(lecture_id)}, {"$set": update_data})
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="يوجد محاضرة مطابقة لنفس المقرر في نفس التاريخ ووقت البداية — تم رفض إعادة الجدولة (حماية قاعدة البيانات)")
+
+    moved_siblings, failed_siblings = [], []
+    for sib in siblings:
+        try:
+            sib_doc = await db.lectures.find_one({"_id": ObjectId(sib["id"])}, {"original_date": 1})
+            sib_update = dict(update_data)
+            if sib_doc and sib_doc.get("original_date"):
+                sib_update.pop("original_date", None)
+            await db.lectures.update_one({"_id": ObjectId(sib["id"])}, {"$set": sib_update})
+            moved_siblings.append(sib)
+        except DuplicateKeyError:
+            failed_siblings.append(sib)
+    affected_course_ids = [lecture.get("course_id", "")] + [s["course_id"] for s in moved_siblings]
     
     # إرسال إشعار للمعلم والطلاب
     try:
@@ -9843,8 +9894,8 @@ async def reschedule_lecture(
                 if teacher and teacher.get("user_id"):
                     target_user_ids.append(teacher["user_id"])
             
-            # الطلاب
-            enrollments = await db.enrollments.find({"course_id": str(course["_id"])}).to_list(5000)
+            # الطلاب (كل الشعب المشتركة المنقولة)
+            enrollments = await db.enrollments.find({"course_id": {"$in": affected_course_ids}}).to_list(20000)
             student_ids = [e.get("student_id") for e in enrollments if e.get("student_id")]
             if student_ids:
                 students = await db.students.find(
@@ -9882,7 +9933,13 @@ async def reschedule_lecture(
     except Exception as e:
         logger.error(f"خطأ في إرسال إشعار إعادة الجدولة: {e}")
     
-    return {"message": f"تم إعادة جدولة المحاضرة إلى {new_date}"}
+    msg = f"تم إعادة جدولة المحاضرة إلى {new_date}"
+    if moved_siblings:
+        secs = "، ".join(f"شعبة {s['section']}" if s.get("section") else s["course_name"] for s in moved_siblings)
+        msg += f" — وشملت الشعب المشتركة ({len(moved_siblings)}): {secs}"
+    if failed_siblings:
+        msg += f" ⚠️ تعذّر نقل {len(failed_siblings)} شعبة بسبب محاضرة مطابقة موجودة"
+    return {"message": msg, "moved_siblings": len(moved_siblings), "failed_siblings": len(failed_siblings)}
 
 
 

@@ -139,6 +139,8 @@ export default function CourseLecturesScreen() {
   // إعادة جدولة
   const [rescheduleModal, setRescheduleModal] = useState<{lectureId: string; courseName: string; oldDate: string} | null>(null);
   const [rescheduleData, setRescheduleData] = useState({ date: '', start_time: '08:00', end_time: '09:00', room: '' });
+  const [siblings, setSiblings] = useState<any[]>([]);
+  const [applyToShared, setApplyToShared] = useState(true);
   const [rescheduling, setRescheduling] = useState(false);
   // 🏛️ تغيير القاعة فقط
   const [roomChangeModal, setRoomChangeModal] = useState<{lectureId: string; currentRoom: string; date: string; time: string; startTime: string; endTime: string} | null>(null);
@@ -756,6 +758,12 @@ export default function CourseLecturesScreen() {
     }
   };
 
+  useEffect(() => {
+    if (!rescheduleModal) { setSiblings([]); return; }
+    setApplyToShared(true);
+    api.get(`/lectures/${rescheduleModal.lectureId}/siblings`).then((r) => setSiblings(r.data.siblings || [])).catch(() => setSiblings([]));
+  }, [rescheduleModal?.lectureId]);
+
   const handleReschedule = async () => {
     if (!rescheduleModal) return;
     if (!rescheduleData.date) {
@@ -770,7 +778,7 @@ export default function CourseLecturesScreen() {
     }
     setRescheduling(true);
     try {
-      const res = await api.put(`/lectures/${rescheduleModal.lectureId}/reschedule`, rescheduleData);
+      const res = await api.put(`/lectures/${rescheduleModal.lectureId}/reschedule`, { ...rescheduleData, apply_to_shared: siblings.length > 0 ? applyToShared : false });
       showNotification('success', res.data.message || 'تم إعادة الجدولة بنجاح');
       setRescheduleModal(null);
       fetchData(1);
@@ -1630,6 +1638,20 @@ export default function CourseLecturesScreen() {
               <Text style={{ textAlign: 'center', color: '#666', marginBottom: 16 }}>
                 {rescheduleModal.courseName} - {rescheduleModal.oldDate}
               </Text>
+              {siblings.length > 0 && (
+                <TouchableOpacity onPress={() => setApplyToShared(!applyToShared)} testID="reschedule-apply-shared-toggle"
+                  style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 8, backgroundColor: applyToShared ? '#e3f2fd' : '#f5f5f5', borderRadius: 10, padding: 10, marginBottom: 14, borderWidth: 1, borderColor: applyToShared ? '#1565c0' : '#ddd' }}>
+                  <Ionicons name={applyToShared ? 'checkbox' : 'square-outline'} size={22} color="#1565c0" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '800', fontSize: 13, color: '#1a2540', textAlign: 'right' }}>🔗 محاضرة مشتركة — تطبيق على كل الشعب ({siblings.length + 1})</Text>
+                    <Text style={{ fontSize: 11, color: '#607d8b', textAlign: 'right', marginTop: 2 }}>
+                      {applyToShared
+                        ? `سيُنقل الموعد أيضاً لـ: ${siblings.map((x: any) => x.section ? `شعبة ${x.section}` : x.course_name).join('، ')}`
+                        : 'ستُنقل هذه الشعبة فقط وتنفصل عن الشعب الأخرى في هذا اليوم'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
               
               {/* التاريخ الجديد */}
               <Text style={{ fontWeight: '600', marginBottom: 8, color: '#333' }}>التاريخ الجديد:</Text>

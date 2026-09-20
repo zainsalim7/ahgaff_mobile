@@ -289,7 +289,19 @@ export default function ManageEnrollmentsScreen() {
                       <Ionicons name="person" size={18} color="#1565c0" />
                     </View>
                     <View style={{ flex: 1, marginHorizontal: 10 }}>
-                      <Text style={styles.studentName}>{s.full_name}</Text>
+                      <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={styles.studentName}>{s.full_name}</Text>
+                        {(s as any).cross_department && (
+                          <View style={{ backgroundColor: '#fff3e0', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }} testID={`enroll-badge-cross-${s.id}`}>
+                            <Text style={{ fontSize: 10, color: '#e65100', fontWeight: '800' }}>🔓 قسم آخر{(s as any).department_name ? ` — ${(s as any).department_name}` : ''}</Text>
+                          </View>
+                        )}
+                        {(s as any).manual && !(s as any).cross_department && (
+                          <View style={{ backgroundColor: '#e8f5e9', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }} testID={`enroll-badge-manual-${s.id}`}>
+                            <Text style={{ fontSize: 10, color: '#2e7d32', fontWeight: '800' }}>✋ يدوي — محمي من المزامنة</Text>
+                          </View>
+                        )}
+                      </View>
                       {s.reg_number && (
                         <Text style={styles.studentReg}>رقم القيد: {s.reg_number}</Text>
                       )}
