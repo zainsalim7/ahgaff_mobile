@@ -697,6 +697,20 @@ export default function CourseLecturesScreen() {
 
   const handleCancelLecture = async (lectureId: string) => {
     let reason = '';
+    // 🔗 محاضرة مشتركة؟ اسأل عن تطبيق الإلغاء على كل الشعب
+    let applyShared = false;
+    try {
+      const sr = await api.get(`/lectures/${lectureId}/siblings`);
+      const sibs: any[] = sr.data.siblings || [];
+      if (sibs.length > 0) {
+        const names = sibs.map((x: any) => x.section ? `شعبة ${x.section}` : x.course_name).join('، ');
+        const q = `هذه محاضرة مشتركة مع: ${names}\n\nهل تريد إلغاءها لكل الشعب (${sibs.length + 1})؟\n«موافق» = كل الشعب · «إلغاء» = هذه الشعبة فقط`;
+        applyShared = Platform.OS === 'web' ? window.confirm(q) : await new Promise<boolean>((resolve) => Alert.alert('محاضرة مشتركة', q, [
+          { text: 'هذه الشعبة فقط', onPress: () => resolve(false) },
+          { text: 'كل الشعب', onPress: () => resolve(true) },
+        ]));
+      }
+    } catch { /* تجاهل — يُعامل كمحاضرة عادية */ }
     if (Platform.OS === 'web') {
       const r = window.prompt('أدخل سبب إلغاء المحاضرة (سيظهر في التقارير):', '');
       if (r === null) return; // المستخدم ضغط إلغاء
@@ -716,10 +730,10 @@ export default function CourseLecturesScreen() {
       if (!ok) return;
     }
     try {
-      const payload: any = { status: 'cancelled' };
+      const payload: any = { status: 'cancelled', apply_to_shared: applyShared };
       if (reason) payload.cancellation_reason = reason;
-      await lecturesAPI.update(lectureId, payload);
-      showNotification('success', 'تم إلغاء المحاضرة');
+      const cr = await lecturesAPI.update(lectureId, payload);
+      showNotification('success', cr?.data?.message || 'تم إلغاء المحاضرة');
       fetchData(1);
     } catch (error: any) {
       showNotification('error', 'فشل في إلغاء المحاضرة');
@@ -731,7 +745,7 @@ export default function CourseLecturesScreen() {
     if (!roomChangeModal || !newRoom) return;
     setChangingRoom(true);
     try {
-      const res = await api.put(`/lectures/${roomChangeModal.lectureId}/room`, { room: newRoom, force });
+      const res = await api.put(`/lectures/${roomChangeModal.lectureId}/room`, { room: newRoom, force, apply_to_shared: siblings.length > 0 ? applyToShared : false });
       showNotification('success', res.data.message || 'تم تغيير القاعة بنجاح');
       setRoomChangeModal(null);
       fetchData(1);
@@ -759,10 +773,27 @@ export default function CourseLecturesScreen() {
   };
 
   useEffect(() => {
-    if (!rescheduleModal) { setSiblings([]); return; }
+    const lid = rescheduleModal?.lectureId || roomChangeModal?.lectureId;
+    if (!lid) { setSiblings([]); return; }
     setApplyToShared(true);
-    api.get(`/lectures/${rescheduleModal.lectureId}/siblings`).then((r) => setSiblings(r.data.siblings || [])).catch(() => setSiblings([]));
-  }, [rescheduleModal?.lectureId]);
+    api.get(`/lectures/${lid}/siblings`).then((r) => setSiblings(r.data.siblings || [])).catch(() => setSiblings([]));
+  }, [rescheduleModal?.lectureId, roomChangeModal?.lectureId]);
+
+  // 🔗 عنصر مشترك: خانة «تطبيق على كل الشعب»
+  const SharedToggle = ({ verb }: { verb: string }) => siblings.length === 0 ? null : (
+    <TouchableOpacity onPress={() => setApplyToShared(!applyToShared)} testID="apply-shared-toggle"
+      style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 8, backgroundColor: applyToShared ? '#e3f2fd' : '#f5f5f5', borderRadius: 10, padding: 10, marginBottom: 14, borderWidth: 1, borderColor: applyToShared ? '#1565c0' : '#ddd' }}>
+      <Ionicons name={applyToShared ? 'checkbox' : 'square-outline'} size={22} color="#1565c0" />
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontWeight: '800', fontSize: 13, color: '#1a2540', textAlign: 'right' }}>🔗 محاضرة مشتركة — {verb} لكل الشعب ({siblings.length + 1})</Text>
+        <Text style={{ fontSize: 11, color: '#607d8b', textAlign: 'right', marginTop: 2 }}>
+          {applyToShared
+            ? `يشمل أيضاً: ${siblings.map((x: any) => x.section ? `شعبة ${x.section}` : x.course_name).join('، ')}`
+            : 'هذه الشعبة فقط — ستنفصل عن الشعب الأخرى في هذا الموعد'}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
 
   const handleReschedule = async () => {
     if (!rescheduleModal) return;
@@ -1638,20 +1669,7 @@ export default function CourseLecturesScreen() {
               <Text style={{ textAlign: 'center', color: '#666', marginBottom: 16 }}>
                 {rescheduleModal.courseName} - {rescheduleModal.oldDate}
               </Text>
-              {siblings.length > 0 && (
-                <TouchableOpacity onPress={() => setApplyToShared(!applyToShared)} testID="reschedule-apply-shared-toggle"
-                  style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 8, backgroundColor: applyToShared ? '#e3f2fd' : '#f5f5f5', borderRadius: 10, padding: 10, marginBottom: 14, borderWidth: 1, borderColor: applyToShared ? '#1565c0' : '#ddd' }}>
-                  <Ionicons name={applyToShared ? 'checkbox' : 'square-outline'} size={22} color="#1565c0" />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontWeight: '800', fontSize: 13, color: '#1a2540', textAlign: 'right' }}>🔗 محاضرة مشتركة — تطبيق على كل الشعب ({siblings.length + 1})</Text>
-                    <Text style={{ fontSize: 11, color: '#607d8b', textAlign: 'right', marginTop: 2 }}>
-                      {applyToShared
-                        ? `سيُنقل الموعد أيضاً لـ: ${siblings.map((x: any) => x.section ? `شعبة ${x.section}` : x.course_name).join('، ')}`
-                        : 'ستُنقل هذه الشعبة فقط وتنفصل عن الشعب الأخرى في هذا اليوم'}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
+              <SharedToggle verb="تطبيق الموعد الجديد" />
               
               {/* التاريخ الجديد */}
               <Text style={{ fontWeight: '600', marginBottom: 8, color: '#333' }}>التاريخ الجديد:</Text>
@@ -1790,6 +1808,7 @@ export default function CourseLecturesScreen() {
               <Text style={{ textAlign: 'center', color: '#666', marginBottom: 16 }}>
                 {roomChangeModal.date} · {roomChangeModal.time}
               </Text>
+              <SharedToggle verb="تغيير القاعة" />
               <View style={{ backgroundColor: '#f3e5f5', borderRadius: 8, padding: 10, marginBottom: 16 }}>
                 <Text style={{ textAlign: 'center', color: '#6a1b9a', fontWeight: '600' }}>
                   القاعة الحالية: {roomChangeModal.currentRoom || 'غير محددة'}

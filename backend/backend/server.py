@@ -8813,6 +8813,12 @@ async def update_lecture_status(lecture_id: str, request: Request, current_user:
         update_fields["cancelled_by_name"] = ""
 
     await db.lectures.update_one({"_id": ObjectId(lecture_id)}, {"$set": update_fields})
+
+    # 🔗 الشعب المشتركة: إلغاء/إعادة تفعيل يسري عليها (لا يُطبَّق على «منعقدة» لأنها تتعلق بتحضير كل شعبة)
+    apply_to_shared = bool(data.get("apply_to_shared", True)) and new_status != LectureStatus.COMPLETED
+    siblings = await _find_sibling_lectures(lecture) if apply_to_shared else []
+    for sib in siblings:
+        await db.lectures.update_one({"_id": ObjectId(sib["id"])}, {"$set": update_fields})
     
     status_names = {"scheduled": "مجدولة", "completed": "منعقدة", "cancelled": "ملغاة", "absent": "غائب"}
     await log_activity(
@@ -8821,9 +8827,13 @@ async def update_lecture_status(lecture_id: str, request: Request, current_user:
             "old_status": lecture.get("status", ""),
             "new_status": new_status,
             "cancellation_reason": cancellation_reason or None,
+            "shared_sections": len(siblings) or None,
         },
     )
-    return {"message": f"تم تغيير حالة المحاضرة إلى: {status_names.get(new_status, new_status)}"}
+    msg = f"تم تغيير حالة المحاضرة إلى: {status_names.get(new_status, new_status)}"
+    if siblings:
+        msg += f" — وشملت الشعب المشتركة ({len(siblings)}): " + "، ".join(f"شعبة {s['section']}" if s.get("section") else s["course_name"] for s in siblings)
+    return {"message": msg, "moved_siblings": len(siblings)}
 
 @api_router.post("/lectures/generate")
 async def generate_semester_lectures(
@@ -9229,7 +9239,7 @@ async def update_lecture(
     if not lecture:
         raise HTTPException(status_code=404, detail="المحاضرة غير موجودة")
     
-    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    update_data = {k: v for k, v in data.dict().items() if v is not None and k != "apply_to_shared"}
     
     # التحقق من أن وقت النهاية بعد وقت البداية
     new_start = update_data.get("start_time", lecture.get("start_time", ""))
@@ -9308,8 +9318,20 @@ async def update_lecture(
             )
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail="يوجد محاضرة مطابقة لنفس المقرر في نفس التاريخ ووقت البداية — تم رفض التعديل (حماية قاعدة البيانات)")
+
+    # 🔗 إلغاء/إعادة تفعيل محاضرة مشتركة يسري على الشعب الأخرى (فقط حقول الحالة والسبب)
+    siblings = []
+    if new_status in (LectureStatus.CANCELLED, LectureStatus.ABSENT, LectureStatus.SCHEDULED) and data.apply_to_shared is not False:
+        _shared_set = {k: v for k, v in update_data.items() if k in ("status", "cancellation_reason", "cancelled_at", "cancelled_by", "cancelled_by_name")}
+        if _shared_set:
+            siblings = await _find_sibling_lectures(lecture)
+            for sib in siblings:
+                await db.lectures.update_one({"_id": ObjectId(sib["id"])}, {"$set": _shared_set})
     
-    return {"message": "تم تحديث المحاضرة بنجاح"}
+    _msg = "تم تحديث المحاضرة بنجاح"
+    if siblings:
+        _msg += f" — وشمل التغيير الشعب المشتركة ({len(siblings)}): " + "، ".join(f"شعبة {x['section']}" if x.get("section") else x["course_name"] for x in siblings)
+    return {"message": _msg, "moved_siblings": len(siblings)}
 
 @api_router.delete("/lectures/{lecture_id}")
 async def delete_lecture(
@@ -9639,6 +9661,7 @@ async def change_lecture_room(
     body = await request.json()
     new_room = (body.get("room") or "").strip()
     force = bool(body.get("force"))
+    apply_to_shared = bool(body.get("apply_to_shared", True))
     if not new_room:
         raise HTTPException(status_code=400, detail="يرجى اختيار القاعة الجديدة")
 
@@ -9658,17 +9681,21 @@ async def change_lecture_room(
         elif room_conflict["type"] == "warning" and not force:
             raise HTTPException(status_code=409, detail=room_conflict["message"])
 
-    await db.lectures.update_one(
-        {"_id": ObjectId(lecture_id)},
-        {"$set": {
-            "room": new_room,
-            "previous_room": old_room,
-            "room_changed_at": get_yemen_time(),
-            "room_changed_by_name": current_user.get("full_name", ""),
-        }}
-    )
+    _room_set = {
+        "room": new_room,
+        "previous_room": old_room,
+        "room_changed_at": get_yemen_time(),
+        "room_changed_by_name": current_user.get("full_name", ""),
+    }
+    await db.lectures.update_one({"_id": ObjectId(lecture_id)}, {"$set": _room_set})
 
-    # إشعار المعلم وطلاب المقرر
+    # 🔗 الشعب المشتركة تنتقل لنفس القاعة (هي المحاضرة الفيزيائية نفسها)
+    siblings = await _find_sibling_lectures(lecture) if apply_to_shared else []
+    for sib in siblings:
+        await db.lectures.update_one({"_id": ObjectId(sib["id"])}, {"$set": _room_set})
+    affected_course_ids = [lecture.get("course_id", "")] + [s["course_id"] for s in siblings]
+
+    # إشعار المعلم وطلاب المقرر (كل الشعب المشتركة)
     try:
         course = await db.courses.find_one({"_id": ObjectId(lecture.get("course_id", ""))})
         if course:
@@ -9684,12 +9711,12 @@ async def change_lecture_room(
                 teacher = await db.teachers.find_one({"_id": ObjectId(teacher_id)})
                 if teacher and teacher.get("user_id"):
                     target_user_ids.append(teacher["user_id"])
-            enrollments = await db.enrollments.find({"course_id": str(course["_id"])}).to_list(5000)
+            enrollments = await db.enrollments.find({"course_id": {"$in": affected_course_ids}}).to_list(20000)
             student_ids = [e.get("student_id") for e in enrollments if e.get("student_id")]
             if student_ids:
                 students = await db.students.find(
                     {"_id": {"$in": [ObjectId(sid) for sid in student_ids]}}
-                ).to_list(5000)
+                ).to_list(20000)
                 for s in students:
                     if s.get("user_id"):
                         target_user_ids.append(s["user_id"])
@@ -9723,7 +9750,10 @@ async def change_lecture_room(
         current_user, "change_lecture_room", "lecture", lecture_id, None,
         {"old_room": old_room, "new_room": new_room, "date": lecture.get("date", "")},
     )
-    return {"message": f"تم تغيير القاعة من \"{old_room or 'غير محددة'}\" إلى \"{new_room}\" وإشعار المعلم والطلاب"}
+    _msg = f"تم تغيير القاعة من \"{old_room or 'غير محددة'}\" إلى \"{new_room}\" وإشعار المعلم والطلاب"
+    if siblings:
+        _msg += f" — وشملت الشعب المشتركة ({len(siblings)}): " + "، ".join(f"شعبة {x['section']}" if x.get("section") else x["course_name"] for x in siblings)
+    return {"message": _msg, "moved_siblings": len(siblings)}
 
 
 async def _find_sibling_lectures(lecture: dict) -> list:
