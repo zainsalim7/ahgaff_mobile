@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { exportName, filenameFromResponse } from '../src/utils/exportName';
 import { BulkPaymentModal } from '../src/components/BulkPaymentModal';
+import { ZoomableImageModal } from '../src/components/ZoomableImageModal';
 import { View, Text, TouchableOpacity, Image, Modal, TextInput, Platform, Alert, ScrollView } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +25,7 @@ export default function FeeReceiptsScreen() {
   // ✍️ تسجيل دفع يدوي
   const [showManual, setShowManual] = useState(false);
   const [showBulkPay, setShowBulkPay] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
   const [mSearch, setMSearch] = useState('');
   const [mResults, setMResults] = useState<any[]>([]);
   const [mStudent, setMStudent] = useState<any>(null);
@@ -352,8 +354,19 @@ export default function FeeReceiptsScreen() {
                   {selected?.student_number} | {selected?.department_name} | رفع: {selected?.uploaded_at?.slice(0, 16).replace('T', ' ')}
                 </Text>
                 {image ? (
-                  <Image source={{ uri: image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}` }}
-                    style={{ width: '100%', height: 420, borderRadius: 8, marginTop: 10 }} resizeMode="contain" testID="fee-receipt-image" />
+                  <View style={{ marginTop: 10 }}>
+                    <TouchableOpacity onPress={() => setZoomOpen(true)} activeOpacity={0.85} testID="fee-receipt-image-btn">
+                      <Image source={{ uri: image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}` }}
+                        style={{ width: '100%', height: 420, borderRadius: 8 }} resizeMode="contain" testID="fee-receipt-image" />
+                      <View style={{ position: 'absolute', bottom: 8, left: 8, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 16, paddingVertical: 4, paddingHorizontal: 10, flexDirection: 'row-reverse', alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="search" size={13} color="#fff" />
+                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>اضغط للتكبير</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <ZoomableImageModal visible={zoomOpen} onClose={() => setZoomOpen(false)}
+                      uri={image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`}
+                      title={`${selected?.student_name || ''} — ${selected?.type_name || ''}${selected?.receipt_no ? ` — سند ${selected.receipt_no}` : ''}`} />
+                  </View>
                 ) : <Text style={{ textAlign: 'center', color: '#999', marginVertical: 30 }}>جارٍ تحميل الصورة...</Text>}
                 {selected?.notes ? <Text style={{ textAlign: 'right', fontSize: 12, marginTop: 6 }}>ملاحظة الطالب: {selected.notes}</Text> : null}
                 {selected?.status === 'pending' && (
