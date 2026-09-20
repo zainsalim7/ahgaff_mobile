@@ -201,6 +201,7 @@ export default function StudentDetailsScreen() {
   const [statementBody, setStatementBody] = useState('');
   const [statementGpa, setStatementGpa] = useState('');
   const [statementGrade, setStatementGrade] = useState('');
+  const [statementTerm, setStatementTerm] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // 🆕 Notifications (إشعارات/إنذارات الطالب)
@@ -2447,6 +2448,18 @@ export default function StudentDetailsScreen() {
                           placeholder="مثال: جيد جداً"
                           style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13 }}
                           testID="statement-grade-input"
+                        />
+                      </View>
+                    )}
+                    {statementBody.includes('{الفصل}') && (
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#1a2540', textAlign: 'right', marginBottom: 4 }}>الفصل الدراسي</Text>
+                        <TextInput
+                          value={statementTerm}
+                          onChangeText={setStatementTerm}
+                          placeholder="مثال: الفصل الأول 2025-2026"
+                          style={{ borderWidth: 1, borderColor: '#dde3ec', borderRadius: 8, padding: 10, textAlign: 'right', fontSize: 13 }}
+                          testID="statement-term-input"
                         />
                       </View>
                     )}

@@ -7,9 +7,11 @@ export const ZoomableImageModal = ({ uri, visible, onClose, title }: { uri: stri
   const { width, height } = useWindowDimensions();
   const [scale, setScale] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [rotation, setRotation] = useState(0);
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const clamp = (v: number) => Math.min(6, Math.max(1, v));
-  const reset = () => { setScale(1); setPos({ x: 0, y: 0 }); };
+  const reset = () => { setScale(1); setPos({ x: 0, y: 0 }); setRotation(0); };
+  const rotate = () => setRotation((r) => (r + 90) % 360);
   const zoom = (delta: number) => setScale((s) => { const n = clamp(+(s + delta).toFixed(2)); if (n === 1) setPos({ x: 0, y: 0 }); return n; });
 
   const webHandlers = Platform.OS === 'web' ? {
@@ -31,6 +33,7 @@ export const ZoomableImageModal = ({ uri, visible, onClose, title }: { uri: stri
             <TouchableOpacity onPress={() => zoom(0.5)} style={btn} testID="zoom-in-btn"><Ionicons name="add" size={20} color="#fff" /></TouchableOpacity>
             <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12, minWidth: 44, textAlign: 'center' }} testID="zoom-level">{Math.round(scale * 100)}%</Text>
             <TouchableOpacity onPress={() => zoom(-0.5)} style={btn} testID="zoom-out-btn"><Ionicons name="remove" size={20} color="#fff" /></TouchableOpacity>
+            <TouchableOpacity onPress={rotate} style={btn} testID="zoom-rotate-btn"><Ionicons name="refresh" size={18} color="#fff" /></TouchableOpacity>
             <TouchableOpacity onPress={reset} style={btn} testID="zoom-reset-btn"><Ionicons name="contract-outline" size={18} color="#fff" /></TouchableOpacity>
             <TouchableOpacity onPress={onClose} style={[btn, { backgroundColor: '#c62828' }]} testID="zoom-close-btn"><Ionicons name="close" size={20} color="#fff" /></TouchableOpacity>
           </View>
@@ -38,15 +41,15 @@ export const ZoomableImageModal = ({ uri, visible, onClose, title }: { uri: stri
         {Platform.OS === 'web' ? (
           <View style={{ flex: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', cursor: scale > 1 ? 'grab' : 'zoom-in' } as any} {...(webHandlers as any)} testID="zoom-stage">
             <Image source={{ uri }} resizeMode="contain"
-              style={{ width: imgW, height: imgH, transform: [{ translateX: pos.x }, { translateY: pos.y }, { scale }] } as any} />
+              style={{ width: imgW, height: imgH, transform: [{ translateX: pos.x }, { translateY: pos.y }, { scale }, { rotate: `${rotation}deg` }] } as any} testID="zoom-image" />
           </View>
         ) : (
           <ScrollView maximumZoomScale={6} minimumZoomScale={1} bouncesZoom centerContent contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Image source={{ uri }} resizeMode="contain" style={{ width: imgW, height: imgH }} />
+            <Image source={{ uri }} resizeMode="contain" style={{ width: imgW, height: imgH, transform: [{ rotate: `${rotation}deg` }] }} />
           </ScrollView>
         )}
         <Text style={{ color: '#9e9e9e', fontSize: 11, textAlign: 'center', paddingBottom: 14 }}>
-          {Platform.OS === 'web' ? 'عجلة الماوس للتكبير · اسحب للتحريك · نقرة مزدوجة للتبديل' : 'قرّب بإصبعين للتكبير'}
+          {Platform.OS === 'web' ? 'عجلة الماوس للتكبير · اسحب للتحريك · نقرة مزدوجة للتبديل · ↻ تدوير 90°' : 'قرّب بإصبعين للتكبير · ↻ تدوير 90°'}
         </Text>
       </View>
     </Modal>
