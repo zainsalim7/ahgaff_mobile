@@ -1,0 +1,38 @@
+{
+  "summary": "Tested Management Dashboard (لوحة القيادة) feature end-to-end. Backend: 14/14 pytest tests passing covering admin dashboard structure, period switching (day/week/month + invalid fallback), RBAC for admin/dean/dept-head/teacher, manual scope filter with cross-scope 403s, and PDF/Excel exports. Frontend: verified admin dashboard renders with correct KPIs (students=91, rate=87.7%), scope label 'كل الجامعة', 5 alerts with expected counts (low_attendance=2, missed_today=1, late_teachers=1, cancelled=5, pending_fees=1), scope filter (faculty+dept pills), period switching, alert expansion, faculty pill filter (updates to students=19 for كلية الشريعة والقانون), and PDF/Excel downloads with proper Arabic filenames ('لوحة القيادة - كل الجامعة - آخر 7 أيام - ...pdf/xlsx'). RBAC verified for Salim (dean, filter shows only 3 dept pills + all, no faculty pills), Saeed (dept head, no scope filter, 72 students, correct scope 'الدراسات الإسلامية'), and teacher 9999 (no management-dashboard rendered). No console pageerrors on dashboard.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/dashboard/management?faculty_id=...", "issue": "scope.label has trailing whitespace when manual filter applied (e.g. 'كلية الشريعة والقانون ' with trailing space) — inconsistent with the initial label which is .strip()'ed. In _resolve_scope, the label assignments inside the faculty_id/department_id branches use raw name without .strip(). Frontend still renders correctly but exact-match consumers/tests break."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ManagementDashboard", "issues": ["Non-blocking React Native Web deprecation warnings in console (shadow* style props, props.pointerEvents, onResponder* handlers, TouchableMixin). No functional impact but noisy."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_management_dashboard.py",
+    "/app/test_reports/pytest/dashboard_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Strip whitespace from scope.label in _resolve_scope for faculty_id/department_id branches (management_dashboard.py L65, L71) for consistency."
+  ],
+  "critical_code_review_comments": [
+    "management_dashboard.py is 528 lines — approaching the 700-line limit; consider splitting _build_pdf/_build_excel/_finance into separate modules for maintainability.",
+    "Label stripping inconsistency between admin/default branch (uses .strip()) and manual filter branches (no strip) → data hygiene bug.",
+    "_scope_courses limits to 20000 and lectures.to_list(50000) — hardcoded caps; document expected scale or use aggregation cursors for future-proofing."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_management_dashboard.py (new pytest suite)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin/admin123, Salim/test1234, Saeed/test1234, 9999/teacher123 (all from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Used existing _dash_fixture:true seeded data as instructed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend & frontend for Management Dashboard verified against all requirements in the review. Only cosmetic minor: trailing-space in scope.label under manual filter. Frontend RN-Web deprecation warnings are pre-existing, not feature-related. Reusable pytest at /app/backend/tests/test_management_dashboard.py.",
+  "rca of the issue": "Trailing whitespace bug — In _resolve_scope, initial label uses `.strip()` (lines 58-60) but faculty_id branch (`label = next((f['name']...))`) and department_id branch (`label = sel[0]['name']`) do not strip. Since department documents were seeded with trailing spaces in name, the manual-filter label carries them through. Fix: wrap both assignments in `.strip()`."
+}

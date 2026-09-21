@@ -62,13 +62,13 @@ async def _resolve_scope(db, user: dict, faculty_id: Optional[str], department_i
         if faculty_id not in fac_ids:
             raise HTTPException(status_code=403, detail="هذه الكلية خارج نطاق صلاحيتك")
         selected = [d for d in allowed if d["faculty_id"] == faculty_id]
-        label = next((f["name"] for f in faculties if f["id"] == faculty_id), label)
+        label = next((f["name"].strip() for f in faculties if f["id"] == faculty_id), label)
     if department_id:
         sel = [d for d in selected if d["id"] == department_id]
         if not sel:
             raise HTTPException(status_code=403, detail="هذا القسم خارج نطاق صلاحيتك")
         selected = sel
-        label = sel[0]["name"]
+        label = sel[0]["name"].strip()
     dept_ids = None if (is_admin and not faculty_id and not department_id) else [d["id"] for d in selected]
     return {"is_admin": is_admin, "faculties": faculties, "departments": allowed, "selected": selected,
             "dept_ids": dept_ids, "faculty_ids": fac_ids, "label": label,

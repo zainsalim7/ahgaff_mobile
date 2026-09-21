@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { reportsAPI, departmentsAPI } from '../src/services/api';
 import { useAuth } from '../src/contexts/AuthContext';
@@ -262,7 +262,7 @@ export default function AttendanceOverviewReport() {
         {!isTeacher && !hasRun && !executing && (
           <View style={{ backgroundColor: '#fff', borderRadius: 12, padding: 32, alignItems: 'center', marginBottom: 12 }}>
             <Ionicons name="information-circle-outline" size={48} color="#90a4ae" />
-            <Text style={{ marginTop: 10, fontSize: 15, fontWeight: '600', color: '#455a64', textAlign: 'center' }}>اختر الفلاتر ثم اضغط "تنفيذ التقرير"</Text>
+            <Text style={{ marginTop: 10, fontSize: 15, fontWeight: '600', color: '#455a64', textAlign: 'center' }}>اختر الفلاتر ثم اضغط &quot;تنفيذ التقرير&quot;</Text>
             <Text style={{ marginTop: 6, fontSize: 12, color: '#90a4ae', textAlign: 'center' }}>سيعرض التقرير نظرة شاملة على حضور جميع المقررات</Text>
           </View>
         )}
@@ -560,8 +560,5 @@ const styles = StyleSheet.create({
   },
   progressLow: {
     backgroundColor: '#f44336',
-  },
-  exportBtn: {
-    padding: 4,
   },
 });
