@@ -306,8 +306,11 @@ async def build_dashboard(db, user: dict, period: str, faculty_id: Optional[str]
         alerts.append({"key": "pending_fees", "level": "warning" if pend else "ok", "count": pend,
                        "title": "سندات مالية بانتظار التعميد", "hint": finance["academic_year"] or "", "items": [], "route": "/fee-receipts"})
 
+    phase2 = await _phase2(db, scope, dept_ids, lectures, today_lectures, course_map, active_courses, att_by_lecture, att_by_student, stu_q, period)
+
     return {
         "generated_at": now.strftime("%Y-%m-%d %H:%M"),
+        **phase2,
         "period": period, "period_label": PERIOD_LABELS[period], "date_from": s_from, "date_to": s_to,
         "scope": {"label": scope["label"], "is_admin": scope["is_admin"], "can_filter": scope["can_filter"],
                   "read_only": user.get("role") in READ_ONLY_ROLES,
@@ -327,6 +330,164 @@ async def build_dashboard(db, user: dict, period: str, faculty_id: Optional[str]
         "finance": finance,
         "activity": activity,
     }
+
+
+STATUS_LABELS = {"active": "نشط", "suspended": "مجمّد", "frozen": "مجمّد", "repeat": "إعادة", "repeater": "إعادة",
+                 "dismissed": "مفصول", "expelled": "مفصول", "graduated": "خريج", "withdrawn": "منسحب", "transferred": "منقول"}
+
+
+def _delay_minutes(l: dict):
+    try:
+        start = datetime.strptime(f"{l['date']}T{l['start_time']}", "%Y-%m-%dT%H:%M")
+        st = l.get("attendance_started_at")
+        st = datetime.fromisoformat(st) if isinstance(st, str) else st
+        if st is None:
+            return None
+        if st.tzinfo is not None:
+            st = st.astimezone(YEMEN_TZ).replace(tzinfo=None)
+        if st.date() != start.date():
+            return None
+        return max(0, int((st - start).total_seconds() // 60))
+    except Exception:
+        return None
+
+
+def _lec_minutes(l: dict) -> int:
+    try:
+        a = datetime.strptime(l["start_time"], "%H:%M"); b = datetime.strptime(l["end_time"], "%H:%M")
+        m = int((b - a).total_seconds() // 60)
+        return m if 0 < m < 600 else 90
+    except Exception:
+        return 90
+
+
+async def _phase2(db, scope, dept_ids, lectures, today_lectures, course_map, active_courses, att_by_lecture, att_by_student, stu_q, period) -> dict:
+    """المرحلة 2: إحصائيات الأساتذة + الطلاب + القاعات/الجدول"""
+    dnames = {d["id"]: d["name"].strip() for d in scope["departments"]}
+    if dept_ids is None:
+        dnames = {str(d["_id"]): (d.get("name") or "").strip() for d in await db.departments.find({}, {"name": 1}).to_list(500)}
+
+    # ── 5) الأساتذة
+    tstats = {}
+    for l in lectures:
+        c = course_map.get(l["course_id"], {})
+        tid = l.get("teacher_id") or c.get("teacher_id")
+        if not tid:
+            continue
+        e = tstats.setdefault(tid, {"teacher_id": tid, "scheduled": 0, "completed": 0, "cancelled": 0, "absent": 0, "upcoming": 0, "delays": [], "minutes": 0, "courses": set()})
+        e["courses"].add(l["course_id"])
+        st = l.get("status", "scheduled")
+        e["scheduled"] += 1
+        if st == "completed":
+            e["completed"] += 1; e["minutes"] += _lec_minutes(l)
+            d = _delay_minutes(l)
+            if d is not None:
+                e["delays"].append(d)
+        elif st == "cancelled":
+            e["cancelled"] += 1
+        elif st == "absent":
+            e["absent"] += 1
+        else:
+            e["upcoming"] += 1
+    tnames = await _teacher_names(db, list(tstats.keys()))
+    teachers_list = []
+    for tid, e in tstats.items():
+        due = e["completed"] + e["cancelled"] + e["absent"]
+        teachers_list.append({
+            "teacher_id": tid, "name": tnames.get(tid, "غير معروف"), "courses": len(e["courses"]),
+            "scheduled": e["scheduled"], "completed": e["completed"], "cancelled": e["cancelled"], "absent": e["absent"], "upcoming": e["upcoming"],
+            "commitment": round(e["completed"] * 100 / due, 1) if due else None,
+            "avg_delay": round(sum(e["delays"]) / len(e["delays"]), 1) if e["delays"] else 0,
+            "late_count": sum(1 for d in e["delays"] if d >= LATE_TEACHER_MINUTES),
+            "hours": round(e["minutes"] / 60, 1),
+        })
+    teachers_list.sort(key=lambda x: (-(x["commitment"] or 0), -x["completed"]))
+    with_due = [t for t in teachers_list if t["commitment"] is not None]
+    teachers = {
+        "count": len(teachers_list), "total_hours": round(sum(t["hours"] for t in teachers_list), 1),
+        "avg_commitment": round(sum(t["commitment"] for t in with_due) / len(with_due), 1) if with_due else None,
+        "avg_delay": round(sum(t["avg_delay"] * max(t["completed"], 1) for t in teachers_list) / max(sum(max(t["completed"], 1) for t in teachers_list), 1), 1) if teachers_list else 0,
+        "top": with_due[:5], "bottom": sorted(with_due, key=lambda x: (x["commitment"], -x["absent"]))[:5],
+        "rows": teachers_list[:50],
+    }
+
+    # ── 7) الطلاب
+    by_dept, by_level, by_status = {}, {}, {}
+    base_q = dict(stu_q); base_q.pop("status", None); base_q.pop("is_active", None); base_q.pop("is_alumni", None)
+    async for r in db.students.aggregate([{"$match": base_q}, {"$group": {"_id": {"d": "$department_id", "l": "$level", "s": "$status", "a": "$is_active", "al": "$is_alumni"}, "n": {"$sum": 1}}}]):
+        k, n = r["_id"], r["n"]
+        st = k.get("s") or ("graduated" if k.get("al") else ("active" if k.get("a", True) else "inactive"))
+        by_status[st] = by_status.get(st, 0) + n
+        if st == "active" and k.get("a", True) is not False:
+            by_dept[k.get("d")] = by_dept.get(k.get("d"), 0) + n
+            by_level[str(k.get("l") or "?")] = by_level.get(str(k.get("l") or "?"), 0) + n
+    dept_att = {}
+    for l in lectures:
+        if l.get("status") != "completed":
+            continue
+        dep = course_map.get(l["course_id"], {}).get("department_id")
+        a = att_by_lecture.get(str(l["_id"]), {})
+        b = dept_att.setdefault(dep, {"present": 0, "late": 0, "absent": 0})
+        b["present"] += a.get("present", 0); b["late"] += a.get("late", 0); b["absent"] += a.get("absent", 0)
+    dist = []
+    for dep, n in sorted(by_dept.items(), key=lambda x: -x[1]):
+        a = dept_att.get(dep, {"present": 0, "late": 0, "absent": 0})
+        dist.append({"department_id": dep, "name": dnames.get(dep, "غير محدد"), "students": n, "rate": _rate(a["present"], a["late"], a["absent"])})
+    warn = depr = 0
+    for m in att_by_student.values():
+        p, la, ab = m.get("present", 0), m.get("late", 0), m.get("absent", 0)
+        tot = p + la + ab
+        if tot >= LOW_ATTENDANCE_MIN_LECTURES:
+            pct_abs = ab * 100 / tot
+            if pct_abs > 40:
+                depr += 1
+            elif pct_abs > 25:
+                warn += 1
+    students = {
+        "by_department": dist[:15],
+        "by_level": [{"level": k, "students": v} for k, v in sorted(by_level.items(), key=lambda x: x[0])],
+        "by_status": [{"status": k, "label": STATUS_LABELS.get(k, k), "count": v} for k, v in sorted(by_status.items(), key=lambda x: -x[1])],
+        "warned": warn, "deprived": depr, "evaluated": sum(1 for m in att_by_student.values() if sum(m.values()) >= LOW_ATTENDANCE_MIN_LECTURES),
+    }
+
+    # ── 8) القاعات والجدول
+    settings = await db.schedule_settings.find_one({"_id": "global"}) or {}
+    n_days = len(settings.get("working_days") or []) or 6
+    n_slots = len(settings.get("time_slots") or []) or 5
+    capacity = n_days * n_slots
+    slot_q = {} if dept_ids is None else {"department_id": {"$in": dept_ids}}
+    slots = await db.weekly_schedule.find(slot_q, {"room_id": 1, "room": 1, "day": 1, "slot_number": 1, "course_id": 1, "merge_group_id": 1}).to_list(50000)
+    room_docs = {str(r["_id"]): r.get("name") or r.get("room_number") or "" for r in await db.rooms.find({}, {"name": 1, "room_number": 1}).to_list(2000)}
+    room_use, seen = {}, set()
+    scheduled_course_ids = set()
+    for sl in slots:
+        scheduled_course_ids.add(sl.get("course_id"))
+        key = (sl.get("room_id") or sl.get("room"), sl.get("day"), str(sl.get("slot_number")), sl.get("merge_group_id") or str(sl["_id"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        rid = sl.get("room_id") or sl.get("room")
+        if not rid:
+            continue
+        room_use[rid] = room_use.get(rid, 0) + 1
+    rooms_list = sorted([{"room": room_docs.get(rid, str(rid)), "slots": n, "occupancy": round(min(n, capacity) * 100 / capacity, 1)} for rid, n in room_use.items()], key=lambda x: -x["slots"])
+    unscheduled = [{"id": str(c["_id"]), "name": c.get("name", ""), "code": c.get("code", ""), "department": dnames.get(c.get("department_id"), "")}
+                   for c in active_courses if str(c["_id"]) not in scheduled_course_ids]
+    heat = {}
+    for l in today_lectures:
+        k = l.get("start_time", "—")
+        h = heat.setdefault(k, {"time": k, "total": 0, "completed": 0, "cancelled": 0, "scheduled": 0})
+        h["total"] += 1
+        st = l.get("status", "scheduled")
+        h["completed" if st == "completed" else "cancelled" if st in ("cancelled", "absent") else "scheduled"] += 1
+    rooms = {
+        "capacity_per_room": capacity, "rooms_used": len(rooms_list), "total_slots": len(seen),
+        "avg_occupancy": round(sum(r["occupancy"] for r in rooms_list) / len(rooms_list), 1) if rooms_list else 0,
+        "most_used": rooms_list[:5], "least_used": sorted(rooms_list, key=lambda x: x["slots"])[:5], "rows": rooms_list[:40],
+        "unscheduled_courses": unscheduled[:30], "unscheduled_count": len(unscheduled),
+        "today_heatmap": sorted(heat.values(), key=lambda x: x["time"]),
+    }
+    return {"teachers": teachers, "students": students, "rooms": rooms}
 
 
 async def _finance(db, dept_ids, active_sem, total_students) -> dict:
@@ -404,6 +565,24 @@ def _numbers_rows(d: dict):
             ["حاضر", n["present"]], ["متأخر", n["late"]], ["غائب", n["absent"]], ["نسبة الحضور", rate]]
 
 
+def _phase2_tables(d: dict):
+    """جداول المرحلة 2 (الأساتذة/الطلاب/القاعات) للتصدير — (عنوان، صفوف برأس)"""
+    out = []
+    t, st, r = d.get("teachers"), d.get("students"), d.get("rooms")
+    if t:
+        out.append(("الأساتذة", [["الأستاذ", "مقررات", "مجدولة", "منفَّذة", "ملغاة", "غياب", "مرات التأخر", "متوسط التأخير (د)", "ساعات", "الالتزام %"]] +
+                    [[x["name"], x["courses"], x["scheduled"], x["completed"], x["cancelled"], x["absent"], x["late_count"], x["avg_delay"], x["hours"], x["commitment"] if x["commitment"] is not None else "—"] for x in t["rows"]]))
+    if st:
+        out.append(("الطلاب حسب القسم", [["القسم", "الطلاب النشطون", "نسبة الحضور %"]] + [[x["name"], x["students"], x["rate"] if x["rate"] is not None else "—"] for x in st["by_department"]]))
+        out.append(("حالات الطلاب", [["الحالة", "العدد"]] + [[x["label"], x["count"]] for x in st["by_status"]] +
+                    [["إنذار (غياب >25%)", st["warned"]], ["حرمان (غياب >40%)", st["deprived"]]]))
+    if r:
+        out.append(("إشغال القاعات", [["القاعة", "الخانات الأسبوعية", "الإشغال %"]] + [[x["room"], x["slots"], x["occupancy"]] for x in r["rows"]]))
+        if r["unscheduled_courses"]:
+            out.append(("مقررات غير مدرجة", [["المقرر", "الرمز", "القسم"]] + [[x["name"], x["code"], x["department"]] for x in r["unscheduled_courses"]]))
+    return out
+
+
 def _build_excel(d: dict) -> io.BytesIO:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -442,6 +621,8 @@ def _build_excel(d: dict) -> io.BytesIO:
     if d["finance"]:
         sheet("المالية", [["نوع الرسوم", "معتمد", "معلق", "مرفوض", "طلاب دافعون", "غير دافعين", "نسبة الدفع %", "المبالغ المعتمدة"]] +
               [[t["name"] + (" (متكرر)" if t["recurring"] else ""), t["approved"], t["pending"], t["rejected"], t["paid_students"], t["not_paid"], t["paid_pct"], t["amount"]] for t in d["finance"]["types"]])
+    for title, rows in _phase2_tables(d):
+        sheet(title, rows)
     sheet("سجل النشاط", [["الوقت", "المستخدم", "الدور", "الإجراء", "العنصر"]] + [[a["time"], a["username"], a["role"], a["action"], a["entity"]] for a in d["activity"]])
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf
@@ -518,6 +699,10 @@ def _build_pdf(d: dict) -> io.BytesIO:
                grid([["نوع الرسوم", "معتمد", "معلق", "مرفوض", "دافعون", "غير دافعين", "نسبة الدفع", "المبالغ المعتمدة"]] +
                     [[t["name"] + (" (متكرر)" if t["recurring"] else ""), t["approved"], t["pending"], t["rejected"], t["paid_students"], t["not_paid"], f"{t['paid_pct']}%", f"{t['amount']:,.0f}"] for t in d["finance"]["types"]],
                     [60 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm, 25 * mm, 25 * mm, 32 * mm], head_bg="#2e7d32")]
+    for title, rows in _phase2_tables(d):
+        if len(rows) > 1:
+            n = len(rows[0]); w = (270 * mm) / n
+            el += [Paragraph(ar(title), sec), grid(rows, [w] * n, head_bg="#00695c", fs=8)]
     if d["activity"]:
         el += [Paragraph(ar("آخر الأنشطة"), sec),
                grid([["الوقت", "المستخدم", "الإجراء", "العنصر"]] + [[a["time"], a["username"], a["action"], a["entity"][:40]] for a in d["activity"]],
