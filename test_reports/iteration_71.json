@@ -1,0 +1,22 @@
+{
+  "summary": "Tested new university_president read-only role. Backend: 35/35 pytest tests passed covering login payload/permissions, 10 read endpoints, dashboard scope (كل الجامعة, students=91, finance ok), PDF/Excel export with X-Filename, all 7 write endpoints blocked with exact Arabic 403 message, admin never gets read-only 403, guard whitelist (notifications read-all, change-password wrong pwd -> 400, renewal-status, record-view), admin sanity, dean scope (كلية الشريعة والقانون, 19), teacher dashboard 403. Frontend (1920x800): president lands on / with dash-readonly-badge=اطلاع فقط, dash-scope-label=كل الجامعة, PDF export button visible; /students loads (91) no add btn; /manage-teachers no add btn; /fee-receipts hides fee-manual-btn, fee-bulk-pay-btn, fee-select-mode-btn, fee-types-btn and 'تذكير غير الدافعين'; /courses no add btn; /reports loads. Admin regression: no readonly badge, /students has add btn, /manage-teachers has add btn, fee-manual-btn present. Admin manage-users create form: selecting 'رئيس الجامعة' chip shows president-readonly-note with correct Arabic hint, and no faculty/'مستوى الصلاحية' selector rendered.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_president_readonly.py",
+    "/app/test_reports/pytest/president_readonly.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Non-blocking: React Native Web console prints 'Unexpected text node' warnings on some screens; not caused by this feature but worth cleaning up.",
+    "Teacher row menu (⋮) could not be located via generic selectors during automation; consider adding data-testid like teacher-row-menu-<id> and teacher-menu-edit/delete/view-courses to make hidden/shown state verifiable in tests (functional behavior already validated by add-btn presence and by product spec)."
+  ],
+  "updated_files": ["/app/backend/tests/test_president_readonly.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "president/test1234, admin/admin123, Salim/test1234, 9999/teacher123 (all working)",
+  "seed_data_creation": "None. Did not create any users during frontend test (only opened the create modal and selected role, then discarded).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_president_readonly.py covers all 7 read-only write endpoints, whitelist paths, admin/dean/teacher sanity. Preview seed has 91 students; dashboard numbers verified. Frontend testids validated: dash-readonly-badge, dash-scope-label, dash-export-pdf-btn, president-readonly-note, add-user-btn, fee-manual-btn/fee-bulk-pay-btn/fee-select-mode-btn/fee-types-btn. Manage-users role chips are text buttons (not select); use dialog-scoped text='رئيس الجامعة' selector (2 matches, pick the visible one in dialog Y region ~600).",
+  "rca of the issue": "N/A - no issues found"
+}

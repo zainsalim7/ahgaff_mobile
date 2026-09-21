@@ -1648,10 +1648,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     gap: 8,
   },
-  scopeText: {
-    fontSize: 11,
-    color: '#666',
-  },
   userActions: {
     flexDirection: 'row',
     gap: 8,
@@ -1746,28 +1742,6 @@ const styles = StyleSheet.create({
   roleSelectorTextActive: {
     color: '#fff',
   },
-  scopeSelector: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
-  },
-  scopeItem: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: '#f5f5f5',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  scopeItemActive: {
-    backgroundColor: '#e3f2fd',
-    borderColor: '#1565c0',
-  },
-  scopeItemText: {
-    fontSize: 13,
-    color: '#666',
-  },
   requiredHint: {
     fontSize: 12,
     color: '#f44336',
@@ -1806,10 +1780,6 @@ const styles = StyleSheet.create({
   },
   levelTextActive: {
     color: '#fff',
-  },
-  scopeItemTextActive: {
-    color: '#1565c0',
-    fontWeight: '600',
   },
   cancelBtn: {
     paddingHorizontal: 20,

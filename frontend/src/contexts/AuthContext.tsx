@@ -79,10 +79,6 @@ export const PERMISSIONS = {
   VIEW_CURRICULUM: 'view_curriculum',
   // صلاحيات الحضور
   MANAGE_ATTENDANCE: 'manage_attendance',
-  RECORD_ATTENDANCE: 'record_attendance',
-  TAKE_ATTENDANCE: 'take_attendance',
-  VIEW_ATTENDANCE: 'view_attendance',
-  EDIT_ATTENDANCE: 'edit_attendance',
   APPROVE_ATTENDANCE_CHANGES: 'approve_attendance_changes',
   // صلاحيات الجداول الدراسية (اليومي/الأسبوعي)
   VIEW_SCHEDULE: 'view_schedule',

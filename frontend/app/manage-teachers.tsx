@@ -1274,7 +1274,7 @@ export default function ManageTeachersScreen() {
               حذف المعلم
             </Text>
             <Text style={{ fontSize: 14, color: '#666', textAlign: 'center', marginBottom: 16 }}>
-              "{deleteTarget ? getTeacherName(deleteTarget) : ''}"
+              &quot;{deleteTarget ? getTeacherName(deleteTarget) : ''}&quot;
             </Text>
             
             {deleteInfo && !deleteInfo.error ? (
@@ -1372,7 +1372,6 @@ const styles = StyleSheet.create({
   dropdown: { backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e3e7ee', height: 40, overflow: 'hidden', justifyContent: 'center' },
   dropdownInner: { height: 40, fontSize: 13, color: '#1a2540', textAlign: 'right', backgroundColor: 'transparent', borderWidth: 0 },
   filterBtns: { flexDirection: 'row-reverse', alignItems: 'center', gap: 14 },
-  resetBtn: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5, paddingVertical: 9, paddingHorizontal: 4 },
   resetBtnText: { fontSize: 13, color: '#2962ff', fontWeight: '600' },
 
   tableCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#eef1f6' },
