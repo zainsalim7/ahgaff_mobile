@@ -21,9 +21,10 @@ interface Props {
   onExport: (fmt: 'pdf' | 'excel') => void;
   onRefresh: () => void;
   compact: boolean;
+  readOnly?: boolean;
 }
 
-export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period, onPeriod, exporting, onExport, onRefresh, compact }: Props) => (
+export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period, onPeriod, exporting, onExport, onRefresh, compact, readOnly }: Props) => (
   <View style={styles.hero} testID="dash-header">
     <View style={styles.grain} pointerEvents="none" />
     <View style={[styles.row, compact && { flexDirection: 'column-reverse', alignItems: 'stretch', gap: 14 }]}>
@@ -42,7 +43,15 @@ export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.kicker}>لوحة القيادة</Text>
-        <Text style={styles.title} testID="dash-title">{userName ? `مرحباً، ${userName}` : 'لوحة القيادة'}</Text>
+        <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <Text style={styles.title} testID="dash-title">{userName ? `مرحباً، ${userName}` : 'لوحة القيادة'}</Text>
+          {readOnly && (
+            <View style={styles.roBadge} testID="dash-readonly-badge">
+              <Ionicons name="eye-outline" size={13} color={DASH.navy} />
+              <Text style={styles.roText}>اطلاع فقط</Text>
+            </View>
+          )}
+        </View>
         <View style={styles.metaRow}>
           <View style={styles.metaChip} testID="dash-scope-label">
             <Ionicons name="business-outline" size={12} color={DASH.gold} />
@@ -90,6 +99,8 @@ const styles = StyleSheet.create({
   pdfBtn: { backgroundColor: '#b91c1c' },
   xlsBtn: { backgroundColor: '#15803d' },
   actText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  roBadge: { flexDirection: 'row-reverse', alignItems: 'center', gap: 4, backgroundColor: DASH.gold, paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999 },
+  roText: { color: DASH.navy, fontSize: 11, fontWeight: '800' },
   periodBar: { flexDirection: 'row-reverse', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 4, marginTop: 18, alignSelf: 'flex-end' },
   periodBtn: { paddingHorizontal: 18, paddingVertical: 8, borderRadius: 9 },
   periodActive: { backgroundColor: DASH.gold },

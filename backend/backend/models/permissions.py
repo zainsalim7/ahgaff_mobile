@@ -12,6 +12,7 @@ class UserRole:
     DEPARTMENT_HEAD = "department_head"
     REGISTRAR = "registrar"
     REGISTRATION_MANAGER = "registration_manager"
+    UNIVERSITY_PRESIDENT = "university_president"  # 🏛️ اطلاع فقط على مستوى الجامعة كلها
 
 class Permission:
     # صلاحيات الأقسام
@@ -353,6 +354,14 @@ ALL_PERMISSIONS = [
 ]
 
 # الصلاحيات الكاملة تشمل الصلاحيات الفرعية
+# 🏛️ الأدوار القرائية: نطاق الجامعة كلها + صلاحيات العرض/التقارير/التصدير فقط — أي تعديل يُرفض بحارس القراءة
+READ_ONLY_ROLES = {UserRole.UNIVERSITY_PRESIDENT}
+READ_ONLY_PERMISSIONS = [
+    p["key"] for p in ALL_PERMISSIONS
+    if p["key"].startswith(("view_", "report_", "export_")) or p["key"] in ("search_archive", "manage_fee_receipts")
+]  # manage_fee_receipts = المفتاح الوحيد لقراءة السندات المالية؛ الكتابة محجوبة بحارس القراءة
+DEFAULT_PERMISSIONS[UserRole.UNIVERSITY_PRESIDENT] = list(READ_ONLY_PERMISSIONS)
+
 FULL_PERMISSION_MAPPING = {
     Permission.MANAGE_DEPARTMENTS: [
         Permission.VIEW_DEPARTMENTS, Permission.ADD_DEPARTMENT, 

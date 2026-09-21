@@ -23,6 +23,7 @@ import { teachersAPI, departmentsAPI } from '../src/services/api';
 import { API_URL } from '../src/services/api';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { SortableHeader } from '../src/components/SortableHeader';
+import { useAuth } from '../src/contexts/AuthContext';
 
 interface Teacher {
   id: string;
@@ -54,6 +55,9 @@ interface Department {
 }
 
 export default function ManageTeachersScreen() {
+  const { user: authUser, hasPermission } = useAuth();
+  // 👁️ عرض فقط (view_teachers): بلا أزرار إضافة/تعديل/حذف
+  const canManageTeachers = authUser?.role === 'admin' || hasPermission('manage_teachers');
   const router = useRouter();
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -782,7 +786,7 @@ export default function ManageTeachersScreen() {
                   <Text style={styles.breadcrumbCurrent}>المعلمون</Text>
                 </View>
               </View>
-              <View dataSet={{ responsive: "page-header-actions" }} style={styles.pageHeaderActions}>
+              {canManageTeachers && <View dataSet={{ responsive: "page-header-actions" }} style={styles.pageHeaderActions}>
                 <TouchableOpacity style={[styles.headerBtn, styles.btnPrimary]} onPress={() => setShowForm(true)}>
                   <Ionicons name="add" size={16} color="#fff" />
                   <Text style={styles.btnPrimaryText}>إضافة معلم</Text>
@@ -799,7 +803,7 @@ export default function ManageTeachersScreen() {
                     </TouchableOpacity>
                   </>
                 )}
-              </View>
+              </View>}
             </View>
 
             {/* بطاقات الإحصائيات */}
@@ -1147,6 +1151,7 @@ export default function ManageTeachersScreen() {
                   <Ionicons name="book-outline" size={18} color="#9c27b0" />
                   <Text style={styles.menuText}>عرض المقررات</Text>
                 </TouchableOpacity>
+                {canManageTeachers && <>
                 <TouchableOpacity style={styles.menuItem} onPress={() => { setOpenMenuId(null); handleEdit(t); }}>
                   <Ionicons name="pencil-outline" size={18} color="#4caf50" />
                   <Text style={styles.menuText}>تعديل</Text>
@@ -1165,6 +1170,7 @@ export default function ManageTeachersScreen() {
                   <Ionicons name="trash-outline" size={18} color="#f44336" />
                   <Text style={[styles.menuText, { color: '#f44336' }]}>حذف</Text>
                 </TouchableOpacity>
+                </>}
               </View>
             </View>
           </Modal>

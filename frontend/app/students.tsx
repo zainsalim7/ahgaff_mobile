@@ -89,6 +89,8 @@ export default function StudentsScreen() {
   
   const isStudent = user?.role === 'student';
   const canManageStudents = user ? (!isStudent && (hasPermission(PERMISSIONS.MANAGE_STUDENTS) || user.role === 'admin')) : false;
+  // 👁️ عرض فقط (view_students): يرى القائمة والتفاصيل بلا أزرار الإدارة
+  const canViewStudents = canManageStudents || (user ? (!isStudent && hasPermission('view_students')) : false);
   const { openStudent } = useLocalSearchParams<{ openStudent?: string }>();
   
   useEffect(() => {
@@ -289,7 +291,7 @@ export default function StudentsScreen() {
   };
 
   const fetchData = useCallback(async () => {
-    if (!canManageStudents) return;
+    if (!canViewStudents) { setLoading(false); return; }
     
     try {
       // جلب الأقسام أولاً (مستقل عن الطلاب)
@@ -316,7 +318,7 @@ export default function StudentsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [canManageStudents]);
+  }, [canViewStudents]);
 
   useEffect(() => {
     fetchData();

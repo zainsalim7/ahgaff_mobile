@@ -208,7 +208,7 @@ export default function ManageUsersScreen() {
     const selectedRole = roles.find(r => r.id === formData.role_id);
     const systemKey = (selectedRole as any)?.system_key || '';
     const roleName = selectedRole?.name?.toLowerCase() || '';
-    const isAdmin = systemKey === 'admin' || roleName.includes('مدير النظام');
+    const isAdmin = systemKey === 'admin' || systemKey === 'university_president' || roleName.includes('مدير النظام');
     
     if (!isAdmin && !formData.faculty_id && formData.faculty_ids.length === 0) {
       if (Platform.OS === 'web') {
@@ -788,7 +788,7 @@ export default function ManageUsersScreen() {
                 const systemKey = (selectedRole as any)?.system_key || '';
                 
                 // المدير لا يحتاج لكلية
-                const isAdmin = systemKey === 'admin' || roleName.includes('مدير النظام');
+                const isAdmin = systemKey === 'admin' || systemKey === 'university_president' || roleName.includes('مدير النظام');
                 
                 // التحقق من الصلاحيات المحددة
                 const userPermissions = formData.permissions || (selectedRole as any)?.permissions || [];
@@ -807,6 +807,12 @@ export default function ManageUsersScreen() {
                 
                 return (
                   <>
+                    {systemKey === 'university_president' && (
+                      <View style={{ backgroundColor: '#e8eaf6', borderRadius: 10, padding: 10, marginBottom: 10, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }} testID="president-readonly-note">
+                        <Ionicons name="eye-outline" size={18} color="#1a237e" />
+                        <Text style={{ color: '#1a237e', fontSize: 12, flex: 1, textAlign: 'right' }}>رئيس الجامعة: اطلاع فقط على مستوى الجامعة كلها — لا يحتاج اختيار كلية، وأي تعديل من حسابه مرفوض تلقائياً.</Text>
+                      </View>
+                    )}
                     {/* مستوى الصلاحية */}
                     {!isAdmin && (
                       <View style={styles.permissionLevelSection}>
@@ -1074,7 +1080,7 @@ export default function ManageUsersScreen() {
                 const selectedRole = roles.find(r => r.id === formData.role_id);
                 const roleName = selectedRole?.name?.toLowerCase() || '';
                 const systemKey = (selectedRole as any)?.system_key || '';
-                const isAdminRole = systemKey === 'admin' || roleName.includes('مدير النظام');
+                const isAdminRole = systemKey === 'admin' || systemKey === 'university_president' || roleName.includes('مدير النظام');
                 
                 if (isAdminRole) return null;
                 

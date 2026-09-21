@@ -7,6 +7,7 @@ import { Stack, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import api from '../src/services/api';
+import { useAuth } from '../src/contexts/AuthContext';
 
 const notify = (msg: string) => { if (Platform.OS === 'web') window.alert(msg); else Alert.alert('', msg); };
 const selStyle: any = { padding: 7, borderRadius: 8, border: '1px solid #ddd', fontSize: 12, fontFamily: 'inherit', background: '#fff', minWidth: 150 };
@@ -49,6 +50,7 @@ export default function FeeReceiptsScreen() {
   const [bulkReason, setBulkReason] = useState('');
   const [showBulkReject, setShowBulkReject] = useState(false);
   const isAdmin = !!stats?.is_admin;
+  const { isReadOnly } = useAuth(); // 👁️ رئيس الجامعة: اطلاع بلا إجراءات
 
   useEffect(() => { const t = setTimeout(() => setDebounced(search.trim()), 350); return () => clearTimeout(t); }, [search]);
 
@@ -186,10 +188,10 @@ export default function FeeReceiptsScreen() {
                       ? `🟢 دفعات معتمدة: ${s.approved} (لـ${s.paid_students} طالباً)   🟡 معلقة: ${s.pending}   ⚪ لم يدفع: ${s.not_paid}`
                       : `🟢 دافع: ${s.approved}   🟡 قيد المراجعة: ${s.pending}   ⚪ غير دافع: ${s.not_paid}`}
                   </Text>
-                  <TouchableOpacity onPress={() => remind(s.type_id, s.type_name)} testID={`fee-remind-${s.type_id}`}
+                  {!isReadOnly && <TouchableOpacity onPress={() => remind(s.type_id, s.type_name)} testID={`fee-remind-${s.type_id}`}
                     style={{ backgroundColor: '#fff3e0', borderRadius: 6, padding: 5, marginTop: 6 }}>
                     <Text style={{ color: '#e65100', fontSize: 11, fontWeight: '800', textAlign: 'center' }}>🔔 تذكير غير الدافعين</Text>
-                  </TouchableOpacity>
+                  </TouchableOpacity>}
                   <TouchableOpacity onPress={() => exportUnpaid(s.type_id, s.type_name)} testID={`fee-export-${s.type_id}`}
                     style={{ backgroundColor: '#e8f5e9', borderRadius: 6, padding: 5, marginTop: 5 }}>
                     <Text style={{ color: '#2e7d32', fontSize: 11, fontWeight: '800', textAlign: 'center' }}>📄 Excel غير الدافعين</Text>
@@ -200,14 +202,14 @@ export default function FeeReceiptsScreen() {
                 style={{ backgroundColor: '#e3f2fd', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
                 <Text style={{ color: '#1565c0', fontWeight: '800', fontSize: 12 }}>📊 تقرير سدادات</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => setShowManual(true)} testID="fee-manual-btn"
+              {!isReadOnly && <TouchableOpacity onPress={() => setShowManual(true)} testID="fee-manual-btn"
                 style={{ backgroundColor: '#e8f5e9', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
                 <Text style={{ color: '#2e7d32', fontWeight: '800', fontSize: 12 }}>✍️ تسجيل دفع يدوي</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setShowBulkPay(true)} testID="fee-bulk-pay-btn"
+              </TouchableOpacity>}
+              {!isReadOnly && <TouchableOpacity onPress={() => setShowBulkPay(true)} testID="fee-bulk-pay-btn"
                 style={{ backgroundColor: '#1b5e20', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
                 <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>💰 تسجيل دفع جماعي</Text>
-              </TouchableOpacity>
+              </TouchableOpacity>}
               {isAdmin && (
                 <TouchableOpacity onPress={() => setShowTypes(true)} testID="fee-types-btn"
                   style={{ backgroundColor: '#e8eaf6', borderRadius: 10, padding: 10, justifyContent: 'center' }}>
@@ -258,7 +260,7 @@ export default function FeeReceiptsScreen() {
                 <Text style={{ fontSize: 11, color: '#666', marginRight: 'auto' }} testID="fee-count">{receipts.length} سند</Text>
               </View>
             )}
-            {tab === 'pending' && receipts.length > 0 && (
+            {tab === 'pending' && receipts.length > 0 && !isReadOnly && (
               <View style={{ flexDirection: 'row-reverse', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <TouchableOpacity onPress={() => { setSelectMode(!selectMode); setSelectedIds(new Set()); }} testID="fee-select-mode-btn"
                   style={{ backgroundColor: selectMode ? '#1565c0' : '#e3f2fd', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 }}>
@@ -369,7 +371,7 @@ export default function FeeReceiptsScreen() {
                   </View>
                 ) : <Text style={{ textAlign: 'center', color: '#999', marginVertical: 30 }}>جارٍ تحميل الصورة...</Text>}
                 {selected?.notes ? <Text style={{ textAlign: 'right', fontSize: 12, marginTop: 6 }}>ملاحظة الطالب: {selected.notes}</Text> : null}
-                {selected?.status === 'pending' && (
+                {selected?.status === 'pending' && !isReadOnly && (
                   <>
                     <TextInput value={rejectReason} onChangeText={setRejectReason} placeholder="سبب الرفض (إلزامي عند الرفض)"
                       style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 8, marginTop: 10, textAlign: 'right', fontSize: 12 }} testID="fee-reject-reason" />
@@ -385,7 +387,7 @@ export default function FeeReceiptsScreen() {
                     </View>
                   </>
                 )}
-                {selected?.status === 'approved' && (
+                {selected?.status === 'approved' && !isReadOnly && (
                   <TouchableOpacity disabled={loading} onPress={unapprove} testID="fee-unapprove-btn"
                     style={{ backgroundColor: '#fff3e0', borderRadius: 8, padding: 12, marginTop: 10, borderWidth: 1, borderColor: '#f57f17' }}>
                     <Text style={{ color: '#e65100', fontWeight: '800', textAlign: 'center' }}>↩️ إلغاء الاعتماد (إعادته لقيد المراجعة)</Text>

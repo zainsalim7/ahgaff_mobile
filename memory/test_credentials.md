@@ -63,3 +63,8 @@
 
 ## تحديث (2026-06): حساب الطالب
 - Username: 234 / Password: 234 — أُعيد تعيين كلمة المرور (تُخزن في الحقلين password وhashed_password) وتم التحقق من الدخول.
+
+## University President — رئيس الجامعة (اطلاع فقط، أُنشئ 2026-09)
+- Username: president
+- Password: test1234
+- Role: university_president (role_id 698c93119a944c07ac7f80c1 «رئيس الجامعة») — نطاق الجامعة كلها، أي POST/PUT/DELETE → 403 «حسابك للاطلاع فقط»

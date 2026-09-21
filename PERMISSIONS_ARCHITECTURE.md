@@ -74,6 +74,7 @@ elif not user.role:                          # ← تنفَّذ لأن الوا�
 | الدور | النطاق | ملاحظات ثابتة |
 |---|---|---|
 | `admin` | كل شيء | بلا فلتر |
+| 🏛️ `university_president` (رئيس الجامعة) | **كل شيء — اطلاع فقط** | بلا فلتر (كالأدمن في القراءة)؛ صلاحياته = `READ_ONLY_PERMISSIONS` (view_*/report_*/export_* + search_archive + manage_fee_receipts للقراءة)؛ **أي طلب غير GET يُرفض 403** بواسطة `routes/readonly_guard.py` (ReadOnlyRoleMiddleware) عدا: login/logout/change-password/notifications read/register-token/record-view/fees/renewal-status. الواجهة: `isReadOnly` في AuthContext لإخفاء الأزرار (2026-09) |
 | **🏛️ أي دور إداري له `faculty_ids` بأكثر من كلية** | **الكليات المحددة كاملة** | قرار صريح 2026-07 (نائب رئيس يشرف على كليتين / مدير تسجيل مشترك) — يتجاهل `department_ids` كلياً، الفرع في مطلع الفلتر بعد التنظيف، لا ينطبق على `teacher`، و`faculty_id` المفرد يبقى = أول كلية (توافق رجعي)، و`department_head` ممنوع من التعدد (400) |
 | `dean` (عميد) | **كليته كاملة دائماً** | يتجاهل أي `department_ids` في سجله |
 | `registration_manager` (مدير التسجيل) | **كليته كاملة دائماً** عند وجود `faculty_id` | 🔒 تعريف الدور `scope=faculty` — أي أقسام عالقة في سجله **لا تقيّده** (إصلاح 2026-07) |

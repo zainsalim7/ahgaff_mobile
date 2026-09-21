@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from bson import ObjectId
 
 from .deps import get_db, get_current_user, get_scope_filter, has_permission, export_filename, export_headers
-from models.permissions import UserRole
+from models.permissions import UserRole, READ_ONLY_ROLES
 
 router = APIRouter()
 
@@ -41,7 +41,7 @@ def _is_management(user: dict) -> bool:
 
 async def _resolve_scope(db, user: dict, faculty_id: Optional[str], department_id: Optional[str]) -> dict:
     """النطاق المسموح (كل الأقسام للأدمن) ثم تضييقه بالفلتر اليدوي ضمن المسموح فقط"""
-    is_admin = user.get("role") == UserRole.ADMIN
+    is_admin = user.get("role") in (UserRole.ADMIN, UserRole.UNIVERSITY_PRESIDENT)  # نطاق الجامعة كلها
     dq = {} if is_admin else await get_scope_filter(user, "departments")
     depts = await db.departments.find(dq, {"name": 1, "faculty_id": 1}).to_list(500)
     fac_ids = sorted({d.get("faculty_id") for d in depts if d.get("faculty_id")})
@@ -310,6 +310,7 @@ async def build_dashboard(db, user: dict, period: str, faculty_id: Optional[str]
         "generated_at": now.strftime("%Y-%m-%d %H:%M"),
         "period": period, "period_label": PERIOD_LABELS[period], "date_from": s_from, "date_to": s_to,
         "scope": {"label": scope["label"], "is_admin": scope["is_admin"], "can_filter": scope["can_filter"],
+                  "read_only": user.get("role") in READ_ONLY_ROLES,
                   "faculties": scope["faculties"], "departments": scope["departments"],
                   "faculty_id": faculty_id, "department_id": department_id},
         "semester": {"name": active_sem.get("name", "") if active_sem else "", "academic_year": active_sem.get("academic_year", "") if active_sem else ""},

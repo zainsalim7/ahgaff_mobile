@@ -15,6 +15,7 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   isAdmin: boolean;
+  isReadOnly: boolean; // 👁️ دور اطلاع فقط (رئيس الجامعة) — تُخفى أزرار التعديل
   login: (token: string, user: User) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
@@ -283,6 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // استخدم التخزين المؤقت للتحقق من admin
   const isAdmin = (cachedUser || user)?.role === 'admin';
+  const isReadOnly = (cachedUser || user)?.role === 'university_president';
 
   return (
     <AuthContext.Provider
@@ -291,6 +293,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token: cachedToken || token,
         isLoading,
         isAdmin,
+        isReadOnly,
         login,
         logout,
         hasPermission,

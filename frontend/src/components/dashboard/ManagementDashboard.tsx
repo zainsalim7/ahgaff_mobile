@@ -122,6 +122,7 @@ export const ManagementDashboard = () => {
           onExport={onExport}
           onRefresh={() => load(true)}
           compact={compact}
+          readOnly={!!data?.scope?.read_only}
         />
         {data?.scope?.can_filter && (
           <DashScopeFilter faculties={data.scope.faculties} departments={data.scope.departments} facultyId={facultyId} departmentId={departmentId} onChange={onScope} />

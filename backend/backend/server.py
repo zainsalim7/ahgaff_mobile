@@ -270,6 +270,10 @@ class SecurityHeadersMiddleware:
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+# 🔒 حارس القراءة فقط (رئيس الجامعة): يرفض أي طلب غير GET من الأدوار القرائية
+from routes.readonly_guard import ReadOnlyRoleMiddleware
+app.add_middleware(ReadOnlyRoleMiddleware)
+
 # ===== 🆕 التسجيل التلقائي الشامل للنشاطات =====
 import re as _re
 from routes.deps import activity_log_ctx as _activity_ctx
@@ -1026,8 +1030,8 @@ async def get_user_scope_filter(current_user: dict, scope_type: str = "students"
     role = current_user.get("role", "")
     user_id = current_user.get("id")
     
-    # Admin يرى كل شيء
-    if role == UserRole.ADMIN:
+    # Admin / رئيس الجامعة (اطلاع فقط) يرى كل شيء
+    if role in (UserRole.ADMIN, UserRole.UNIVERSITY_PRESIDENT):
         return query
     
     # جلب بيانات المستخدم الكاملة للحصول على faculty_id و department_id
@@ -17302,7 +17306,7 @@ async def get_activity_logs(
 ):
     """جلب سجلات الأنشطة"""
     # التحقق من الصلاحية
-    if current_user["role"] not in [UserRole.ADMIN, "dean", "department_head"]:
+    if current_user["role"] not in [UserRole.ADMIN, UserRole.UNIVERSITY_PRESIDENT, "dean", "department_head"]:
         raise HTTPException(status_code=403, detail="غير مصرح لك بعرض سجلات الأنشطة")
     
     query = {}
@@ -17320,7 +17324,7 @@ async def get_activity_logs(
         query["action"] = action
     if entity_type:
         query["entity_type"] = entity_type
-    if faculty_id and current_user["role"] == UserRole.ADMIN:
+    if faculty_id and current_user["role"] in (UserRole.ADMIN, UserRole.UNIVERSITY_PRESIDENT):
         query["faculty_id"] = faculty_id
     if department_id:
         query["department_id"] = department_id
@@ -18393,6 +18397,7 @@ async def sync_default_roles():
         "department_head": UserRole.DEPARTMENT_HEAD,
         "registrar": UserRole.REGISTRAR,
         "registration_manager": UserRole.REGISTRATION_MANAGER,
+        "university_president": UserRole.UNIVERSITY_PRESIDENT,
     }
     for system_key, role_enum in role_map.items():
         default_perms = list(DEFAULT_PERMISSIONS.get(role_enum, []))
@@ -18403,7 +18408,16 @@ async def sync_default_roles():
             # لا نُعدّل الصلاحيات الموجودة عموماً - المستخدم قد خصصها يدوياً
             # 🔧 استثناء: نضمن أن للعميد صلاحية approve_attendance_changes (ميزة جديدة)
             existing_perms = existing.get("permissions", [])
-            if system_key == "dean" and Permission.APPROVE_ATTENDANCE_CHANGES not in existing_perms:
+            if system_key == "university_president":
+                # 🏛️ دور رئيس الجامعة: نضمن دائماً امتلاكه كامل صلاحيات الاطلاع (قراءة فقط — الكتابة محجوبة بالحارس)
+                missing = [p for p in default_perms if p not in existing_perms]
+                if missing or not existing.get("read_only"):
+                    await db.roles.update_one({"_id": existing["_id"]}, {
+                        "$addToSet": {"permissions": {"$each": default_perms}},
+                        "$set": {"scope": "university", "read_only": True,
+                                 "description": "رئيس الجامعة — اطلاع فقط على مستوى الجامعة كلها (لا يمكنه أي تعديل)"}})
+                    logging.info(f"تم تحديث صلاحيات الاطلاع لدور رئيس الجامعة (+{len(missing)})")
+            elif system_key == "dean" and Permission.APPROVE_ATTENDANCE_CHANGES not in existing_perms:
                 await db.roles.update_one(
                     {"_id": existing["_id"]},
                     {"$addToSet": {"permissions": Permission.APPROVE_ATTENDANCE_CHANGES}}
@@ -18421,11 +18435,16 @@ async def sync_default_roles():
                 "department_head": "رئيس القسم",
                 "registrar": "مسجل",
                 "registration_manager": "مدير التسجيل",
+                "university_president": "رئيس الجامعة",
             }
             await db.roles.insert_one({
                 "name": role_names.get(system_key, system_key),
                 "system_key": system_key,
                 "permissions": default_perms,
+                "is_system": True,
+                **({"scope": "university", "read_only": True,
+                    "description": "رئيس الجامعة — اطلاع فقط على مستوى الجامعة كلها (لا يمكنه أي تعديل)"}
+                   if system_key == "university_president" else {}),
                 "created_at": get_yemen_time(),
             })
             logging.info(f"تم إنشاء دور {system_key}")
