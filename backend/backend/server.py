@@ -16392,8 +16392,8 @@ async def get_my_institution(current_user: dict = Depends(get_current_user)):
     """
     user = await db.users.find_one({"_id": ObjectId(current_user["id"])})
     
-    if current_user["role"] == UserRole.ADMIN:
-        # المدير يرى بيانات الجامعة
+    if current_user["role"] in (UserRole.ADMIN, UserRole.UNIVERSITY_PRESIDENT):
+        # المدير ورئيس الجامعة يريان بيانات الجامعة (لا كلية محددة)
         university = await db.university.find_one({})
         if university:
             return {
