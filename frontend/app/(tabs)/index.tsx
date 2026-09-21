@@ -24,6 +24,7 @@ import {
   notificationsAPI,
   teachersAPI,
 } from '../../src/services/api';
+import { ManagementDashboard } from '../../src/components/dashboard/ManagementDashboard';
 
 /**
  * 🏛️ الصفحة الرئيسية الموحدة — لوحة الإحصائيات
@@ -96,6 +97,12 @@ interface StatCard {
 }
 
 export default function HomeDashboardScreen() {
+  const { user } = useAuthStore();
+  if (user && user.role !== 'teacher' && user.role !== 'student') return <ManagementDashboard />;
+  return <LegacyHomeScreen />;
+}
+
+function LegacyHomeScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const { hasAnyPermission } = useAuth();

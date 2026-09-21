@@ -187,7 +187,7 @@ export default function AttendanceOverviewReport() {
               <ActivityIndicator size="small" color="#4caf50" />
             ) : (
               <Ionicons name="download-outline" size={24} color={courses.length > 0 ? "#4caf50" : "#ccc"} />
-            )}}
+            )}
           </TouchableOpacity>
         </View>
       </View>
