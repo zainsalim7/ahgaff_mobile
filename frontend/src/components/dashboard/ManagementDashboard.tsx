@@ -6,7 +6,6 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import api from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
-import { useAuth } from '../../contexts/AuthContext';
 import { exportName, filenameFromResponse } from '../../utils/exportName';
 import { DASH } from './dashTheme';
 import { DashHeader } from './DashHeader';
@@ -15,7 +14,6 @@ import { DashKpis } from './DashKpis';
 import { DashAlerts } from './DashAlerts';
 import { DashAttendanceChart } from './DashAttendanceChart';
 import { DashFinance } from './DashFinance';
-import { DashActivity } from './DashActivity';
 import { DashTeachers } from './DashTeachers';
 import { DashStudents } from './DashStudents';
 import { DashRooms } from './DashRooms';
@@ -24,11 +22,10 @@ type Period = 'day' | 'week' | 'month';
 
 export const ManagementDashboard = () => {
   const { user } = useAuthStore();
-  const { hasAnyPermission } = useAuth();
   const { width } = useWindowDimensions();
   const compact = width < 760;
 
-  const [period, setPeriod] = useState<Period>('week');
+  const [period, setPeriod] = useState<Period>('day');
   const [facultyId, setFacultyId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [data, setData] = useState<any>(null);
@@ -104,7 +101,6 @@ export const ManagementDashboard = () => {
   }
 
   const semester = data?.semester?.name ? `${data.semester.name}` : '';
-  const canOpenLog = user?.role === 'admin' || hasAnyPermission(['view_activity_logs', 'manage_users']);
   const twoCol = width >= 1100;
 
   return (
@@ -142,10 +138,7 @@ export const ManagementDashboard = () => {
               {data.students && <View style={{ flex: 1 }}><DashStudents s={data.students} periodLabel={data.period_label} /></View>}
               {data.rooms && <View style={{ flex: 1 }}><DashRooms r={data.rooms} /></View>}
             </View>
-            <View style={[styles.cols, twoCol && { flexDirection: 'row-reverse' }]}>
-              {data.finance && <View style={{ flex: 1 }}><DashFinance f={data.finance} /></View>}
-              <View style={{ flex: 1 }}><DashActivity items={data.activity} canOpenLog={canOpenLog} /></View>
-            </View>
+            {data.finance && <DashFinance f={data.finance} />}
           </>
         )}
       </ScrollView>

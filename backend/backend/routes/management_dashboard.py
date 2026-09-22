@@ -623,7 +623,6 @@ def _build_excel(d: dict) -> io.BytesIO:
               [[t["name"] + (" (متكرر)" if t["recurring"] else ""), t["approved"], t["pending"], t["rejected"], t["paid_students"], t["not_paid"], t["paid_pct"], t["amount"]] for t in d["finance"]["types"]])
     for title, rows in _phase2_tables(d):
         sheet(title, rows)
-    sheet("سجل النشاط", [["الوقت", "المستخدم", "الدور", "الإجراء", "العنصر"]] + [[a["time"], a["username"], a["role"], a["action"], a["entity"]] for a in d["activity"]])
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf
 
@@ -703,10 +702,6 @@ def _build_pdf(d: dict) -> io.BytesIO:
         if len(rows) > 1:
             n = len(rows[0]); w = (270 * mm) / n
             el += [Paragraph(ar(title), sec), grid(rows, [w] * n, head_bg="#00695c", fs=8)]
-    if d["activity"]:
-        el += [Paragraph(ar("آخر الأنشطة"), sec),
-               grid([["الوقت", "المستخدم", "الإجراء", "العنصر"]] + [[a["time"], a["username"], a["action"], a["entity"][:40]] for a in d["activity"]],
-                    [35 * mm, 40 * mm, 70 * mm, 80 * mm], head_bg="#455a64", fs=8)]
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm).build(el)
     buf.seek(0)
