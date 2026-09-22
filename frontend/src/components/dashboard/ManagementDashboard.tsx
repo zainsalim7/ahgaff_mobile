@@ -25,7 +25,7 @@ export const ManagementDashboard = () => {
   const { width } = useWindowDimensions();
   const compact = width < 760;
 
-  const [period, setPeriod] = useState<Period>('day');
+  const [period, setPeriod] = useState<Period>('week');
   const [facultyId, setFacultyId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [data, setData] = useState<any>(null);
