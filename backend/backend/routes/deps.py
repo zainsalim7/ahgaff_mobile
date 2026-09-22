@@ -302,11 +302,10 @@ async def build_user_context(db, user: dict) -> dict:
         else:
             user_permissions = list(DEFAULT_PERMISSIONS.get(user_role, []))
     
-    custom_permissions = user.get("custom_permissions", [])
-    if custom_permissions:
-        for perm in custom_permissions:
-            if perm not in user_permissions:
-                user_permissions.append(perm)
+    # الصلاحيات المخصصة + المباشرة (من إدارة المستخدمين) — كما في server.get_current_user
+    for perm in list(user.get("custom_permissions") or []) + list(user.get("permissions") or []):
+        if perm not in user_permissions:
+            user_permissions.append(perm)
     
     return {
         "_id": user["_id"],

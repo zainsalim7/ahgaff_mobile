@@ -23,30 +23,31 @@ interface Props {
   onRefresh: () => void;
   compact: boolean;
   readOnly?: boolean;
+  canExport?: boolean;
 }
 
-export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period, onPeriod, exporting, onExport, onRefresh, compact, readOnly }: Props) => {
+export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period, onPeriod, exporting, onExport, onRefresh, compact, readOnly, canExport = true }: Props) => {
   const router = useRouter();
   return (
   <View style={styles.hero} testID="dash-header">
     <View style={styles.grain} pointerEvents="none" />
     <View style={[styles.row, compact && { flexDirection: 'column-reverse', alignItems: 'stretch', gap: 14 }]}>
       <View style={styles.actions}>
-        <TouchableOpacity style={styles.actBtn} onPress={() => router.push('/dashboard-digests' as any)} testID="dash-digests-btn">
+        {canExport && <TouchableOpacity style={styles.actBtn} onPress={() => router.push('/dashboard-digests' as any)} testID="dash-digests-btn">
           <Ionicons name="mail-unread-outline" size={15} color="#fff" />
           <Text style={styles.actText}>الملخصات</Text>
-        </TouchableOpacity>
+        </TouchableOpacity>}
         <TouchableOpacity style={styles.actBtn} onPress={onRefresh} testID="dash-refresh-btn">
           <Ionicons name="refresh" size={16} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.actBtn, styles.pdfBtn]} onPress={() => onExport('pdf')} disabled={!!exporting} testID="dash-export-pdf-btn">
+        {canExport && <TouchableOpacity style={[styles.actBtn, styles.pdfBtn]} onPress={() => onExport('pdf')} disabled={!!exporting} testID="dash-export-pdf-btn">
           {exporting === 'pdf' ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="document-text" size={15} color="#fff" />}
           <Text style={styles.actText}>PDF</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.actBtn, styles.xlsBtn]} onPress={() => onExport('excel')} disabled={!!exporting} testID="dash-export-excel-btn">
+        </TouchableOpacity>}
+        {canExport && <TouchableOpacity style={[styles.actBtn, styles.xlsBtn]} onPress={() => onExport('excel')} disabled={!!exporting} testID="dash-export-excel-btn">
           {exporting === 'excel' ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="grid" size={15} color="#fff" />}
           <Text style={styles.actText}>Excel</Text>
-        </TouchableOpacity>
+        </TouchableOpacity>}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.kicker}>لوحة القيادة</Text>

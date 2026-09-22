@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from bson import ObjectId
 
 from .deps import get_db, get_current_user, get_scope_filter, has_permission, export_filename, export_headers
-from models.permissions import UserRole, READ_ONLY_ROLES
+from models.permissions import UserRole, READ_ONLY_ROLES, Permission
 
 router = APIRouter()
 
@@ -37,6 +37,17 @@ def _period_range(period: str):
 
 def _is_management(user: dict) -> bool:
     return user.get("role") not in (UserRole.TEACHER, "teacher", "student")
+
+
+SECTION_PERMS = {"alerts": Permission.DASHBOARD_ALERTS, "attendance": Permission.DASHBOARD_ATTENDANCE, "teachers": Permission.DASHBOARD_TEACHERS,
+                 "students": Permission.DASHBOARD_STUDENTS, "rooms": Permission.DASHBOARD_ROOMS, "finance": Permission.DASHBOARD_FINANCE,
+                 "export": Permission.DASHBOARD_EXPORT}
+
+
+def dashboard_sections(user: dict) -> dict:
+    """الأجزاء المسموحة: الأدمن ورئيس الجامعة كل شيء؛ غيرهم حسب صلاحيات فئة «لوحة القيادة» (الأرقام العامة للجميع)"""
+    full = user.get("role") in (UserRole.ADMIN, UserRole.UNIVERSITY_PRESIDENT)
+    return {k: (full or has_permission(user, p)) for k, p in SECTION_PERMS.items()}
 
 
 async def _resolve_scope(db, user: dict, faculty_id: Optional[str], department_id: Optional[str]) -> dict:
@@ -104,6 +115,7 @@ async def _teacher_names(db, ids):
 
 async def build_dashboard(db, user: dict, period: str, faculty_id: Optional[str], department_id: Optional[str]) -> dict:
     period = period if period in PERIOD_LABELS else "week"
+    sections = dashboard_sections(user)
     scope = await _resolve_scope(db, user, faculty_id, department_id)
     dept_ids = scope["dept_ids"]
     d_from, d_to = _period_range(period)
@@ -270,7 +282,7 @@ async def build_dashboard(db, user: dict, period: str, faculty_id: Optional[str]
 
     # ── المالية
     finance = None
-    if scope["is_admin"] or has_permission(user, "manage_fee_receipts"):
+    if sections["finance"] and (scope["is_admin"] or has_permission(user, "manage_fee_receipts")):
         finance = await _finance(db, dept_ids, active_sem, students_count)
 
     # ── سجل النشاط
@@ -307,9 +319,13 @@ async def build_dashboard(db, user: dict, period: str, faculty_id: Optional[str]
                        "title": "سندات مالية بانتظار التعميد", "hint": finance["academic_year"] or "", "items": [], "route": "/fee-receipts"})
 
     phase2 = await _phase2(db, scope, dept_ids, lectures, today_lectures, course_map, active_courses, att_by_lecture, att_by_student, stu_q, period)
+    for k in ("teachers", "students", "rooms"):
+        if not sections[k]:
+            phase2[k] = None
 
     return {
         "generated_at": now.strftime("%Y-%m-%d %H:%M"),
+        "sections": sections,
         **phase2,
         "period": period, "period_label": PERIOD_LABELS[period], "date_from": s_from, "date_to": s_to,
         "scope": {"label": scope["label"], "is_admin": scope["is_admin"], "can_filter": scope["can_filter"],
@@ -325,8 +341,8 @@ async def build_dashboard(db, user: dict, period: str, faculty_id: Optional[str]
             "lectures_period": len(lectures), "lectures_status": lec_status,
             "attendance_rate": _rate(present, late, absent), "present": present, "late": late, "absent": absent, "excused": excused,
         },
-        "chart": {"group_by": group_by, "points": chart_points},
-        "alerts": alerts,
+        "chart": {"group_by": group_by, "points": chart_points} if sections["attendance"] else None,
+        "alerts": alerts if sections["alerts"] else [],
         "finance": finance,
         "activity": activity,
     }
@@ -542,6 +558,8 @@ async def management_dashboard_export(fmt: str = "pdf", period: str = "week", fa
                                       department_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     if not _is_management(current_user):
         raise HTTPException(status_code=403, detail="لوحة القيادة متاحة للإدارة فقط")
+    if not dashboard_sections(current_user)["export"]:
+        raise HTTPException(status_code=403, detail="ليس لديك صلاحية تصدير لوحة القيادة")
     d = await build_dashboard(get_db(), current_user, period, faculty_id or None, department_id or None)
     if fmt == "excel":
         buf = _build_excel(d)
@@ -606,17 +624,17 @@ def _build_excel(d: dict) -> io.BytesIO:
     ws["A1"] = f"لوحة القيادة — {d['scope']['label']} — {d['period_label']} ({d['date_from']} → {d['date_to']})"
     ws["A1"].font = Font(bold=True, size=13)
     ws["A2"] = f"{d['semester']['name']} {d['semester']['academic_year']}   |   تاريخ الإصدار: {d['generated_at']}"
-    rows = [["التنبيه", "العدد", "التفاصيل"]] + [[a["title"], a["count"], a["hint"]] for a in d["alerts"]]
-    sheet("التنبيهات", rows)
-    if d["alerts"][0]["items"]:
+    if d["alerts"]:
+        sheet("التنبيهات", [["التنبيه", "العدد", "التفاصيل"]] + [[a["title"], a["count"], a["hint"]] for a in d["alerts"]])
+    if d["alerts"] and d["alerts"][0]["items"]:
         sheet("طلاب حضور منخفض", [["الطالب", "رقم القيد", "القسم", "المستوى", "المحاضرات", "الغياب", "النسبة %"]] +
               [[s["name"], s["student_id"], s["department"], s["level"], s["lectures"], s["absent"], s["rate"]] for s in d["alerts"][0]["items"]])
     lt = next((a for a in d["alerts"] if a["key"] == "late_teachers"), None)
     if lt and lt["items"]:
         sheet("تأخر الأساتذة", [["الأستاذ", "مرات التأخر", "أقصى تأخير (د)", "مجموع التأخير (د)"]] +
               [[t["name"], t["count"], t["max_delay"], t["total_delay"]] for t in lt["items"]])
-    gb = {"date": "التاريخ", "department": "القسم", "course": "المقرر"}[d["chart"]["group_by"]]
-    sheet("الحضور", [[gb, "المحاضرات", "المنفَّذة", "حاضر", "متأخر", "غائب", "النسبة %"]] +
+    gb = {"date": "التاريخ", "department": "القسم", "course": "المقرر"}[d["chart"]["group_by"]] if d["chart"] else ""
+    if d["chart"]: sheet("الحضور", [[gb, "المحاضرات", "المنفَّذة", "حاضر", "متأخر", "غائب", "النسبة %"]] +
           [[p.get("date") or p["label"], p["lectures"], p["completed"], p["present"], p["late"], p["absent"], p["rate"] if p["rate"] is not None else "—"] for p in d["chart"]["points"]])
     if d["finance"]:
         sheet("المالية", [["نوع الرسوم", "معتمد", "معلق", "مرفوض", "طلاب دافعون", "غير دافعين", "نسبة الدفع %", "المبالغ المعتمدة"]] +
@@ -677,8 +695,9 @@ def _build_pdf(d: dict) -> io.BytesIO:
         a = nr[i]; b = nr[i + half] if i + half < len(nr) else ["", ""]
         rows.append([a[0], a[1], b[0], b[1]])
     el += [Paragraph(ar("الأرقام الرئيسية"), sec), grid(rows, [60 * mm, 30 * mm, 60 * mm, 30 * mm], fs=9.5), Spacer(1, 3 * mm)]
-    el += [Paragraph(ar("التنبيهات"), sec), grid([["التنبيه", "العدد", "التفاصيل"]] + [[a["title"], a["count"], a["hint"]] for a in d["alerts"]], [90 * mm, 25 * mm, 90 * mm])]
-    if d["alerts"][0]["items"]:
+    if d["alerts"]:
+        el += [Paragraph(ar("التنبيهات"), sec), grid([["التنبيه", "العدد", "التفاصيل"]] + [[a["title"], a["count"], a["hint"]] for a in d["alerts"]], [90 * mm, 25 * mm, 90 * mm])]
+    if d["alerts"] and d["alerts"][0]["items"]:
         el += [Paragraph(ar("طلاب حضورهم منخفض (أدنى 10)"), sec),
                grid([["الطالب", "رقم القيد", "القسم", "المستوى", "المحاضرات", "الغياب", "النسبة"]] +
                     [[s["name"], s["student_id"], s["department"], s["level"], s["lectures"], s["absent"], f"{s['rate']}%"] for s in d["alerts"][0]["items"]],
@@ -688,8 +707,8 @@ def _build_pdf(d: dict) -> io.BytesIO:
         el += [Paragraph(ar("أساتذة تأخروا في بدء التحضير"), sec),
                grid([["الأستاذ", "مرات التأخر", "أقصى تأخير (د)", "مجموع التأخير (د)"]] + [[t["name"], t["count"], t["max_delay"], t["total_delay"]] for t in lt["items"]],
                     [80 * mm, 30 * mm, 35 * mm, 35 * mm])]
-    gb = {"date": "التاريخ", "department": "القسم", "course": "المقرر"}[d["chart"]["group_by"]]
-    el += [Paragraph(ar(f"الحضور حسب {gb}"), sec),
+    gb = {"date": "التاريخ", "department": "القسم", "course": "المقرر"}[d["chart"]["group_by"]] if d["chart"] else ""
+    if d["chart"]: el += [Paragraph(ar(f"الحضور حسب {gb}"), sec),
            grid([[gb, "المحاضرات", "المنفَّذة", "حاضر", "متأخر", "غائب", "النسبة"]] +
                 [[p.get("date") or p["label"], p["lectures"], p["completed"], p["present"], p["late"], p["absent"], f"{p['rate']}%" if p["rate"] is not None else "—"] for p in d["chart"]["points"]],
                 [50 * mm, 25 * mm, 25 * mm, 25 * mm, 25 * mm, 25 * mm, 25 * mm], head_bg="#37474f")]

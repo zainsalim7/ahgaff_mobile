@@ -120,7 +120,7 @@ from bidi.algorithm import get_display
 
 # استيراد النماذج من الملفات المنفصلة
 from models.permissions import (
-    UserRole, Permission, DEFAULT_PERMISSIONS, ALL_PERMISSIONS,
+    UserRole, Permission, DEFAULT_PERMISSIONS, ALL_PERMISSIONS, DASHBOARD_PERMISSIONS,
     FULL_PERMISSION_MAPPING, ScopeType, user_has_permission
 )
 from models.users import (
@@ -18427,7 +18427,13 @@ async def sync_default_roles():
                     {"$addToSet": {"permissions": Permission.APPROVE_ATTENDANCE_CHANGES}}
                 )
                 logging.info(f"تمت إضافة approve_attendance_changes إلى دور العميد")
-            else:
+            # 📊 صلاحيات لوحة القيادة (ميزة جديدة): تُمنح مرة واحدة للأدوار القيادية إن لم تُمنح بعد
+            if system_key in ("admin", "dean", "department_head") and not existing.get("dashboard_perms_seeded"):
+                await db.roles.update_one({"_id": existing["_id"]}, {
+                    "$addToSet": {"permissions": {"$each": DASHBOARD_PERMISSIONS}},
+                    "$set": {"dashboard_perms_seeded": True}})
+                logging.info(f"تمت إضافة صلاحيات لوحة القيادة إلى دور {system_key}")
+            if system_key not in ("university_president", "dean", "admin", "department_head"):
                 logging.info(f"الدور {system_key} موجود مسبقاً - لن يتم تعديله")
         else:
             role_names = {

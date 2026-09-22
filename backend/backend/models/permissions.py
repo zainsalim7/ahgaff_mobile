@@ -15,6 +15,15 @@ class UserRole:
     UNIVERSITY_PRESIDENT = "university_president"  # 🏛️ اطلاع فقط على مستوى الجامعة كلها
 
 class Permission:
+    # 📊 لوحة القيادة (الأرقام العامة تظهر لكل إداري؛ الأجزاء التالية حسب الصلاحية)
+    DASHBOARD_ALERTS = "dashboard_alerts"
+    DASHBOARD_ATTENDANCE = "dashboard_attendance"
+    DASHBOARD_TEACHERS = "dashboard_teachers"
+    DASHBOARD_STUDENTS = "dashboard_students"
+    DASHBOARD_ROOMS = "dashboard_rooms"
+    DASHBOARD_FINANCE = "dashboard_finance"
+    DASHBOARD_EXPORT = "dashboard_export"
+
     # صلاحيات الأقسام
     MANAGE_DEPARTMENTS = "manage_departments"
     VIEW_DEPARTMENTS = "view_departments"
@@ -351,14 +360,27 @@ ALL_PERMISSIONS = [
     {"key": Permission.VIEW_ARCHIVE, "label": "عرض الأرشيف", "category": "الأرشيف"},
     {"key": Permission.SEARCH_ARCHIVE, "label": "البحث في الأرشيف", "category": "الأرشيف"},
     {"key": Permission.EXPORT_ARCHIVE, "label": "تصدير من الأرشيف", "category": "الأرشيف"},
+    {"key": Permission.DASHBOARD_ALERTS, "label": "التنبيهات (حضور منخفض، محاضرات فائتة، تأخر، سندات)", "category": "لوحة القيادة"},
+    {"key": Permission.DASHBOARD_ATTENDANCE, "label": "مخطط الحضور", "category": "لوحة القيادة"},
+    {"key": Permission.DASHBOARD_TEACHERS, "label": "إحصائيات الأساتذة", "category": "لوحة القيادة"},
+    {"key": Permission.DASHBOARD_STUDENTS, "label": "إحصائيات الطلاب", "category": "لوحة القيادة"},
+    {"key": Permission.DASHBOARD_ROOMS, "label": "القاعات والجدول", "category": "لوحة القيادة"},
+    {"key": Permission.DASHBOARD_FINANCE, "label": "الإحصائيات المالية (تحتاج أيضاً صلاحية السندات)", "category": "لوحة القيادة"},
+    {"key": Permission.DASHBOARD_EXPORT, "label": "تصدير اللوحة PDF/Excel والملخصات الأسبوعية", "category": "لوحة القيادة"},
 ]
+
+DASHBOARD_PERMISSIONS = [Permission.DASHBOARD_ALERTS, Permission.DASHBOARD_ATTENDANCE, Permission.DASHBOARD_TEACHERS,
+                         Permission.DASHBOARD_STUDENTS, Permission.DASHBOARD_ROOMS, Permission.DASHBOARD_FINANCE, Permission.DASHBOARD_EXPORT]
+# الأدوار القيادية تحصل على كل أجزاء اللوحة افتراضياً
+for _r in (UserRole.ADMIN, UserRole.DEAN, UserRole.DEPARTMENT_HEAD):
+    DEFAULT_PERMISSIONS[_r] = DEFAULT_PERMISSIONS.get(_r, []) + [p for p in DASHBOARD_PERMISSIONS if p not in DEFAULT_PERMISSIONS.get(_r, [])]
 
 # الصلاحيات الكاملة تشمل الصلاحيات الفرعية
 # 🏛️ الأدوار القرائية: نطاق الجامعة كلها + صلاحيات العرض/التقارير/التصدير فقط — أي تعديل يُرفض بحارس القراءة
 READ_ONLY_ROLES = {UserRole.UNIVERSITY_PRESIDENT}
 READ_ONLY_PERMISSIONS = [
     p["key"] for p in ALL_PERMISSIONS
-    if p["key"].startswith(("view_", "report_", "export_")) or p["key"] in ("search_archive", "manage_fee_receipts")
+    if p["key"].startswith(("view_", "report_", "export_", "dashboard_")) or p["key"] in ("search_archive", "manage_fee_receipts")
 ]  # manage_fee_receipts = المفتاح الوحيد لقراءة السندات المالية؛ الكتابة محجوبة بحارس القراءة
 DEFAULT_PERMISSIONS[UserRole.UNIVERSITY_PRESIDENT] = list(READ_ONLY_PERMISSIONS)
 

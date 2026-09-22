@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from bson import ObjectId
 
 from .deps import get_db, get_current_user, build_user_context, export_headers
-from .management_dashboard import build_dashboard, _build_pdf, _is_management, PERIOD_LABELS
+from .management_dashboard import build_dashboard, _build_pdf, _is_management, dashboard_sections, PERIOD_LABELS
 from models.permissions import UserRole
 
 router = APIRouter()
@@ -133,8 +133,8 @@ async def weekly_digest_loop():
 
 
 def _ensure_management(user: dict):
-    if not _is_management(user):
-        raise HTTPException(status_code=403, detail="متاح للإدارة فقط")
+    if not _is_management(user) or not dashboard_sections(user)["export"]:
+        raise HTTPException(status_code=403, detail="ليس لديك صلاحية الملخصات الأسبوعية (تصدير لوحة القيادة)")
 
 
 @router.get("/dashboard/digests")

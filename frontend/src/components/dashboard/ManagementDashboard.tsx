@@ -122,6 +122,7 @@ export const ManagementDashboard = () => {
           onRefresh={() => load(true)}
           compact={compact}
           readOnly={!!data?.scope?.read_only}
+          canExport={data?.sections?.export !== false}
         />
         {data?.scope?.can_filter && (
           <DashScopeFilter faculties={data.scope.faculties} departments={data.scope.departments} facultyId={facultyId} departmentId={departmentId} onChange={onScope} />
@@ -131,8 +132,8 @@ export const ManagementDashboard = () => {
         {data && (
           <>
             <DashKpis n={data.numbers} periodLabel={data.period_label} compact={compact} />
-            <DashAlerts alerts={data.alerts} />
-            <DashAttendanceChart groupBy={data.chart.group_by} points={data.chart.points} periodLabel={data.period_label} width={Math.min(width, 1400) - 64} />
+            {data.sections?.alerts && <DashAlerts alerts={data.alerts} />}
+            {data.chart && <DashAttendanceChart groupBy={data.chart.group_by} points={data.chart.points} periodLabel={data.period_label} width={Math.min(width, 1400) - 64} />}
             {data.teachers && <DashTeachers t={data.teachers} periodLabel={data.period_label} />}
             <View style={[styles.cols, twoCol && { flexDirection: 'row-reverse' }]}>
               {data.students && <View style={{ flex: 1 }}><DashStudents s={data.students} periodLabel={data.period_label} /></View>}
