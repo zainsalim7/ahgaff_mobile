@@ -224,6 +224,7 @@ from routes.study_plans import router as study_plans_router
 from routes.admin_tools import router as admin_tools_router
 from routes.dashboard import router as dashboard_router
 from routes.management_dashboard import router as management_dashboard_router
+from routes.weekly_digest import router as weekly_digest_router, weekly_digest_loop
 from routes.calendar_events import router as calendar_router
 from routes.global_search import router as global_search_router
 from routes.entity_details import router as entity_details_router
@@ -17660,6 +17661,7 @@ app.include_router(study_plans_router, prefix="/api")
 app.include_router(admin_tools_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(management_dashboard_router, prefix="/api")
+app.include_router(weekly_digest_router, prefix="/api")
 app.include_router(calendar_router, prefix="/api")
 app.include_router(global_search_router, prefix="/api")
 app.include_router(alumni_router, prefix="/api")
@@ -17690,6 +17692,8 @@ async def migrate_teacher_prefs_defaults_v2():
 async def startup_event():
     from services.firebase_service import init_firebase
     init_firebase()
+    # 📬 الملخص الأسبوعي للوحة القيادة (السبت 07:00 اليمن)
+    asyncio.create_task(weekly_digest_loop())
     # تهيئة خدمة التخزين
     try:
         from services.storage_service import init_storage

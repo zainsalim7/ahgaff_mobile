@@ -345,3 +345,9 @@ gcloud run services delete ahgaff-frontend --region=me-central1
 | GCP (جديد) | `https://gcp.ahgaff.net` | `https://api-gcp.ahgaff.net` |
 
 **كلاهما يعمل في نفس الوقت، نفس قاعدة البيانات، نفس بيانات الدخول.** ✨
+
+## 📬 الملخص الأسبوعي للوحة القيادة (كل سبت 07:00 بتوقيت اليمن)
+- يعمل تلقائياً من داخل الباكند إذا كانت الخدمة دائمة التشغيل (`--min-instances=1`).
+- إذا كان Cloud Run يتوقف عند الخمول، أنشئ مهمة Cloud Scheduler (كل سبت 04:00 UTC = 07:00 اليمن):
+  `POST https://<BACKEND_URL>/api/internal/weekly-digest` مع الهيدر `X-Internal-Key: <INTERNAL_PUSH_KEY>`
+- الملفات تُحفظ في `uploads/digests/` — يُفضَّل ربط المجلد بقرص/تخزين دائم وإلا تُفقد الملفات القديمة عند إعادة النشر (يُعاد توليد ملخص الأسبوع الحالي بزر «إرسال الآن»).

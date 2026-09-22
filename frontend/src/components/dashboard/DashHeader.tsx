@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { DASH, NUM_FONT } from './dashTheme';
 
 type Period = 'day' | 'week' | 'month';
@@ -24,11 +25,17 @@ interface Props {
   readOnly?: boolean;
 }
 
-export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period, onPeriod, exporting, onExport, onRefresh, compact, readOnly }: Props) => (
+export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period, onPeriod, exporting, onExport, onRefresh, compact, readOnly }: Props) => {
+  const router = useRouter();
+  return (
   <View style={styles.hero} testID="dash-header">
     <View style={styles.grain} pointerEvents="none" />
     <View style={[styles.row, compact && { flexDirection: 'column-reverse', alignItems: 'stretch', gap: 14 }]}>
       <View style={styles.actions}>
+        <TouchableOpacity style={styles.actBtn} onPress={() => router.push('/dashboard-digests' as any)} testID="dash-digests-btn">
+          <Ionicons name="mail-unread-outline" size={15} color="#fff" />
+          <Text style={styles.actText}>الملخصات</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={styles.actBtn} onPress={onRefresh} testID="dash-refresh-btn">
           <Ionicons name="refresh" size={16} color="#fff" />
         </TouchableOpacity>
@@ -83,7 +90,8 @@ export const DashHeader = ({ userName, scopeLabel, semester, generatedAt, period
       ))}
     </View>
   </View>
-);
+  );
+};
 
 const styles = StyleSheet.create({
   hero: { backgroundColor: DASH.navy, borderRadius: 20, padding: 20, overflow: 'hidden', marginBottom: 16 },
