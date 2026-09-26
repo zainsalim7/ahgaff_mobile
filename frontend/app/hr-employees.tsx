@@ -10,6 +10,7 @@ import { EmployeeFormModal, Portal, inp, btn } from '../src/components/hr/Employ
 import { EmployeeDocuments } from '../src/components/hr/EmployeeDocuments';
 import { AccountRoleModal } from '../src/components/hr/AccountRoleModal';
 import { BulkToolbar } from '../src/components/hr/BulkToolbar';
+import { EmployeePhotoPanel } from '../src/components/hr/EmployeePhotoPanel';
 
 const STATUS_COLOR: Record<string, string> = { active: '#16a34a', probation: '#f97316', leave: '#0284c7', suspended: '#dc2626', ended: '#64748b' };
 
@@ -162,6 +163,7 @@ export default function HrEmployees() {
             {detail.subordinates?.length > 0 && <div style={{ marginTop: 12 }}><div style={{ fontSize: 12, fontWeight: 800, color: '#5b6678', marginBottom: 4 }}>يرأس ({detail.subordinates.length})</div>{detail.subordinates.map((s: any) => <div key={s.id} style={{ fontSize: 12, padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>{s.full_name}{s.job_title ? ` — ${s.job_title}` : ''}</div>)}</div>}
             {detail.notes && <div style={{ marginTop: 10, fontSize: 12, color: '#475569', backgroundColor: '#fafafa', padding: 8, borderRadius: 8 }}>{detail.notes}</div>}
             {detail.has_account && <div style={{ marginTop: 10, fontSize: 12.5, backgroundColor: '#f3e8ff', color: '#4c1d95', padding: '8px 10px', borderRadius: 8, textAlign: 'right' }} data-testid="hr-detail-role">حساب الدخول: <b>{detail.account_username}</b> · الدور: <b>{detail.role_name || 'موظف (خدمة ذاتية فقط)'}</b></div>}
+            <EmployeePhotoPanel employeeId={detail.id} canManage={canManage} />
             <EmployeeDocuments employeeId={detail.id} canManage={canManage} />
             {canManage && (
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 16 }}>

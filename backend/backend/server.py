@@ -221,6 +221,7 @@ from routes.hr_attendance import router as hr_attendance_router
 from routes.hr_correspondence import router as hr_corr_router
 from routes.hr_tasks import router as hr_tasks_router
 from routes.hr_appraisals import router as hr_appraisals_router, public_router as hr_verify_router
+from routes.hr_cards import router as hr_cards_router, public_router as hr_cards_public_router
 from routes.hr_documents import router as hr_documents_router
 from routes.hr_reports import router as hr_reports_router
 from routes.hr_alerts import router as hr_alerts_router, hr_alerts_loop
@@ -17920,6 +17921,8 @@ app.include_router(schedule_import_router, prefix="/api")
 app.include_router(schedule_resolver_router, prefix="/api")
 app.include_router(lectures_purge_router, prefix="/api")
 app.include_router(day_shift_router, prefix="/api")
+app.include_router(hr_cards_router, prefix="/api")
+app.include_router(hr_cards_public_router, prefix="/api")
 app.include_router(hr_router, prefix="/api")
 app.include_router(hr_leaves_router, prefix="/api")
 app.include_router(hr_attendance_router, prefix="/api")

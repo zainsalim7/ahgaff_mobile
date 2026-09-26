@@ -106,7 +106,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const host = window.location.hostname;
-    const VERIFY_PATHS = ['/verify-portal', '/verify-statement', '/verify-card', '/verify-certificate', '/verify-appraisal'];
+    const VERIFY_PATHS = ['/verify-portal', '/verify-statement', '/verify-card', '/verify-certificate', '/verify-appraisal', '/verify-employee'];
     if ((host === 'ahgaff.net' || host === 'www.ahgaff.net' || host === 'verify.ahgaff.edu') && !VERIFY_PATHS.includes(pathname)) {
       router.replace('/verify-portal');
     }
@@ -135,6 +135,7 @@ export default function RootLayout() {
           <Stack.Screen name="verify-card" options={{ headerShown: false }} />
           <Stack.Screen name="verify-certificate" options={{ headerShown: false }} />
           <Stack.Screen name="verify-appraisal" options={{ headerShown: false }} />
+          <Stack.Screen name="verify-employee" options={{ headerShown: false }} />
           <Stack.Screen name="verify-portal" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="take-attendance" options={{ title: 'تسجيل الحضور' }} />
