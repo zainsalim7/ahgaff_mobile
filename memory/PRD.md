@@ -488,3 +488,11 @@
 - عرض HR الأكاديمي `/dashboard/management` لم يعد يحمل `hr` (فقط `sections.hr`). تصدير الأكاديمي بدون جداول HR؛ تصدير HR مستقل (الملخص، التنبيهات، الفئات، الوحدات، الدوام، القوائم اليومية).
 - Frontend: `HRDashboardView` = `DashHRKpis` + `DashAlerts(title)` + بطاقة الأعداد (`DashHRHeadcount`) + بطاقة الفترة (`DashHRPeriod`) + `DashHR` (موقف اليوم). `DashUnitFilter` قائمة منسدلة هرمية للوحدات. `DashHeader` يأخذ `kicker`/`scopeIcon`. الفترة/التحديث/التصدير تعمل على العرض الحالي.
 - اختبار: iteration_79 — 13/13 backend + كل الواجهات + RBAC ✅
+
+## 2026-09-26: 🪪 البطاقة الوظيفية/الأكاديمية الرقمية + اعتماد الصورة (خيار المستخدم b) ✅
+- `routes/hr_cards.py` (مسجّل قبل `hr_router`): `GET /hr/employees/me/card` (معلم/موظف — نوع البطاقة، الرقم الوظيفي/الأكاديمي، الرتبة/المسمى، التخصص، الكلية/القسم/الوحدة من الهيكل التنظيمي أو سجل المعلم، العقد، الحالة، photo_url، card_token، verify_url، صالحة حتى = سنة أو نهاية العقد) · `GET /hr/employees/{id}/card` للإدارة.
+- الصورة: `POST /hr/employees/me/photo` (معلّقة، فرصة واحدة) · HR: `GET /hr/photos/pending`، `GET /hr/employees/{id}/photo?which=approved|pending`، `POST .../photo` (اعتماد مباشر)، `.../photo/approve|reject|allow-upload`، `DELETE .../photo` · إشعار للموظف بالقرار.
+- تحقق عام: `GET /hr/verify/employee/{token}` و`GET /hr/public/employee-photo/{token}`؛ صفحة `/verify-employee?token=` (مضافة لـ VERIFY_PATHS).
+- Admin UI: `EmployeePhotoPanel` داخل درج تفاصيل الموظف (معتمدة/معلّقة + أزرار).
+- الرد المرسل لوكيل بوابة الموظفين: كل المسارات الذاتية موجودة تحت `/api/hr/*/my` (لا راتب)، نفس JWT، نفس MongoDB.
+- اختبار: iteration_80 — 27/27 backend + الواجهات ✅
