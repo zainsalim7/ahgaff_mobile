@@ -26,6 +26,7 @@ const itemLine = (key: string, it: any) => {
   if (key === 'hr_contracts') return { main: it.employee_name, side: it.contract_end_date, sub: `${it.job_title || ''}${it.org_unit_name ? ` · ${it.org_unit_name}` : ''}` };
   if (key === 'hr_appraisals') return { main: it.employee_name, side: it.grade || '', sub: `تقييم ${it.year} · ${it.total_score ?? ''}` };
   if (key === 'hr_pending_photos') return { main: it.employee_name, side: it.pending_photo_at || '', sub: `الرقم الوظيفي ${it.employee_no || ''}` };
+  if (key === 'hr_pending_profile') return { main: it.employee_name, side: it.created_at || '', sub: it.fields || '' };
   if (key === 'hr_pending_letters') return { main: it.employee_name, side: it.type_label || '', sub: `${it.org_unit_name || ''} · طُلب ${it.created_at || ''}` };
   if (key === 'hr_low_commitment') return { main: it.name, side: `${it.rate}%`, sub: `${it.unit || ''} · غائب ${it.absent} · متأخر ${it.late}` };
   return { main: String(it.name || ''), side: '', sub: '' };

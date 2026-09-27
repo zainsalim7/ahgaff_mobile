@@ -223,6 +223,7 @@ from routes.hr_tasks import router as hr_tasks_router
 from routes.hr_appraisals import router as hr_appraisals_router, public_router as hr_verify_router
 from routes.hr_cards import router as hr_cards_router, public_router as hr_cards_public_router
 from routes.hr_letters import router as hr_letters_router, public_router as hr_letters_public_router
+from routes.hr_profile_requests import router as hr_profile_requests_router
 from routes.hr_documents import router as hr_documents_router
 from routes.hr_reports import router as hr_reports_router
 from routes.hr_alerts import router as hr_alerts_router, hr_alerts_loop
@@ -8090,6 +8091,8 @@ async def get_today_lectures(
             "end_time": lecture["end_time"],
             "day_shifted": bool(lecture.get("day_shift_id")),
             "day_shift_offset": lecture.get("day_shift_offset") or 0,
+            "day_shift_cancelled": bool(lecture.get("day_shift_cancelled")),
+            "credited_minutes": lecture.get("credited_minutes") or 0,
             "room": lecture.get("room", ""),
             "status": lecture.get("status", LectureStatus.SCHEDULED),
             "notes": lecture.get("notes", ""),
@@ -17924,6 +17927,7 @@ app.include_router(schedule_import_router, prefix="/api")
 app.include_router(schedule_resolver_router, prefix="/api")
 app.include_router(lectures_purge_router, prefix="/api")
 app.include_router(day_shift_router, prefix="/api")
+app.include_router(hr_profile_requests_router, prefix="/api")
 app.include_router(hr_letters_router, prefix="/api")
 app.include_router(hr_letters_public_router, prefix="/api")
 app.include_router(hr_cards_router, prefix="/api")

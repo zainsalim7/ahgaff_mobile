@@ -362,6 +362,26 @@ async def delete_letter(lid: str, current_user: dict = Depends(get_current_user)
     return {"message": "تم الحذف"}
 
 
+class PreviewIn(BaseModel):
+    body: Optional[str] = None
+
+
+@router.post("/{lid}/preview-pdf")
+async def letter_preview_pdf(lid: str, data: PreviewIn, current_user: dict = Depends(get_current_user)):
+    """👁️ معاينة PDF على الكليشة قبل الاعتماد (بدون حفظ أو رقم مرجعي نهائي)"""
+    _guard(current_user, P_MANAGE)
+    db = get_db()
+    l = await _load(db, lid)
+    emp = await db.employees.find_one({"_id": ObjectId(l["employee_id"])}) or {}
+    ctx = await _emp_ctx(db, emp)
+    body = (data.body or "").strip() or l.get("body") or default_body(l["type"], l.get("language", "ar"), ctx, l.get("addressed_to", ""), l.get("purpose", ""))
+    draft = {**l, "body": body, "snapshot": l.get("snapshot") or ctx, "ref_no": l.get("ref_no") or "مسوَّدة — DRAFT", "issue_date": l.get("issue_date") or _today().isoformat()}
+    s = await get_settings(db)
+    from .hr_letter_pdf import build_letter_pdf
+    import io
+    return StreamingResponse(io.BytesIO(build_letter_pdf(draft, s, "PREVIEW")), media_type="application/pdf")
+
+
 @router.get("/{lid}/pdf")
 async def letter_pdf(lid: str, current_user: dict = Depends(get_current_user)):
     db = get_db()

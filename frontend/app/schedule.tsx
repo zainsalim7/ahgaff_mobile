@@ -337,6 +337,17 @@ export default function ScheduleScreen() {
             <Ionicons name={st.icon} size={10} color={st.color} />
             <Text style={[s.cardStatusText, { color: st.color }]}>{st.label}</Text>
           </View>
+          {item.day_shift_cancelled ? (
+            <View style={[s.cardStatusBadge, { backgroundColor: '#fce4ec' }]} testID={`shift-cancelled-badge-${item.id}`}>
+              <Ionicons name="swap-horizontal" size={10} color="#ad1457" />
+              <Text style={[s.cardStatusText, { color: '#ad1457' }]}>ملغاة بالإزاحة</Text>
+            </View>
+          ) : item.day_shifted ? (
+            <View style={[s.cardStatusBadge, { backgroundColor: '#ede7f6' }]} testID={`shift-badge-${item.id}`}>
+              <Ionicons name="swap-horizontal" size={10} color="#5e35b1" />
+              <Text style={[s.cardStatusText, { color: '#5e35b1' }]}>{item.credited_minutes ? `60 د — إزاحة (تُحسب ${item.credited_minutes} د)` : 'إزاحة'}</Text>
+            </View>
+          ) : null}
           {typeof item.attendance_count !== 'undefined' && (
             <Text style={s.gAttText}>
               {item.status === 'completed' ? `حضور ${item.attendance_count || 0}/${item.total_enrolled || 0}` : `مسجل ${item.total_enrolled || 0}`}

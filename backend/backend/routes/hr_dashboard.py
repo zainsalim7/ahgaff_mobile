@@ -212,6 +212,7 @@ def _hr_alerts(t: dict, hc, p) -> list:
         if low:
             out.append({"key": "hr_low_commitment", "level": "danger", "count": len(low), "title": "موظفون التزامهم أقل من 75%", "hint": "خلال الفترة المختارة", "items": low, "route": "/hr-attendance"})
     out.append({"key": "hr_pending_photos", "level": "warning" if t.get("pending_photos") else "ok", "count": len(t.get("pending_photos") or []), "title": "صور بطاقات بانتظار الاعتماد", "hint": "اعتماد فردي أو جماعي", "items": t.get("pending_photos") or [], "route": "/hr-photo-approvals"})
+    out.append({"key": "hr_pending_profile", "level": "warning" if t.get("pending_profile") else "ok", "count": len(t.get("pending_profile") or []), "title": "طلبات تعديل بيانات معلّقة", "hint": "هاتف / عنوان / مؤهل…", "items": t.get("pending_profile") or [], "route": "/hr-profile-requests"})
     out.append({"key": "hr_pending_letters", "level": "warning" if t.get("pending_letters") else "ok", "count": len(t.get("pending_letters") or []), "title": "طلبات خطابات رسمية معلّقة", "hint": "تعريف / خبرة / استمرارية", "items": t.get("pending_letters") or [], "route": "/hr-letters"})
     return out
 
@@ -242,6 +243,13 @@ async def hr_dashboard_section(db, period: str, d_from: date, d_to: date, org_un
     today["pending_letters"] = [{"letter_id": str(l["_id"]), "employee_id": l["employee_id"], "type_label": LETTER_TYPES.get(l.get("type"), ""), "created_at": (l.get("created_at") or "")[:10]}
                                 for l in await db.hr_letters.find(lq, {"employee_id": 1, "type": 1, "created_at": 1}).sort("created_at", 1).limit(50).to_list(50)]
     await enrich_employee_refs(db, today["pending_letters"])
+    pq = {"status": "pending"}
+    if root:
+        pq["employee_id"] = {"$in": [str(e["_id"]) for e in emps]}
+    from .hr_profile_requests import EDITABLE_FIELDS
+    today["pending_profile"] = [{"request_id": str(r["_id"]), "employee_id": r["employee_id"], "fields": "، ".join(EDITABLE_FIELDS.get(k, k) for k in (r.get("changes") or {})), "created_at": (r.get("created_at") or "")[:10]}
+                                for r in await db.hr_profile_requests.find(pq, {"employee_id": 1, "changes": 1, "created_at": 1}).sort("created_at", 1).limit(50).to_list(50)]
+    await enrich_employee_refs(db, today["pending_profile"])
     try:
         headcount = await _headcount(db, emps, units, root)
     except Exception as e:

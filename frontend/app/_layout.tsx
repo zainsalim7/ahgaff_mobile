@@ -183,6 +183,7 @@ export default function RootLayout() {
           <Stack.Screen name="hr-tasks" options={{ title: 'المهام' }} />
           <Stack.Screen name="hr-appraisals" options={{ title: 'التقييم السنوي' }} />
           <Stack.Screen name="hr-letters" options={{ title: 'الخطابات الرسمية' }} />
+          <Stack.Screen name="hr-profile-requests" options={{ title: 'طلبات تعديل البيانات' }} />
           <Stack.Screen name="hr-photo-approvals" options={{ title: 'اعتماد صور البطاقات' }} />
           <Stack.Screen name="hr-annual-report" options={{ title: 'التقرير السنوي لشؤون الموظفين' }} />
           <Stack.Screen name="report-teacher-summary" options={{ title: 'ملخص المعلم' }} />

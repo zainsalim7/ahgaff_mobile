@@ -18,9 +18,14 @@ export const LetterDetailModal: React.FC<{ id: string; canManage: boolean; onClo
   const [body, setBody] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState('');
   useEffect(() => { hrAPI.letter(id).then((r) => { setL(r.data); setBody(r.data.body || r.data.draft_body || ''); }).catch(alertErr); }, [id]);
   if (!l) return null;
   const act = async (fn: () => Promise<any>, msg: string) => { setBusy(true); try { await fn(); onDone(msg); } catch (e) { alertErr(e); } finally { setBusy(false); } };
+  const preview = async () => {
+    setBusy(true);
+    try { const r = await hrAPI.letterPreviewPdf(l.id, body); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }))); } catch (e) { alertErr(e); } finally { setBusy(false); }
+  };
   const info: [string, any][] = [['الموظف', `${l.employee_name || ''} (${l.employee_no || ''})`], ['الوحدة', l.org_unit_name], ['النوع', l.type_label], ['اللغة', l.language_label], ['الجهة الموجّه إليها', l.addressed_to || '—'], ['الغرض', l.purpose || '—'], ['تاريخ الطلب', (l.created_at || '').slice(0, 10)]];
   if (l.status === 'approved') info.push(['الرقم المرجعي', l.ref_no], ['تاريخ الإصدار', l.issue_date], ['اعتمده', l.approved_by_name]);
   if (l.status === 'rejected') info.push(['سبب الرفض', l.decision_note], ['رفضه', l.decided_by_name]);
@@ -36,6 +41,12 @@ export const LetterDetailModal: React.FC<{ id: string; canManage: boolean; onClo
       <Field label={l.status === 'pending' && canManage ? 'نص الخطاب (يمكنك تعديله قبل الإصدار — النص المقترح مولَّد من بيانات الموظف)' : 'نص الخطاب'}>
         <textarea value={body} onChange={(e) => setBody(e.target.value)} readOnly={!(l.status === 'pending' && canManage)} rows={11} style={{ ...inp, direction: l.language === 'en' ? 'ltr' : 'rtl', textAlign: l.language === 'en' ? 'left' : 'right', fontFamily: 'inherit', lineHeight: 1.7, resize: 'vertical' }} data-testid="letter-body" />
       </Field>
+      {l.status === 'pending' && canManage && (
+        <div style={{ marginTop: 10 }}>
+          <button disabled={busy} onClick={preview} style={btn('#ede7f6', '#5e35b1')} data-testid="letter-preview-btn">👁️ {previewUrl ? 'تحديث المعاينة' : 'معاينة PDF على الكليشة'}</button>
+          {previewUrl && <iframe title="preview" src={previewUrl} style={{ width: '100%', height: 520, border: '1px solid #e2e8f0', borderRadius: 10, marginTop: 8, backgroundColor: '#f8fafc' }} data-testid="letter-preview-frame" />}
+        </div>
+      )}
       {l.status === 'pending' && canManage && (
         <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'end' }}>
           <Field label="سبب الرفض (عند الرفض فقط)"><input value={note} onChange={(e) => setNote(e.target.value)} style={inp} placeholder="مثال: بيانات العقد غير محدثة" data-testid="letter-reject-note" /></Field>
