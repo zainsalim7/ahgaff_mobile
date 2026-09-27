@@ -8210,6 +8210,11 @@ async def get_all_schedule_lectures(
             "end_time": lecture["end_time"],
             "room": lecture.get("room", ""),
             "status": lecture.get("status", LectureStatus.SCHEDULED),
+            "day_shifted": bool(lecture.get("day_shift_id")),
+            "day_shift_offset": lecture.get("day_shift_offset") or 0,
+            "day_shift_cancelled": bool(lecture.get("day_shift_cancelled")),
+            "credited_minutes": lecture.get("credited_minutes") or 0,
+            "cancel_reason": lecture.get("cancel_reason", ""),
             "teacher_name": teacher_map.get(str(course.get("teacher_id", "")), ""),
             "created_at": lecture.get("created_at", "")
         })

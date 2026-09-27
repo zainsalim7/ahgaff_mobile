@@ -4,6 +4,8 @@
 ## المشكلة الأصلية
 نظام شامل لإدارة الطلاب والمعلمين لجامعة الأحقاف: باكند مشترك (FastAPI/MongoDB)، تطبيق ويب إداري (React Native Web / Expo Router)، وتطبيقات موبايل مستقلة. يشمل: RBAC، إدارة الجداول، الحضور، المناهج الديناميكية، إدارة متعددة الكليات، الوثائق الرقمية (إفادات PDF مع QR، بطاقة طالب رقمية، شهادات تخرج)، ودورة حياة الفصول الدراسية. الواجهة بالعربية بالكامل.
 
+- 🐛 **إصلاح: شارات الإزاحة لا تظهر في الجدول اليومي (/schedule) على الإنتاج** (2026-09-27): السبب الجذري: حقول `day_shifted / day_shift_offset / day_shift_cancelled / credited_minutes` أُضيفت سابقاً إلى `GET /lectures/today` فقط، بينما شاشة الجدول تجلب من `GET /lectures/all-schedule` (server.py ~8197) الذي لم يُرجعها → الواجهة (schedule.tsx:340) لم تجد الحقول. أُضيفت الحقول (+cancel_reason) إلى all-schedule. تحقق: الإنتاج (app.ahgaff.net + api.ahgaff.net) كان يحوي الواجهة الجديدة أصلاً — المشكلة باكند فقط. (مُختبر: curl بفيكستشر مؤقت → الحقول ترجع، Playwright: الشارة «60 د — إزاحة (تُحسب 90 د)» ظاهرة على البطاقة — نُظف الفيكستشر). ⚠️ يلزم Save to GitHub + إعادة نشر باكند Railway ليظهر على الإنتاج.
+
 ## البنية
 - Backend: `/app/backend/backend/server.py` (قديم/ضخم) + `/app/backend/backend/routes/*` (weekly_schedule, statements, schedule_import, student_transfer, teaching_load...)
 - Frontend: `/app/frontend/app/*` (expo router) + `/app/frontend/src/components/MasterScheduleView.tsx`
