@@ -499,3 +499,10 @@
 
 ## 2026-09-27: 📅 الجدول اليومي — بطاقات الإحصاء تتبع الفلاتر وتفلتر بالضغط ✅
 - `app/schedule.tsx`: `scopedLectures` (كلية/قسم/وقت) → الإحصائيات تعكس النطاق المفلتر فقط؛ الضغط على منعقدة/مجدولة/ملغاة-غياب يفلتر القائمة (toggle، إطار ملوّن، «مسح الفلاتر» يشمله). testIDs: `stat-card-*`, `stat-value-*`.
+
+## 2026-09-27: 📜 الخطابات الرسمية + 🖼️ اعتماد صور البطاقات الجماعي ✅
+- `routes/hr_letters.py` + `hr_letter_pdf.py`: أنواع (تعريف/خبرة/استمرارية/موجّه لجهة) × لغة (ar/en). الموظف: `GET/POST /hr/letters/my`، `POST /{id}/cancel`. HR: `GET /hr/letters?status=`، `GET /{id}` (مع `draft_body` مولَّد من بيانات الموظف)، `POST /{id}/approve {body?}` → ref `HR-L-YYYY-NNNN` + verify_token + snapshot + إشعار، `POST /{id}/reject {note}`، `POST /hr/letters` إصدار مباشر، `DELETE` (غير الصادر)، `GET /{id}/pdf`. إعدادات الكليشة: `GET/PUT /hr/letters/settings`، رفع/حذف/عرض `settings/{letterhead|signature}`، هوامش. تحقق عام `GET /hr/verify/letter/{token}` + صفحة `/verify-letter`.
+- PDF: صورة الكليشة كخلفية A4 كاملة، التفاف الأسطر قبل bidi (base_dir R/L) لصحة العربية والإنجليزية المختلطة، كتلة توقيع (صورة + اسم + منصب)، QR + الرقم المرجعي والتاريخ أسفل الصفحة.
+- الصور: `POST /hr/photos/bulk {ids, action}`؛ شاشة `/hr-photo-approvals` (شبكة، تحديد متعدد، اعتماد/رفض جماعي وفردي). تنبيهات لوحة HR: `hr_pending_photos`، `hr_pending_letters` (مع الأسماء والمسارات).
+- Frontend: `hr-letters.tsx`، `LetterModals.tsx`، `LetterSettingsModal.tsx`، `hr-photo-approvals.tsx`، `verify-letter.tsx`؛ قائمة جانبية + ملفي الإداري.
+- اختبار: iteration_81 — 22/22 backend + كل الواجهات ✅
