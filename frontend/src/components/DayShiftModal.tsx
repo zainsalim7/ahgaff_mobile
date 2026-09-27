@@ -54,8 +54,8 @@ export const DayShiftModal: React.FC<Props> = ({ open, onClose, initialDate, onA
 
   const runApply = async () => {
     if (!preview) return;
-    const daysWithMoves = (preview.days || []).filter((d: any) => d.lectures > 0);
-    if (!window.confirm(`⚠️ تأكيد الإزاحة:\n\n• ${preview.total_lectures} محاضرة في ${daysWithMoves.length} يوم\n• النطاق: ${preview.faculty_name}\n• البداية الجديدة: ${newStart}\n${notify ? '• سيُرسل إشعار لكل الأساتذة والطلاب المتأثرين' : '• بدون إشعارات'}\n\nيمكن التراجع لاحقاً من شارة اليوم. متابعة؟`)) return;
+    const daysWithMoves = (preview.days || []).filter((d: any) => d.lectures > 0 || d.cancelled > 0);
+    if (!window.confirm(`⚠️ تأكيد الإزاحة:\n\n• ${preview.total_lectures} محاضرة صباحية تُزاح وتتقلص إلى 60 دقيقة في ${daysWithMoves.length} يوم\n• ${preview.total_kept || 0} محاضرة في الفترة الرابعة تبقى بوقتها\n• ${preview.total_cancelled || 0} محاضرة بعد الرابعة تُلغى\n• النطاق: ${preview.faculty_name}\n• البداية الجديدة: ${newStart}\n${notify ? '• سيُرسل إشعار لكل الأساتذة والطلاب المتأثرين' : '• بدون إشعارات'}\n\nيمكن التراجع لاحقاً من شارة اليوم. متابعة؟`)) return;
     setBusy(true); setErr('');
     try {
       const r = await api.post('/day-shift/apply', body());
@@ -73,7 +73,7 @@ export const DayShiftModal: React.FC<Props> = ({ open, onClose, initialDate, onA
       <div onClick={(ev) => ev.stopPropagation()} style={{ backgroundColor: '#fff', borderRadius: 14, padding: 22, width: 560, maxWidth: '94%', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.25)' }} data-testid="day-shift-modal">
         <div style={{ fontSize: 16, fontWeight: 800, color: '#0f2440', marginBottom: 4, textAlign: 'right' }}>⏰ إزاحة اليوم الدراسي</div>
         <div style={{ fontSize: 11.5, color: '#5b6678', marginBottom: 14, textAlign: 'right', lineHeight: 1.7 }}>
-          تُزاح <b>كل محاضرات اليوم أفقياً</b> بمقدار واحد مع الحفاظ على مددها والفواصل بينها. تُستثنى تلقائياً المحاضرات المنعقدة أو الملغاة أو التي بدأ تحضيرها. المحاضرات المُزاحة تُحمى من «مزامنة الأوقات».
+          تُزاح <b>الفترات الصباحية (قبل الرابعة) فقط</b> إلى وقت البداية الجديد وتتقلص كل محاضرة إلى <b>60 دقيقة</b> باستراحة <b>10 دقائق</b>. <b>الفترة الرابعة تبقى</b> بوقتها، و<b>ما بعدها يُلغى</b>. النصاب يُحسب بالمدة الأصلية. تُستثنى المحاضرات المنعقدة أو الملغاة أو التي بدأ تحضيرها، وتُحمى المُزاحة من «مزامنة الأوقات».
         </div>
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -123,13 +123,22 @@ export const DayShiftModal: React.FC<Props> = ({ open, onClose, initialDate, onA
         {preview && (
           <div style={{ backgroundColor: '#f7f9fc', border: '1px solid #e3e7ee', borderRadius: 10, padding: 12, marginBottom: 12 }} data-testid="day-shift-preview">
             <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-              {[['محاضرة ستُزاح', preview.total_lectures, '#1565c0'], ['مستثناة', preview.total_skipped, '#f57c00'], ['أستاذ متأثر', preview.teachers_affected, '#6a1b9a']].map(([l, v, c]: any) => (
+              {[['صباحية تُزاح (60 د)', preview.total_lectures, '#1565c0'], ['الرابعة تبقى', preview.total_kept || 0, '#2e7d32'], ['بعد الرابعة تُلغى', preview.total_cancelled || 0, '#c62828'], ['مستثناة', preview.total_skipped, '#f57c00'], ['أستاذ متأثر', preview.teachers_affected, '#6a1b9a']].map(([l, v, c]: any) => (
                 <div key={l} style={{ flex: 1, backgroundColor: '#fff', borderRadius: 8, padding: 8, textAlign: 'center', border: '1px solid #eee' }}>
                   <div style={{ fontSize: 20, fontWeight: 800, color: c }}>{v}</div>
                   <div style={{ fontSize: 11, color: '#666' }}>{l}</div>
                 </div>
               ))}
             </div>
+            <div style={{ fontSize: 11, color: '#455a64', backgroundColor: '#e3f2fd', borderRadius: 8, padding: '6px 10px', marginBottom: 8 }} data-testid="day-shift-rules">
+              📏 القواعد: تُزاح الفترات الصباحية (قبل الرابعة) فقط وتتقلص إلى {preview.rules?.compressed_minutes ?? 60} دقيقة باستراحة {preview.rules?.break_minutes ?? 10} دقائق · الفترة الرابعة تبقى · ما بعدها يُلغى · النصاب يُحسب بالمدة الأصلية
+            </div>
+            {preview.warnings?.length > 0 && <div style={{ fontSize: 11, color: '#b45309', backgroundColor: '#fff7ed', borderRadius: 8, padding: '6px 10px', marginBottom: 8 }} data-testid="day-shift-warnings">{preview.warnings.map((w: string, i: number) => <div key={i}>⚠️ {w}</div>)}</div>}
+            {preview.cancelled_sample?.length > 0 && (
+              <div style={{ fontSize: 11, color: '#c62828', marginBottom: 8 }} data-testid="day-shift-cancelled-sample">
+                ستُلغى: {preview.cancelled_sample.slice(0, 4).map((x: any) => `${x.course} (${x.date} ${x.time})`).join(' · ')}{preview.total_cancelled > 4 ? ' …' : ''}
+              </div>
+            )}
             {preview.total_skipped > 0 && (
               <div style={{ fontSize: 11, color: '#f57c00', textAlign: 'right', marginBottom: 8 }}>
                 المستثناة: {preview.skipped_reasons.completed} منعقدة · {preview.skipped_reasons.cancelled} ملغاة/غياب · {preview.skipped_reasons.attendance_started} بدأ تحضيرها
@@ -141,7 +150,7 @@ export const DayShiftModal: React.FC<Props> = ({ open, onClose, initialDate, onA
                 {(preview.days || []).map((d: any) => (
                   <tr key={d.date} style={{ borderTop: '1px solid #eee', color: d.lectures ? '#1a2540' : '#aaa' }} data-testid={`day-shift-day-${d.date}`}>
                     <td style={{ padding: 5, fontWeight: 700 }}>{d.date}</td>
-                    <td style={{ padding: 5, textAlign: 'center' }}>{d.lectures}{d.skipped ? <span style={{ color: '#f57c00' }}> (+{d.skipped} مستثناة)</span> : ''}</td>
+                    <td style={{ padding: 5, textAlign: 'center' }}>{d.lectures}{d.kept ? <span style={{ color: '#2e7d32' }}> · {d.kept} تبقى</span> : ''}{d.cancelled ? <span style={{ color: '#c62828' }}> · {d.cancelled} تُلغى</span> : ''}{d.skipped ? <span style={{ color: '#f57c00' }}> (+{d.skipped} مستثناة)</span> : ''}</td>
                     <td style={{ padding: 5, textAlign: 'center', fontWeight: 700, color: d.offset_minutes > 0 ? '#c62828' : d.offset_minutes < 0 ? '#2e7d32' : '#aaa' }}>{d.offset_minutes ? `${d.offset_minutes > 0 ? '+' : ''}${d.offset_minutes} د` : d.note || '—'}</td>
                     <td style={{ padding: 5, textAlign: 'center', direction: 'ltr' }}>{d.lectures ? `${d.old_first} → ${d.new_first}` : '—'}</td>
                     <td style={{ padding: 5, textAlign: 'center', direction: 'ltr' }}>{d.lectures ? `${d.old_last_end} → ${d.new_last_end}` : '—'}</td>
@@ -161,7 +170,7 @@ export const DayShiftModal: React.FC<Props> = ({ open, onClose, initialDate, onA
           {!preview ? (
             <button onClick={runPreview} disabled={busy || !dateFrom || (rangeMode && !dateTo)} style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', backgroundColor: '#1565c0', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', opacity: busy ? 0.6 : 1 }} data-testid="day-shift-preview-btn">{busy ? 'جاري الفحص...' : '🔍 معاينة الأثر'}</button>
           ) : (
-            <button onClick={runApply} disabled={busy || !preview.total_lectures} style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', backgroundColor: preview.total_lectures ? '#c62828' : '#bbb', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }} data-testid="day-shift-apply-btn">{busy ? 'جاري التنفيذ...' : `⏰ تنفيذ الإزاحة (${preview.total_lectures} محاضرة)`}</button>
+            <button onClick={runApply} disabled={busy || (!preview.total_lectures && !preview.total_cancelled)} style={{ flex: 1, padding: '10px 0', borderRadius: 8, border: 'none', backgroundColor: (preview.total_lectures || preview.total_cancelled) ? '#c62828' : '#bbb', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }} data-testid="day-shift-apply-btn">{busy ? 'جاري التنفيذ...' : `⏰ تنفيذ الإزاحة (${preview.total_lectures} تُزاح${preview.total_cancelled ? ` · ${preview.total_cancelled} تُلغى` : ''})`}</button>
           )}
           <button onClick={onClose} disabled={busy} style={{ padding: '10px 18px', borderRadius: 8, border: '1px solid #ddd', backgroundColor: '#fff', color: '#555', fontWeight: 700, fontSize: 13, cursor: 'pointer' }} data-testid="day-shift-cancel-btn">إغلاق</button>
         </div>

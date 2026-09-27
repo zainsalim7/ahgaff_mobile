@@ -12955,21 +12955,23 @@ async def get_teacher_workload_report(
             scheduled_hours = 0
             actual_hours = 0
             
+            # ⏰ المحاضرات المتقلصة بإزاحة اليوم تُحسب بمدتها الأصلية (credited_minutes) في النصاب
+            def _lec_hours(lecture):
+                if lecture.get("credited_minutes"):
+                    return float(lecture["credited_minutes"]) / 60
+                start_time = datetime.strptime(lecture.get("start_time", "00:00"), "%H:%M")
+                end_time = datetime.strptime(lecture.get("end_time", "00:00"), "%H:%M")
+                return (end_time - start_time).seconds / 3600
+
             for lecture in scheduled_lectures:
                 try:
-                    start_time = datetime.strptime(lecture.get("start_time", "00:00"), "%H:%M")
-                    end_time = datetime.strptime(lecture.get("end_time", "00:00"), "%H:%M")
-                    duration = (end_time - start_time).seconds / 3600
-                    scheduled_hours += duration
+                    scheduled_hours += _lec_hours(lecture)
                 except Exception:
                     scheduled_hours += 1
             
             for lecture in executed_lectures:
                 try:
-                    start_time = datetime.strptime(lecture.get("start_time", "00:00"), "%H:%M")
-                    end_time = datetime.strptime(lecture.get("end_time", "00:00"), "%H:%M")
-                    duration = (end_time - start_time).seconds / 3600
-                    actual_hours += duration
+                    actual_hours += _lec_hours(lecture)
                 except Exception:
                     actual_hours += 1
             
