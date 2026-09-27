@@ -68,6 +68,7 @@ export const MyLeavesShortcut: React.FC = () => {
       <button onClick={() => router.push('/hr-my-leaves')} style={btn('#1565c0')} data-testid="hr-me-goto-leaves">🏖️ إجازاتي وطلب إجازة</button>
       <button onClick={() => router.push('/hr-tasks')} style={btn('#0f2440')} data-testid="hr-me-goto-tasks">✅ مهامي</button>
       <button onClick={() => router.push('/hr-appraisals')} style={btn('#f1f5f9', '#0f2440')} data-testid="hr-me-goto-appraisals">⭐ تقييمي السنوي</button>
+      <button onClick={() => router.push('/hr-letters')} style={btn('#f1f5f9', '#0f2440')} data-testid="hr-me-goto-letters">📜 خطاباتي الرسمية</button>
     </div>
   );
 };

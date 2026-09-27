@@ -106,7 +106,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const host = window.location.hostname;
-    const VERIFY_PATHS = ['/verify-portal', '/verify-statement', '/verify-card', '/verify-certificate', '/verify-appraisal', '/verify-employee'];
+    const VERIFY_PATHS = ['/verify-portal', '/verify-statement', '/verify-card', '/verify-certificate', '/verify-appraisal', '/verify-employee', '/verify-letter'];
     if ((host === 'ahgaff.net' || host === 'www.ahgaff.net' || host === 'verify.ahgaff.edu') && !VERIFY_PATHS.includes(pathname)) {
       router.replace('/verify-portal');
     }
@@ -136,6 +136,7 @@ export default function RootLayout() {
           <Stack.Screen name="verify-certificate" options={{ headerShown: false }} />
           <Stack.Screen name="verify-appraisal" options={{ headerShown: false }} />
           <Stack.Screen name="verify-employee" options={{ headerShown: false }} />
+          <Stack.Screen name="verify-letter" options={{ headerShown: false }} />
           <Stack.Screen name="verify-portal" options={{ headerShown: false }} />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="take-attendance" options={{ title: 'تسجيل الحضور' }} />
@@ -181,6 +182,8 @@ export default function RootLayout() {
           <Stack.Screen name="hr-correspondence" options={{ title: 'المراسلات والتعاميم' }} />
           <Stack.Screen name="hr-tasks" options={{ title: 'المهام' }} />
           <Stack.Screen name="hr-appraisals" options={{ title: 'التقييم السنوي' }} />
+          <Stack.Screen name="hr-letters" options={{ title: 'الخطابات الرسمية' }} />
+          <Stack.Screen name="hr-photo-approvals" options={{ title: 'اعتماد صور البطاقات' }} />
           <Stack.Screen name="hr-annual-report" options={{ title: 'التقرير السنوي لشؤون الموظفين' }} />
           <Stack.Screen name="report-teacher-summary" options={{ title: 'ملخص المعلم' }} />
           <Stack.Screen name="report-teacher-attendance" options={{ title: 'حضور الأساتذة' }} />

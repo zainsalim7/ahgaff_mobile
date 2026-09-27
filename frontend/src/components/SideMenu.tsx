@@ -146,6 +146,8 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'hr-attendance', label: 'الحضور الإداري', icon: 'finger-print', path: '/hr-attendance', permissions: [PERMISSIONS.HR_VIEW_EMPLOYEES, PERMISSIONS.HR_MANAGE_ATTENDANCE] },
   { id: 'hr-correspondence', label: 'المراسلات والتعاميم', icon: 'mail-open', path: '/hr-correspondence', permissions: [PERMISSIONS.HR_VIEW_EMPLOYEES, PERMISSIONS.HR_MANAGE_CORRESPONDENCE] },
   { id: 'hr-annual-report', label: 'التقرير السنوي HR', icon: 'stats-chart', path: '/hr-annual-report', permissions: [PERMISSIONS.HR_VIEW_EMPLOYEES, PERMISSIONS.HR_MANAGE_EMPLOYEES] },
+  { id: 'hr-letters', label: 'الخطابات الرسمية', icon: 'document-text', path: '/hr-letters', permissions: [], forAll: true },
+  { id: 'hr-photo-approvals', label: 'اعتماد صور البطاقات', icon: 'images', path: '/hr-photo-approvals', permissions: [PERMISSIONS.HR_VIEW_EMPLOYEES, PERMISSIONS.HR_MANAGE_EMPLOYEES] },
   { id: 'hr-tasks', label: 'المهام', icon: 'checkbox', path: '/hr-tasks', permissions: [], forAll: true },
   { id: 'hr-appraisals', label: 'التقييم السنوي', icon: 'star', path: '/hr-appraisals', permissions: [], forAll: true },
   { id: 'hr-my-profile', label: 'ملفي الإداري', icon: 'person-circle', path: '/hr-my-profile', permissions: [], forAll: true },

@@ -246,6 +246,27 @@ async def remove_photo(emp_id: str, current_user: dict = Depends(get_current_use
     return {"message": "تم حذف الصورة المعتمدة"}
 
 
+@router.post("/photos/bulk")
+async def bulk_photos(data: dict, current_user: dict = Depends(get_current_user)):
+    """اعتماد/رفض جماعي للصور المعلّقة — body: {ids: [...], action: 'approve'|'reject'}"""
+    _guard(current_user, P_MANAGE)
+    db = get_db()
+    ids = [i for i in (data.get("ids") or []) if ObjectId.is_valid(i)]
+    action = data.get("action")
+    if not ids or action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="حدد الموظفين والإجراء")
+    done = 0
+    for e in await db.employees.find({"_id": {"$in": [ObjectId(i) for i in ids]}, "pending_photo_path": {"$exists": True, "$ne": ""}}).to_list(500):
+        if action == "approve":
+            await db.employees.update_one({"_id": e["_id"]}, {"$set": {"photo_path": e["pending_photo_path"]}, "$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
+        else:
+            await db.employees.update_one({"_id": e["_id"]}, {"$set": {"photo_upload_allowed": True}, "$unset": {"pending_photo_path": "", "pending_photo_at": ""}})
+        await _notify_decision(db, e, action == "approve")
+        done += 1
+    await log_activity(current_user, f"hr_bulk_photo_{action}", "employee", "", f"{done} صورة", {"ids": ids})
+    return {"message": f"تم {'اعتماد' if action == 'approve' else 'رفض'} {done} صورة", "count": done}
+
+
 @public_router.get("/verify/employee/{token}")
 async def verify_employee_card(token: str):
     """🔎 تحقق عام من البطاقة الوظيفية/الأكاديمية — بدون تسجيل دخول"""

@@ -211,6 +211,8 @@ def _hr_alerts(t: dict, hc, p) -> list:
         low = [e for e in p["bottom_employees"] if e["rate"] is not None and e["rate"] < 75]
         if low:
             out.append({"key": "hr_low_commitment", "level": "danger", "count": len(low), "title": "موظفون التزامهم أقل من 75%", "hint": "خلال الفترة المختارة", "items": low, "route": "/hr-attendance"})
+    out.append({"key": "hr_pending_photos", "level": "warning" if t.get("pending_photos") else "ok", "count": len(t.get("pending_photos") or []), "title": "صور بطاقات بانتظار الاعتماد", "hint": "اعتماد فردي أو جماعي", "items": t.get("pending_photos") or [], "route": "/hr-photo-approvals"})
+    out.append({"key": "hr_pending_letters", "level": "warning" if t.get("pending_letters") else "ok", "count": len(t.get("pending_letters") or []), "title": "طلبات خطابات رسمية معلّقة", "hint": "تعريف / خبرة / استمرارية", "items": t.get("pending_letters") or [], "route": "/hr-letters"})
     return out
 
 
@@ -230,6 +232,16 @@ async def hr_dashboard_section(db, period: str, d_from: date, d_to: date, org_un
         emp_q["org_unit_id"] = {"$in": list(_subtree(units, root))}
     emps = await db.employees.find(emp_q, {"full_name": 1, "employee_no": 1, "category": 1, "contract_type": 1, "org_unit_id": 1, "status": 1}).to_list(20000)
     today = await hr_dashboard_summary(db, [str(e["_id"]) for e in emps] if root else None)
+    emp_scope = {"_id": {"$in": [e["_id"] for e in emps]}} if root else {}
+    today["pending_photos"] = [{"employee_id": str(e["_id"]), "employee_name": e.get("full_name", ""), "employee_no": e.get("employee_no", ""), "pending_photo_at": (e.get("pending_photo_at") or "")[:10]}
+                               for e in await db.employees.find({**emp_scope, "pending_photo_path": {"$exists": True, "$ne": ""}}, {"full_name": 1, "employee_no": 1, "pending_photo_at": 1}).sort("pending_photo_at", 1).limit(50).to_list(50)]
+    lq = {"status": "pending"}
+    if root:
+        lq["employee_id"] = {"$in": [str(e["_id"]) for e in emps]}
+    from .hr_letters import LETTER_TYPES
+    today["pending_letters"] = [{"letter_id": str(l["_id"]), "employee_id": l["employee_id"], "type_label": LETTER_TYPES.get(l.get("type"), ""), "created_at": (l.get("created_at") or "")[:10]}
+                                for l in await db.hr_letters.find(lq, {"employee_id": 1, "type": 1, "created_at": 1}).sort("created_at", 1).limit(50).to_list(50)]
+    await enrich_employee_refs(db, today["pending_letters"])
     try:
         headcount = await _headcount(db, emps, units, root)
     except Exception as e:
