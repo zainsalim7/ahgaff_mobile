@@ -1,0 +1,30 @@
+{
+  "summary": "Tested 3 new HR features against public preview URL: (1) Letter PDF preview endpoint, (2) Profile change requests full flow, (3) Schedule day-shift new fields. Backend pytest: 8 passed, 1 skipped (no lectures scheduled in next 14 days so UI badge check skipped as instructed). Frontend admin UI verified end-to-end: /hr-profile-requests renders tabs pending/approved/rejected/all/mine, KPIs, hr-profile-table with rows, clicking a row opens profile-decision-modal containing profile-changes-table, profile-new-phone editable input, profile-decision-note, profile-approve-btn and profile-reject-btn. /hr-letters row click opens letter-detail-modal, letter-preview-btn is present, clicking it renders letter-preview-frame (iframe with blob src). Dashboard shows dash-alert-hr_pending_profile card (count>=1) with route /hr-profile-requests once a pending exists. Employee UI (/hr-profile-requests as 9999) could NOT be exercised in the browser because the account is blocked from web login by design (error banner 'هذا الحساب مخصص للتطبيق فقط. يرجى استخدام تطبيق الجوال أو زيارة students.ahgaff.net'); however the entire employee-side API flow (POST/GET /my, cancel, unknown field ignored, second-pending 400, no-changes 400, teacher180156 without employee record 404) is covered by backend tests and all pass. Backend day_shift_cancelled and credited_minutes fields are present in server.py at ~line 8094; DB has no scheduled lectures near today so live UI badges could not be exercised (skipped as instructed).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "web console (all pages)", "issues": ["Repeated 'Unknown event handler property onStartShouldSetResponder / onResponderMove / onResponderRelease…' warnings from react-native-web — harmless, pre-existing.", "Occasional 'Unexpected text node: A text node cannot be a child of a <View>' during navigation — pre-existing, non-blocking."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_hr_new_features.py", "/app/test_reports/pytest/hr_new_features.xml"],
+  "action_items": [
+    "Employee accounts (role=employee like 9999) are hard-blocked from the web login form; if HR self-service on web is intended for teachers/employees, revisit the web-only-blocked message so E2E web testing of /hr-profile-requests as an employee is possible. If mobile-only by design, mark this as WAI and note it in QA notes.",
+    "DB has zero scheduled lectures in the next 14 days for the active semester — the UI badge portion of feature #3 could not be exercised on the live preview. Consider seeding a couple of lectures in the near-term semester, or add a manual seed script, so schedule/day-shift regressions can be tested end-to-end."
+  ],
+  "critical_code_review_comments": [
+    "hr_profile_requests.py `_view` returns changes_view every time from a list-comprehension iterating `changes.items()` — fine for small sets. Consider caching for large history lists (>50 items).",
+    "cancel_request permits any user with `_can_view` to cancel someone else's request — acceptable for HR managers but note that any admin can silently cancel an employee's request; audit logging is not called on cancel (unlike approve). Consider adding `log_activity` in cancel_request for traceability.",
+    "approve_request pushes to `history` array on employees collection without bounds — over years this array will grow unboundedly. Consider capping or archiving.",
+    "server.py at ~8094 hard-codes `credited_minutes: lecture.get('credited_minutes') or 0` — returning `0` for lectures without a credited value is fine but consider `None` if UI wants to distinguish 'never shifted' from 'shifted with 0 minutes'.",
+    "Side menu wasn't confirmed to contain 'طلبات تعديل البيانات' via a body-text search when collapsed — check that data-testid on the menu link exists for future automated coverage."
+  ],
+  "updated_files": ["/app/backend/tests/test_hr_new_features.py"],
+  "success_rate": {"backend": "100% (8/8, 1 skipped by design)", "frontend": "100% for admin (all critical testIDs found: hr-profile-tabs-*, hr-profile-table, profile-decision-modal, profile-changes-table, profile-new-phone, profile-approve-btn, profile-reject-btn, profile-decision-note, letter-preview-btn, letter-preview-frame, dash-alert-hr_pending_profile). Employee-side web UI blocked by web-login restriction (WAI likely)."},
+  "test_credentials": "See /app/memory/test_credentials.md",
+  "seed_data_creation": "Test suite auto-creates/cancels pending profile requests + letters for حسن صالح during runs. Final state after test run: 9999 has no pending profile-requests and no pending letters. Employee profile fields left with test values (phone e.g. '779007638', address 'عنوان مصحح <stamp>', specialization 'شريعة'); other editable fields empty. Not restored to empty as instructions allowed leaving as test values.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_hr_new_features.py -v. New feature testIDs to know — profile requests: hr-profile-tabs-{pending|approved|rejected|all|mine}, hr-profile-table, profile-row-<id>, profile-decision-modal, profile-changes-table, profile-new-<field>, profile-approve-btn, profile-reject-btn, profile-decision-note, profile-request-btn, profile-request-form, profile-field-<field>, profile-request-submit, profile-cancel-<id>, hr-me-goto-profile-requests. Dashboard: dash-alert-hr_pending_profile. Letters: letter-preview-btn, letter-preview-frame (headless Chromium won't render PDF inside iframe — only assert element exists). Schedule: shift-badge-<id>, shift-cancelled-badge-<id> — DB currently has no scheduled lectures near today so these badges cannot be live-tested; test suite auto-skips."
+}

@@ -523,3 +523,9 @@
 - preview/apply يعيدان `total_kept/total_cancelled/warnings/rules/cancelled_sample`; revert يعيد الأوقات ويلغي الإلغاء (`kind: move|cancel`). `my-today` يعرض `cancelled/compressed`. الإشعارات تذكر المواعيد الجديدة والملغاة.
 - Frontend: `DayShiftModal` يعرض القواعد والأعداد الجديدة والتحذيرات وعينة الملغاة.
 - اختبار ذاتي (curl + DB + screenshot) ✅
+
+## 2026-09-27: 👁️ معاينة الخطاب + ✏️ طلبات تعديل البيانات + 🏷️ شارات الإزاحة ✅
+- `POST /hr/letters/{id}/preview-pdf {body?}` → PDF مسوَّدة على الكليشة بدون تغيير الحالة؛ زر «معاينة PDF» + iframe في نافذة اعتماد الخطاب.
+- `routes/hr_profile_requests.py`: حقول قابلة للطلب (هاتف، بريد، عنوان، طوارئ، مؤهل، تخصص، هوية، انتهاء الهوية، ميلاد). الموظف `GET/POST /hr/profile-requests/my`، `POST /{id}/cancel`؛ HR `GET /hr/profile-requests?status=`، `POST /{id}/approve {note, changes?}` (يحفظ في `employees` + history + إشعار)، `POST /{id}/reject {note}`. طلب معلّق واحد لكل موظف. تنبيه لوحة HR `hr_pending_profile`. شاشة `/hr-profile-requests` (HR + الموظف) + زر في ملفي الإداري + القائمة الجانبية.
+- الجدول اليومي: `all-schedule` يعيد `day_shift_cancelled` و`credited_minutes`؛ بطاقة المحاضرة تعرض «60 د — إزاحة (تُحسب 90 د)» أو «ملغاة بالإزاحة» (`shift-badge-*`, `shift-cancelled-badge-*`).
+- اختبار: iteration_82 — 8/8 backend (+1 skipped لعدم وجود محاضرات) + واجهات الأدمن ✅
