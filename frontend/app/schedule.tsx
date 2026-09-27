@@ -59,6 +59,7 @@ export default function ScheduleScreen() {
   const [filterFaculty, setFilterFaculty] = useState('');
   const [filterDept, setFilterDept] = useState('');
   const [filterTime, setFilterTime] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'' | 'completed' | 'scheduled' | 'cancelled'>('');
   const [purgeModal, setPurgeModal] = useState(false);
   const [purgeScope, setPurgeScope] = useState<'faculty' | 'department' | 'course'>('department');
   const [purgeFaculty, setPurgeFaculty] = useState('');
@@ -211,16 +212,23 @@ export default function ScheduleScreen() {
     return ACCENT_COLORS[Math.abs(hash) % ACCENT_COLORS.length];
   };
 
+  // 📊 الإحصائيات تتبع فلاتر الكلية/القسم/الوقت (لا فلتر الحالة) حتى تعكس ما هو معروض فقط
+  const scopedLectures = useMemo(() => lectures.filter((l) =>
+    (!filterFaculty || l.faculty_id === filterFaculty) && (!filterDept || l.department_id === filterDept) && (!filterTime || l.start_time === filterTime)
+  ), [lectures, filterFaculty, filterDept, filterTime]);
+
   const statsCounts = useMemo(() => {
-    const counts = { total: lectures.length, completed: 0, scheduled: 0, cancelled: 0, absent: 0 };
-    lectures.forEach((l) => {
+    const counts = { total: scopedLectures.length, completed: 0, scheduled: 0, cancelled: 0, absent: 0 };
+    scopedLectures.forEach((l) => {
       if (l.status === 'completed') counts.completed++;
       else if (l.status === 'scheduled') counts.scheduled++;
       else if (l.status === 'cancelled') counts.cancelled++;
       else if (l.status === 'absent') counts.absent++;
     });
     return counts;
-  }, [lectures]);
+  }, [scopedLectures]);
+
+  const toggleStatus = (st: 'completed' | 'scheduled' | 'cancelled') => setFilterStatus((cur) => (cur === st ? '' : st));
 
   // 🎛️ خيارات الفلاتر مستخرجة من محاضرات اليوم نفسها (كلية ← قسم ← وقت)
   const filterOptions = useMemo(() => {
@@ -240,20 +248,18 @@ export default function ScheduleScreen() {
 
   useEffect(() => { setFilterDept(''); }, [filterFaculty]);
 
-  const activeFiltersCount = [filterFaculty, filterDept, filterTime].filter(Boolean).length;
-  const clearFilters = () => { setFilterFaculty(''); setFilterDept(''); setFilterTime(''); };
+  const activeFiltersCount = [filterFaculty, filterDept, filterTime, filterStatus].filter(Boolean).length;
+  const clearFilters = () => { setFilterFaculty(''); setFilterDept(''); setFilterTime(''); setFilterStatus(''); };
 
   const filteredLectures = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return lectures.filter((l) => {
-      if (filterFaculty && l.faculty_id !== filterFaculty) return false;
-      if (filterDept && l.department_id !== filterDept) return false;
-      if (filterTime && l.start_time !== filterTime) return false;
+    return scopedLectures.filter((l) => {
+      if (filterStatus === 'cancelled' ? !['cancelled', 'absent'].includes(l.status) : filterStatus && l.status !== filterStatus) return false;
       if (!q) return true;
       return [l.course_name, l.course_code, l.teacher_name, l.faculty_name, l.department_name, l.room]
         .some((v) => (v || '').toLowerCase().includes(q));
     });
-  }, [lectures, searchQuery, filterFaculty, filterDept, filterTime]);
+  }, [scopedLectures, searchQuery, filterStatus]);
 
   // 🗂️ تجميع المحاضرات حسب الفترة الزمنية (قروبات مرتبة زمنياً)
   const timeGroups = useMemo(() => {
@@ -402,40 +408,26 @@ export default function ScheduleScreen() {
             </View>
           </View>
 
-          {/* Stats grid */}
+          {/* Stats grid — قابلة للضغط لفلترة القائمة حسب الحالة */}
           <View style={s.statsGrid}>
-            <View style={s.statCard}>
-              <View style={[s.statIconWrap, { backgroundColor: '#1a237e' }]}><Ionicons name="calendar" size={22} color="#fff" /></View>
-              <View style={s.statTextCol}>
-                <Text style={s.statLabel}>إجمالي المحاضرات</Text>
-                <Text style={s.statValue}>{statsCounts.total}</Text>
-                <Text style={s.statSubLabel}>محاضرة</Text>
-              </View>
-            </View>
-            <View style={s.statCard}>
-              <View style={[s.statIconWrap, { backgroundColor: '#2e7d32' }]}><Ionicons name="checkmark-circle" size={22} color="#fff" /></View>
-              <View style={s.statTextCol}>
-                <Text style={s.statLabel}>منعقدة</Text>
-                <Text style={s.statValue}>{statsCounts.completed}</Text>
-                <Text style={s.statSubLabel}>محاضرة مكتملة</Text>
-              </View>
-            </View>
-            <View style={s.statCard}>
-              <View style={[s.statIconWrap, { backgroundColor: '#1565c0' }]}><Ionicons name="time" size={22} color="#fff" /></View>
-              <View style={s.statTextCol}>
-                <Text style={s.statLabel}>مجدولة</Text>
-                <Text style={s.statValue}>{statsCounts.scheduled}</Text>
-                <Text style={s.statSubLabel}>قيد الانتظار</Text>
-              </View>
-            </View>
-            <View style={s.statCard}>
-              <View style={[s.statIconWrap, { backgroundColor: '#c62828' }]}><Ionicons name="close-circle" size={22} color="#fff" /></View>
-              <View style={s.statTextCol}>
-                <Text style={s.statLabel}>ملغاة/غياب</Text>
-                <Text style={s.statValue}>{statsCounts.cancelled + statsCounts.absent}</Text>
-                <Text style={s.statSubLabel}>محاضرة</Text>
-              </View>
-            </View>
+            {([
+              { key: '', label: 'إجمالي المحاضرات', value: statsCounts.total, sub: filterFaculty || filterDept || filterTime ? 'ضمن الفلتر الحالي' : 'محاضرة', color: '#1a237e', icon: 'calendar' as const, id: 'total' },
+              { key: 'completed', label: 'منعقدة', value: statsCounts.completed, sub: 'محاضرة مكتملة', color: '#2e7d32', icon: 'checkmark-circle' as const, id: 'completed' },
+              { key: 'scheduled', label: 'مجدولة', value: statsCounts.scheduled, sub: 'قيد الانتظار', color: '#1565c0', icon: 'time' as const, id: 'scheduled' },
+              { key: 'cancelled', label: 'ملغاة/غياب', value: statsCounts.cancelled + statsCounts.absent, sub: `ملغاة ${statsCounts.cancelled} · غياب ${statsCounts.absent}`, color: '#c62828', icon: 'close-circle' as const, id: 'cancelled' },
+            ] as const).map((c) => {
+              const on = c.key ? filterStatus === c.key : !filterStatus;
+              return (
+                <TouchableOpacity key={c.id} style={[s.statCard, on && c.key ? { borderWidth: 2, borderColor: c.color } : null]} onPress={() => (c.key ? toggleStatus(c.key) : setFilterStatus(''))} activeOpacity={0.8} testID={`stat-card-${c.id}`}>
+                  <View style={[s.statIconWrap, { backgroundColor: c.color }]}><Ionicons name={c.icon} size={22} color="#fff" /></View>
+                  <View style={s.statTextCol}>
+                    <Text style={s.statLabel}>{c.label}</Text>
+                    <Text style={[s.statValue, on && c.key ? { color: c.color } : null]} testID={`stat-value-${c.id}`}>{c.value}</Text>
+                    <Text style={s.statSubLabel}>{on && c.key ? 'مفلترة — اضغط للإلغاء' : c.sub}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           {/* Date picker card */}
