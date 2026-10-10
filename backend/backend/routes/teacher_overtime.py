@@ -154,13 +154,21 @@ def _holiday_deduction(holidays: Dict[str, str], day_hours: Dict[int, float], fi
 
 
 async def _course_weekly_hours(db, teacher_id: str, course: dict) -> float:
+    """الساعات الأسبوعية للمقرر: من إعدادات المقرر نفسه (الساعات المعتمدة/الأسبوعية) أولاً، ثم عبء التدريس، ثم مجموع الجدول الأسبوعي"""
+    for k in ("weekly_hours", "credit_hours", "hours"):
+        try:
+            v = float(course.get(k) or 0)
+        except (TypeError, ValueError):
+            v = 0
+        if v > 0:
+            return v
     load = await db.teaching_loads.find_one({"teacher_id": teacher_id, "course_id": str(course["_id"])})
     if load and load.get("weekly_hours"):
         return float(load["weekly_hours"])
     total = 0.0
-    async for s in db.weekly_schedule.find({"course_id": str(course["_id"])}, {"start_time": 1, "end_time": 1}):
-        total += _lec_hours(s)
-    return round(total, 2) if total else float(course.get("credit_hours") or 3)
+    async for sch in db.weekly_schedule.find({"course_id": str(course["_id"])}, {"start_time": 1, "end_time": 1}):
+        total += _lec_hours(sch)
+    return round(total, 2) if total else 3.0
 
 
 async def semester_for_period(db, start_str: str, end_str: str) -> Optional[dict]:
