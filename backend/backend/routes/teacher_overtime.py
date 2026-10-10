@@ -14,7 +14,7 @@ from bson import ObjectId
 from .deps import get_db, get_current_user, has_permission, export_filename, export_headers
 from models.permissions import UserRole, Permission
 from models.lectures import LectureStatus
-from ._active_semester import get_active_semester
+from ._active_semester import get_active_semester, normalize_sem_date
 
 router = APIRouter(tags=["التقارير - الساعات الإضافية"])
 
@@ -163,12 +163,30 @@ async def _course_weekly_hours(db, teacher_id: str, course: dict) -> float:
     return round(total, 2) if total else float(course.get("credit_hours") or 3)
 
 
+async def semester_for_period(db, start_str: str, end_str: str) -> Optional[dict]:
+    """الفصل الذي تقع فيه فترة التقرير حسب التاريخ (وإلا الفصل النشط)"""
+    best = None
+    async for sem in db.semesters.find({}):
+        s0, e0 = normalize_sem_date(sem.get("start_date")), normalize_sem_date(sem.get("end_date"))
+        if s0 and e0 and s0 <= end_str and e0 >= start_str:
+            if best is None or (sem.get("status") == "active" or sem.get("is_active")):
+                best = sem
+    if best:
+        return {"id": str(best["_id"]), "name": best.get("name", ""), "academic_year": best.get("academic_year", ""), "by_date": True}
+    act = await get_active_semester(db)
+    if act:
+        act["by_date"] = False
+    return act
+
+
 async def compute_workload(db, teachers: List[dict], start: datetime, end: datetime, hide_empty: bool = False) -> dict:
     """يعيد نفس بنية /reports/teacher-workload القديمة + أعمدة كشف الساعات الإضافية"""
     from .calendar_events import holiday_dates
     policies = await load_policies(db)
     total_weeks = weeks_between(start, end)
     start_str, end_str = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    sem = await semester_for_period(db, start_str, end_str)
+    sem_id = (sem or {}).get("id")
     holidays = await holiday_dates(db, start_str, end_str)
     fac_names = {str(f["_id"]): f.get("name", "") for f in await db.faculties.find({}, {"name": 1}).to_list(300)}
     dep_docs = {str(d["_id"]): d for d in await db.departments.find({}, {"name": 1, "faculty_id": 1}).to_list(1000)}
@@ -183,6 +201,9 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
         pol = policy_for(policies, faculty_id)
 
         courses = await db.courses.find({"teacher_id": tid, "is_active": True}).to_list(100)
+        if sem_id:
+            # نطاق الفصل: مقررات فصل الفترة فقط (المقررات بلا فصل تبقى)
+            courses = [c for c in courses if not c.get("semester_id") or str(c.get("semester_id")) == sem_id]
         cur_ids = {str(c["_id"]) for c in courses}
         for hc in await db.lectures.distinct("course_id", {"teacher_id": tid, "date": {"$gte": start_str, "$lte": end_str}}):
             if hc not in cur_ids and ObjectId.is_valid(hc):
@@ -241,6 +262,7 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             total_expected += expected; total_shortfall += shortfall; total_excused += excused_hours
             courses_data.append({
                 "course_id": cid, "course_name": course.get("name", ""), "course_code": course.get("code", ""),
+                "department_id": course.get("department_id"), "department_name": dep_docs.get(course.get("department_id") or "", {}).get("name", ""),
                 "level": course.get("level"), "section": course.get("section") or "",
                 "weekly_hours": weekly, "first_lecture_date": first.strftime("%Y-%m-%d") if first else None, "course_weeks": course_weeks,
                 "scheduled_lectures": len(lectures), "executed_lectures": len(executed), "excused_lectures": len(excused),
@@ -278,7 +300,6 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
 
     if hide_empty:
         result = [t for t in result if t["summary"]["total_scheduled_hours"] > 0]
-    sem = await get_active_semester(db)
     return {
         "holidays": [{"date": k, "name": v} for k, v in sorted(holidays.items())],
         "period": {"start_date": start.isoformat(), "end_date": end.isoformat(), "total_weeks": total_weeks, "holiday_days": len(holidays),
@@ -364,7 +385,7 @@ def sheet_rows(report: dict):
         first = len(rows)
         for c in cs:
             rows.append({
-                "cells": [idx, name, c["course_name"], _lvl(c), _fmt(c.get("weekly_hours")), _fmt(s["weekly_hours"]), _fmt(s["required_hours"]), _fmt(c.get("expected_hours")),
+                "cells": [idx, name, (f"{c['course_name']}\n{c['department_name']}" if c.get("department_name") else c["course_name"]), _lvl(c), _fmt(c.get("weekly_hours")), _fmt(s["weekly_hours"]), _fmt(s["required_hours"]), _fmt(c.get("expected_hours")),
                           _fmt(c.get("actual_hours")), _fmt(s["total_actual_hours"]), _fmt(s["bonus_hours"]) if s["bonus_enabled"] else "—", _fmt(s["hours_after_bonus"]),
                           _fmt(s["overtime_hours"]), _fmt(c.get("shortfall_hours")), f"{c['completion_rate']}%" if c.get("completion_rate") != "" else "", c.get("note", "")],
                 "is_low": bool(c.get("is_low")),
@@ -402,7 +423,9 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
             return str(t or "")
 
     def wrap_ar(t, maxc):
-        """لفّ النص بالكلمات قبل تطبيق bidi حتى لا يختل ترتيب الكلمات عند تعدد الأسطر"""
+        """لفّ النص بالكلمات قبل تطبيق bidi حتى لا يختل ترتيب الكلمات عند تعدد الأسطر (\n = سطر جديد إجباري)"""
+        if "\n" in str(t or ""):
+            return "<br/>".join(wrap_ar(part, maxc) for part in str(t).split("\n"))
         words, lines, cur = str(t or "").split(), [], ""
         for w in words:
             if cur and len(cur) + 1 + len(w) > maxc:
@@ -417,7 +440,7 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
     st_title = ParagraphStyle("t", fontName=bold, fontSize=14, leading=20, alignment=TA_CENTER, textColor=NAVY)
     st_sub = ParagraphStyle("s", fontName=font, fontSize=9.5, leading=14, alignment=TA_CENTER, textColor=GREY)
     st_small = ParagraphStyle("m", fontName=font, fontSize=8, alignment=TA_RIGHT, textColor=GREY, leading=12)
-    st_cell = ParagraphStyle("c", fontName=font, fontSize=7.5, leading=9.5, alignment=TA_CENTER)
+    st_cell = ParagraphStyle("c", fontName=font, fontSize=6.6, leading=8.4, alignment=TA_CENTER)
 
     p = report["period"]
     pols = {t["summary"]["bonus_divisor"] for t in report["teachers"] if t["summary"]["bonus_enabled"]}
@@ -438,7 +461,7 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
     total_w = sum(widths)
     avail = landscape(A4)[0] - 16 * mm
     widths = [w / total_w * avail for w in widths]
-    maxc = [max(4, int(w / mm * 1.15)) for w in widths]
+    maxc = [max(4, int(w / mm * 1.3)) for w in widths]
     data = [[Paragraph(wrap_ar(h, maxc[i]), ParagraphStyle("h", parent=st_cell, fontName=bold, textColor=colors.white)) for i, h in reversed(list(enumerate(headers)))]]
     for r in rows:
         data.append([Paragraph(wrap_ar(c, maxc[i]), st_cell) for i, c in reversed(list(enumerate(r["cells"])))])
@@ -447,11 +470,13 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
              ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]
     ncols = len(headers)
     merge_cols = {0, 1, 5, 6, 9, 10, 11, 12}  # أعمدة الأستاذ تُدمج عبر أسطره
+    SEP = colors.HexColor("#334155")
     for (a, b) in spans:
         if b > a:
             for ci in merge_cols:
                 col = ncols - 1 - ci
                 style.append(("SPAN", (col, a + 1), (col, b + 1)))
+        style.append(("LINEBELOW", (0, b + 1), (-1, b + 1), 1.3, SEP))  # فاصل أغمق بين أستاذ وآخر
     for i, r in enumerate(rows, start=1):
         if r["is_low"]:
             col = ncols - 1 - 14
@@ -500,10 +525,13 @@ def build_sheet_excel(report: dict, issuer: str) -> io.BytesIO:
             c = ws.cell(row=ri, column=ci, value=v); c.alignment = center; c.border = border
         if r["is_low"]:
             ws.cell(row=ri, column=15).fill = pink
+    thick = Side(style="medium", color="334155")
     for (a, b) in spans:
         if b > a:
             for ci in (1, 2, 6, 7, 10, 11, 12, 13):
                 ws.merge_cells(start_row=a + 5, start_column=ci, end_row=b + 5, end_column=ci)
+        for ci in range(1, n + 1):
+            c = ws.cell(row=b + 5, column=ci); c.border = Border(left=thin, right=thin, top=thin, bottom=thick)
     for i, w in enumerate([4, 26, 24, 14, 10, 10, 9, 12, 11, 11, 13, 14, 13, 9, 10, 30], 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 

@@ -284,7 +284,7 @@ export default function TeacherWorkloadReport() {
                           const r = c.completion_rate ?? (c.scheduled_lectures ? Math.round((c.executed_lectures * 1000) / c.scheduled_lectures) / 10 : 0);
                           return (
                             <View key={k} style={[styles.cRow, c.is_low && { backgroundColor: '#fdf2f8' }]} testID={`tw-course-row-${t.teacher_db_id || t.teacher_id}-${k}`}>
-                              <Text style={[styles.cTd, styles.cName]} numberOfLines={1}>{c.course_name} <Text style={styles.tSub}>{c.course_code}</Text></Text>
+                              <Text style={[styles.cTd, styles.cName]} numberOfLines={1}>{c.course_name} <Text style={styles.tSub}>{c.course_code}{(c as any).department_name ? ` · ${(c as any).department_name}` : ''}</Text></Text>
                               <Text style={styles.cTd}>{lvl(c)}</Text>
                               {[c.weekly_hours, `${c.executed_lectures}/${c.scheduled_lectures}`, c.expected_hours, c.actual_hours].map((v, j) => <Text key={j} style={[styles.cTd, NUM_FONT]}>{v as any}</Text>)}
                               <Text style={[styles.cTd, NUM_FONT, { color: (c.shortfall_hours || 0) > 0 ? DASH.red : '#334155' }]}>{c.shortfall_hours ?? ''}</Text>
