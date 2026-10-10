@@ -235,6 +235,14 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             # محاضرات تقع في إجازة رسمية ولم تُنفَّذ تُستبعد من المجدولة (لا تُعد نقصاً)
             executed_dates = {str(l.get("date"))[:10] for l in lectures if str(l["_id"]) in executed_ids}
             lectures = [l for l in lectures if str(l.get("date"))[:10] not in holidays or str(l["_id"]) in executed_ids]
+            # بداية المقرر = التحضير الأول (أول محاضرة سُجّل لها حضور)؛ وإلا أول محاضرة مجدولة
+            exec_dates = [d for d in (_d(l.get("date")) for l in lectures if str(l["_id"]) in executed_ids) if d]
+            first_attendance = min(exec_dates) if exec_dates else None
+            skipped_before = 0
+            if first_attendance:
+                before_ids = {str(l["_id"]) for l in lectures if (_d(l.get("date")) or first_attendance) < first_attendance}
+                skipped_before = len(before_ids)
+                lectures = [l for l in lectures if str(l["_id"]) not in before_ids]
             excused = [l for l in lectures if l.get("status") == LectureStatus.ABSENT_EXCUSED]
             executed = [l for l in lectures if str(l["_id"]) in executed_ids]
 
@@ -244,13 +252,17 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             weekly = await _course_weekly_hours(db, tid, course)
 
             dates = [d for d in (_d(l.get("date")) for l in lectures) if d]
-            first = min(dates) if dates else None
+            first = first_attendance or (min(dates) if dates else None)
             notes = []
+            start_week = 1
             if first:
                 course_weeks = weeks_between(first, end)
                 start_week = (first.date() - start.date()).days // 7 + 1
                 if start_week > 1:
-                    notes.append(f"بدأ من الأسبوع {start_week}")
+                    basis = f"التحضير الأول {first.strftime('%Y-%m-%d')}" if first_attendance else "أول محاضرة مجدولة"
+                    notes.append(f"بدأ متأخراً من الأسبوع {start_week} ({basis}؛ الافتراضية من {course_weeks} أسابيع)")
+                    if skipped_before:
+                        notes.append(f"{skipped_before} محاضرة مجدولة قبل التحضير الأول لم تُحتسب")
             else:
                 course_weeks = 0
                 notes.append("لا محاضرات مجدولة في الفترة")
@@ -273,6 +285,7 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
                 "department_id": course.get("department_id"), "department_name": dep_docs.get(course.get("department_id") or "", {}).get("name", ""),
                 "level": course.get("level"), "section": course.get("section") or "",
                 "weekly_hours": weekly, "first_lecture_date": first.strftime("%Y-%m-%d") if first else None, "course_weeks": course_weeks,
+                "first_attendance_date": first_attendance.strftime("%Y-%m-%d") if first_attendance else None, "start_week": start_week, "late_start": start_week > 1,
                 "scheduled_lectures": len(lectures), "executed_lectures": len(executed), "excused_lectures": len(excused),
                 "scheduled_hours": scheduled_hours, "actual_hours": actual_hours, "excused_hours": excused_hours,
                 "expected_hours": expected, "holiday_hours": holiday_hours, "shortfall_hours": shortfall, "completion_rate": rate, "is_low": expected > 0 and rate < LOW_RATE_THRESHOLD,
@@ -280,6 +293,18 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             })
 
         courses_data.sort(key=lambda c: ((c["level"] or 0), c["course_name"], c["section"]))
+        # نصاب المدرس من التحضير الأول له (أقدم بداية بين مقرراته) إن بدأ متأخراً عن الفترة
+        firsts = [_d(c["first_lecture_date"]) for c in courses_data if c.get("first_lecture_date")]
+        teacher_first = min(firsts) if firsts else None
+        effective_weeks, teacher_start_week, teacher_note = total_weeks, 1, ""
+        if teacher_first:
+            teacher_start_week = (teacher_first.date() - start.date()).days // 7 + 1
+            if teacher_start_week > 1:
+                effective_weeks = weeks_between(teacher_first, end)
+                required_hours = round(weekly_hours * effective_weeks, 2)
+                any_att = any(c.get("first_attendance_date") for c in courses_data)
+                teacher_note = (f"بدأ التدريس متأخراً — {'التحضير الأول' if any_att else 'أول محاضرة'} {teacher_first.strftime('%Y-%m-%d')} (الأسبوع {teacher_start_week})"
+                                f" · النصاب محسوب من {effective_weeks} أسابيع بدل {total_weeks}")
         bonus_enabled = bool(pol.get("bonus_enabled"))
         divisor = float(pol.get("bonus_divisor") or 6)
         bonus_hours = round(total_actual / divisor, 2) if bonus_enabled else 0.0
@@ -296,6 +321,8 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             "weekly_hours": weekly_hours, "courses": courses_data,
             "summary": {
                 "total_courses": len(courses_data), "weekly_hours": weekly_hours, "total_weeks": total_weeks,
+                "effective_weeks": effective_weeks, "start_week": teacher_start_week, "late_start": teacher_start_week > 1,
+                "first_attendance_date": teacher_first.strftime("%Y-%m-%d") if teacher_first else None, "note": teacher_note,
                 "required_hours": required_hours, "total_scheduled_hours": round(total_scheduled, 2), "total_actual_hours": round(total_actual, 2),
                 "difference_hours": round(total_actual - required_hours, 2),
                 "completion_rate": round(total_actual / required_hours * 100, 2) if required_hours > 0 else 0,
@@ -391,11 +418,14 @@ def sheet_rows(report: dict):
         idx += 1
         name = f"{t.get('academic_title') or ''} {t['teacher_name']}".strip()
         first = len(rows)
-        for c in cs:
+        for k, c in enumerate(cs):
+            note = c.get("note", "")
+            if k == 0 and s.get("note"):
+                note = f"{s['note']}" + (f" | {note}" if note else "")
             rows.append({
                 "cells": [idx, name, (f"{c['course_name']}\n{c['department_name']}" if c.get("department_name") else c["course_name"]), _lvl(c), _fmt(c.get("weekly_hours")), _fmt(s["weekly_hours"]), _fmt(s["required_hours"]), _fmt(c.get("expected_hours")),
                           _fmt(c.get("actual_hours")), _fmt(s["total_actual_hours"]), _fmt(s["bonus_hours"]) if s["bonus_enabled"] else "—", _fmt(s["hours_after_bonus"]),
-                          _fmt(s["overtime_hours"]), _fmt(c.get("shortfall_hours")), f"{c['completion_rate']}%" if c.get("completion_rate") != "" else "", c.get("note", "")],
+                          _fmt(s["overtime_hours"]), _fmt(c.get("shortfall_hours")), f"{c['completion_rate']}%" if c.get("completion_rate") != "" else "", note],
                 "is_low": bool(c.get("is_low")),
             })
         spans.append((first, len(rows) - 1))
@@ -494,7 +524,7 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
     s = report["summary"]
     el += [Spacer(1, 4 * mm),
            Paragraph(ar(f"الإجمالي: {s['total_teachers']} أستاذ · النصاب {s['total_required_hours']:g} س · المنجز {s['total_actual_hours']:g} س · الإضافة {s['total_bonus_hours']:g} س · الساعات الإضافية {s['total_overtime_hours']:g} س · النقص {s['total_shortfall_hours']:g} س"), st_small),
-           Paragraph(wrap_ar("المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية. الافتراضية = الساعات الأسبوعية × أسابيع المقرر من أول محاضرة حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية). الإضافة = المنجز ÷ المُقسِّم (إن فُعِّلت للكلية). الساعات الإضافية = (المنجز + الإضافة) − النصاب. تُظلَّل نسبة الإنجاز الأقل من 75٪."
+           Paragraph(wrap_ar("المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية. الافتراضية = الساعات الأسبوعية × أسابيع المقرر من التحضير الأول حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية). النصاب = النصاب الأسبوعي × الأسابيع من التحضير الأول للأستاذ إن بدأ متأخراً. الإضافة = المنجز ÷ المُقسِّم (إن فُعِّلت للكلية). الساعات الإضافية = (المنجز + الإضافة) − النصاب. تُظلَّل نسبة الإنجاز الأقل من 75٪."
                         + (f"  |  أُصدر بواسطة: {generated_by}" if generated_by else "") + f"  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}", 150), st_small)]
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=8 * mm, leftMargin=8 * mm, topMargin=8 * mm, bottomMargin=8 * mm, title="كشف الساعات الإضافية").build(el)

@@ -16,7 +16,7 @@ import { DASH, NUM_FONT, dashStyles } from '../src/components/dashboard/dashThem
 
 interface Course { course_name: string; course_code: string; level?: number; section?: string; weekly_hours?: number; expected_hours?: number; shortfall_hours?: number; completion_rate?: number; is_low?: boolean; note?: string; scheduled_lectures: number; executed_lectures: number; scheduled_hours: number; actual_hours: number }
 interface TeacherWL { teacher_id: string; teacher_db_id?: string; teacher_name: string; academic_title?: string; department_id: string; department_name?: string; faculty_id?: string; weekly_hours: number; courses: Course[];
-  summary: { total_courses: number; weekly_hours: number; total_weeks: number; required_hours: number; total_scheduled_hours: number; total_actual_hours: number; difference_hours: number; completion_rate: number; expected_hours?: number; shortfall_hours?: number; bonus_enabled?: boolean; bonus_hours?: number; hours_after_bonus?: number; overtime_hours?: number; hourly_rate?: number | null; overtime_amount?: number | null; currency?: string } }
+  summary: { total_courses: number; weekly_hours: number; total_weeks: number; required_hours: number; total_scheduled_hours: number; total_actual_hours: number; difference_hours: number; completion_rate: number; expected_hours?: number; shortfall_hours?: number; bonus_enabled?: boolean; bonus_hours?: number; hours_after_bonus?: number; overtime_hours?: number; hourly_rate?: number | null; overtime_amount?: number | null; currency?: string; late_start?: boolean; effective_weeks?: number; start_week?: number; first_attendance_date?: string | null; note?: string } }
 
 const iso = (d: Date) => d.toISOString().split('T')[0];
 const QUICK = [
@@ -116,14 +116,15 @@ export default function TeacherWorkloadReport() {
 
   const rows = useMemo(() => {
     const q = search.trim();
-    const list = q ? data.filter((t) => t.teacher_name.includes(q)) : [...data];
+    const list = q ? data.filter((t) => matchAr(t.teacher_name, q)) : [...data];
     list.sort((a, b) => sort === 'name' ? a.teacher_name.localeCompare(b.teacher_name, 'ar') : sort === 'hours' ? b.summary.total_actual_hours - a.summary.total_actual_hours : b.summary.completion_rate - a.summary.completion_rate);
     return list;
   }, [data, search, sort]);
 
   const deptName = (id: string) => departments.find((d) => d.id === id)?.name || '';
   const facDepts = departments.filter((d) => !fac || d.faculty_id === fac);
-  const filteredTeachers = teachers.filter((t) => (!dept || t.department_id === dept) && (!fac || t.faculty_id === fac || facDepts.some((d) => d.id === t.department_id)) && (!teacherQ || t.full_name?.includes(teacherQ))).slice(0, 8);
+  const filteredTeachers = teachers.filter((t) => (!dept || t.department_id === dept) && (!fac || t.faculty_id === fac || facDepts.some((d) => d.id === t.department_id)) && (!teacherQ || matchAr(t.full_name, teacherQ))).slice(0, 8);
+  const lateTeachers = data.filter((t) => t.summary.late_start);
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -158,8 +159,8 @@ export default function TeacherWorkloadReport() {
         </View>
 
         {!isTeacher && (
-          <View style={[dashStyles.card, { marginBottom: 14 }]} testID="tw-filters">
-            <View style={[styles.filterRow, compact && { flexDirection: 'column' }]}>
+          <View style={[dashStyles.card, { marginBottom: 14, zIndex: 20, overflow: 'visible' }]} testID="tw-filters">
+            <View style={[styles.filterRow, { zIndex: 30 }, compact && { flexDirection: 'column' }]}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>الكلية</Text>
                 <View style={styles.pickerBox}>
@@ -178,18 +179,18 @@ export default function TeacherWorkloadReport() {
                   </Picker>
                 </View>
               </View>
-              <View style={{ flex: 1, position: 'relative', zIndex: 5 }}>
+              <View style={{ flex: 1, position: 'relative', zIndex: 50 }}>
                 <Text style={styles.label}>المدرس</Text>
                 <View style={styles.inputBox}>
                   <Ionicons name="person-outline" size={16} color="#94a3b8" />
-                  <TextInput value={teacherQ} onChangeText={(v) => { setTeacherQ(v); setShowList(true); if (!v) setTeacherId(''); }} onFocus={() => setShowList(true)}
+                  <TextInput value={teacherQ} onChangeText={(v) => { setTeacherQ(v); setShowList(true); if (!v) setTeacherId(''); }} onFocus={() => setShowList(true)} onBlur={() => setTimeout(() => setShowList(false), 180)}
                     placeholder="كل المدرسين — اكتب للبحث" placeholderTextColor="#94a3b8" style={styles.input} testID="tw-teacher-input" />
                   {!!teacherId && <TouchableOpacity onPress={() => { setTeacherId(''); setTeacherQ(''); }} testID="tw-teacher-clear"><Ionicons name="close-circle" size={16} color={DASH.red} /></TouchableOpacity>}
                 </View>
                 {showList && teacherQ && !teacherId && (
-                  <View style={styles.dropdown}>
+                  <View style={styles.dropdown} testID="tw-teacher-dropdown">
                     {filteredTeachers.map((t) => (
-                      <TouchableOpacity key={t.id} style={styles.ddItem} onPress={() => { setTeacherId(t.id); setTeacherQ(t.full_name); setShowList(false); }} testID={`tw-teacher-opt-${t.id}`}>
+                      <TouchableOpacity key={t.id} style={styles.ddItem} onPressIn={() => { setTeacherId(t.id); setTeacherQ(t.full_name); setShowList(false); }} testID={`tw-teacher-opt-${t.id}`}>
                         <Text style={styles.ddText}>{t.full_name}</Text><Text style={styles.ddSub}>{deptName(t.department_id)}</Text>
                       </TouchableOpacity>
                     ))}
@@ -198,7 +199,7 @@ export default function TeacherWorkloadReport() {
                 )}
               </View>
             </View>
-            <View style={styles.chips}>
+            <View style={[styles.chips, { zIndex: 1 }]}>
               {QUICK.map((q) => (
                 <TouchableOpacity key={q.key} style={[styles.chip, quick === q.key && styles.chipOn]} onPress={() => { const [a, b] = q.range(); setFrom(a); setTo(b); setQuick(q.key); }} testID={`tw-quick-${q.key}`}>
                   <Text style={[styles.chipText, quick === q.key && styles.chipTextOn]}>{q.label}</Text>
@@ -224,7 +225,7 @@ export default function TeacherWorkloadReport() {
             <View style={styles.kpis} testID="tw-summary">
               {[
                 ['المدرسون', data.length, DASH.blue, `${period ? period.total_weeks : ''} أسبوع`],
-                ['النصاب المطلوب', `${Math.round(totals.req * 10) / 10} س`, DASH.navy2, 'أسبوعي × الأسابيع'],
+                ['النصاب المطلوب', `${Math.round(totals.req * 10) / 10} س`, DASH.navy2, lateTeachers.length ? (data.length === 1 ? `من التحضير الأول · ${lateTeachers[0].summary.effective_weeks} أسابيع بدل ${period?.total_weeks}` : `${lateTeachers.length} مدرس بدأ متأخراً — نصابه من التحضير الأول`) : 'أسبوعي × الأسابيع'],
                 ['الساعات المنفَّذة', `${Math.round(totals.act * 10) / 10} س`, DASH.teal, `من ${Math.round(totals.sch * 10) / 10} س مجدولة`],
                 ['المحاضرات المنفَّذة', `${totals.exe}/${totals.lec}`, DASH.purple, 'منفَّذة / مجدولة'],
                 ['نسبة الإنجاز', `${totals.rate}%`, rateColor(totals.rate), totals.below ? `${totals.below} مدرس تحت 75%` : 'الجميع ≥ 75%'],
@@ -239,6 +240,16 @@ export default function TeacherWorkloadReport() {
                 </View>
               ))}
             </View>
+            {lateTeachers.length > 0 && (
+              <View style={styles.lateBox} testID="tw-late-start-note">
+                <Ionicons name="time-outline" size={16} color="#b45309" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.lateTitle}>بداية متأخرة عن الفترة — النصاب محسوب من التحضير الأول</Text>
+                  {lateTeachers.slice(0, 6).map((t) => <Text key={t.teacher_db_id || t.teacher_id} style={styles.lateLine}>• {t.academic_title ? `${t.academic_title} ` : ''}{t.teacher_name}: {t.summary.note}</Text>)}
+                  {lateTeachers.length > 6 && <Text style={styles.lateLine}>… و{lateTeachers.length - 6} آخرون (التفاصيل في صف كل مدرس)</Text>}
+                </View>
+              </View>
+            )}
 
             {view === 'sheet' ? (
               <View style={dashStyles.card} testID="tw-sheet-card">{!isTeacher && <RaiseLetterBar params={params} disabled={rows.length === 0} />}<OvertimeSheet teachers={rows} period={period} threshold={75} /></View>
@@ -265,6 +276,7 @@ export default function TeacherWorkloadReport() {
                       <View style={{ flex: 2, minWidth: 180 }}>
                         <Text style={styles.tName}>{t.academic_title ? `${t.academic_title} ` : ''}{t.teacher_name}</Text>
                         <Text style={styles.tSub}>{t.department_name || deptName(t.department_id) || '—'} · {s.total_courses} مقرر · نصاب {s.weekly_hours} س/أسبوع{s.bonus_enabled ? ` · إضافة ${s.bonus_hours} س` : ''}</Text>
+                        {!!s.note && <Text style={styles.tNote} testID={`tw-row-note-${t.teacher_id}`}>⏱ {s.note}</Text>}
                       </View>
                       <View style={{ flex: 2, minWidth: 160 }}>
                         <View style={styles.track}><View style={[styles.fill, { width: `${Math.min(100, s.completion_rate)}%`, backgroundColor: rateColor(s.completion_rate) }]} /></View>
@@ -309,6 +321,9 @@ export default function TeacherWorkloadReport() {
   );
 }
 
+const normAr = (s: any) => String(s || '').toLowerCase().replace(/[\u064B-\u0652]/g, '').replace(/[أإآٱ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/ـ/g, '').replace(/^(د|أ|ا|أ\.د|ا\.د|أ\.م|ا\.م)\.\s*/g, '').replace(/\s+/g, ' ').trim();
+const matchAr = (name: any, q: string) => { const n = normAr(name); return normAr(q).split(' ').filter(Boolean).every((w) => n.includes(w)); };
+
 const dateInput = { border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 8px', fontSize: 12, fontFamily: 'inherit', color: '#0f172a', background: '#fff' };
 
 const styles = StyleSheet.create({
@@ -332,8 +347,8 @@ const styles = StyleSheet.create({
   picker: { height: 40, textAlign: 'right' as any, borderWidth: 0, backgroundColor: 'transparent', fontSize: 13 } as any,
   inputBox: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: DASH.line, borderRadius: 10, paddingHorizontal: 10, height: 40, backgroundColor: '#fff' },
   input: { flex: 1, fontSize: 13, textAlign: 'right', color: DASH.ink, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } as any : {}) },
-  dropdown: { position: 'absolute', top: 66, left: 0, right: 0, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: DASH.line, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 6, zIndex: 50 },
-  ddItem: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', padding: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  dropdown: { position: 'absolute', top: 66, left: 0, right: 0, backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: DASH.line, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, elevation: 8, zIndex: 100, maxHeight: 320, overflow: 'hidden' },
+  ddItem: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center', padding: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', ...(Platform.OS === 'web' ? { cursor: 'pointer' } as any : {}) },
   ddText: { fontSize: 13, color: DASH.ink, fontWeight: '600' },
   ddSub: { fontSize: 11, color: DASH.muted },
   chips: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 12 },
@@ -364,6 +379,10 @@ const styles = StyleSheet.create({
   rankText: { fontWeight: '800', fontSize: 13 },
   tName: { fontSize: 14, fontWeight: '800', color: DASH.ink, textAlign: 'right' },
   tSub: { fontSize: 11, color: DASH.muted, textAlign: 'right', marginTop: 2 },
+  tNote: { fontSize: 11, color: '#b45309', textAlign: 'right', marginTop: 3, fontWeight: '700' },
+  lateBox: { flexDirection: 'row-reverse', gap: 10, alignItems: 'flex-start', backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fcd34d', borderRadius: 12, padding: 12, marginBottom: 14 },
+  lateTitle: { fontSize: 12.5, fontWeight: '800', color: '#92400e', textAlign: 'right' },
+  lateLine: { fontSize: 11.5, color: '#78350f', textAlign: 'right', marginTop: 3, lineHeight: 18 },
   track: { height: 8, borderRadius: 4, backgroundColor: '#eef2f7', overflow: 'hidden', flexDirection: 'row-reverse' },
   fill: { height: '100%', borderRadius: 4 },
   cell: { minWidth: 72, alignItems: 'center' },

@@ -62,7 +62,10 @@ export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: 
                 {k === 0 && <td rowSpan={n} style={{ ...td, fontWeight: 800, color: s.overtime_hours >= 0 ? '#15803d' : '#b91c1c' }} data-testid={`sheet-overtime-${t.teacher_db_id}`}>{f1(s.overtime_hours)}</td>}
                 <td style={{ ...td, color: c.shortfall_hours > 0 ? '#b91c1c' : '#334155' }}>{f1(c.shortfall_hours)}</td>
                 <td style={{ ...td, fontWeight: 800, backgroundColor: c.is_low ? '#fbcfe8' : undefined }} data-testid={c.is_low ? 'sheet-low-cell' : undefined}>{c.completion_rate !== '' ? `${c.completion_rate}%` : ''}</td>
-                <td style={{ ...td, textAlign: 'right', whiteSpace: 'normal', minWidth: 170, maxWidth: 220, fontSize: 10.5, color: '#475569', lineHeight: 1.5 }}>{c.note}</td>
+                <td style={{ ...td, textAlign: 'right', whiteSpace: 'normal', minWidth: 170, maxWidth: 220, fontSize: 10.5, color: '#475569', lineHeight: 1.5 }}>
+                  {k === 0 && s.note ? <div style={{ color: '#b45309', fontWeight: 700 }} data-testid={`sheet-late-note-${t.teacher_db_id}`}>⏱ {s.note}</div> : null}
+                  {c.note}
+                </td>
                 {anyRate && k === 0 && <td rowSpan={n} style={{ ...td, fontWeight: 700 }}>{s.overtime_amount != null ? `${Number(s.overtime_amount).toLocaleString('en')} ${s.currency || ''}` : '—'}</td>}
               </tr>
             ));
@@ -70,7 +73,7 @@ export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: 
         </tbody>
       </table>
       <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.8 }}>
-        المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية · الافتراضية = الساعات الأسبوعية × أسابيع المقرر من أول محاضرة حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر) · الإضافة = المنجز ÷ المُقسِّم (إن فُعِّلت للكلية) · الساعات الإضافية = (المنجز + الإضافة) − النصاب · تُظلَّل نسبة الإنجاز الأقل من {threshold}٪
+        المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية · الافتراضية = الساعات الأسبوعية × أسابيع المقرر من التحضير الأول حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية) · النصاب = النصاب الأسبوعي × الأسابيع من التحضير الأول للأستاذ إن بدأ متأخراً · الإضافة = المنجز ÷ المُقسِّم (إن فُعِّلت للكلية) · الساعات الإضافية = (المنجز + الإضافة) − النصاب · تُظلَّل نسبة الإنجاز الأقل من {threshold}٪
       </div>
     </div>
   );

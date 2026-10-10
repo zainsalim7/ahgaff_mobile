@@ -109,13 +109,13 @@ class TestReport:
         courses = {c.get("course_name"): c for c in baaz.get("courses", [])}
         fiqh = next((c for name, c in courses.items() if "فقه العبادات" in name), None)
         assert fiqh, f"فقه العبادات missing: {list(courses.keys())}"
-        assert "بدأ من الأسبوع 3" in (fiqh.get("note") or "")
+        assert "من الأسبوع 3" in (fiqh.get("note") or "")
         assert abs((fiqh.get("expected_hours") or 0) - 12) < 0.5
         assert abs((fiqh.get("actual_hours") or 0) - 12) < 0.5
 
         maqasid = next((c for name, c in courses.items() if "مقاصد" in name), None)
         assert maqasid, "مقاصد الشريعة missing"
-        assert "غياب" in (maqasid.get("note") or "") or "عذر" in (maqasid.get("note") or "")
+        assert "التحضير الأول" in (maqasid.get("note") or "")  # الغياب بعذر كان قبل التحضير الأول فاستُبعد
 
     def test_seeded_teacher_bin_sumait(self, admin_headers, faculty_id):
         r = self._get(admin_headers, faculty_id)
@@ -126,11 +126,11 @@ class TestReport:
         s = bs["summary"]
         assert s.get("weekly_hours") == 9
         assert s.get("required_hours") == 54
-        assert abs(s.get("total_actual_hours", 0) - 105) < 1
-        assert abs(s.get("bonus_hours", 0) - 17.5) < 1
-        assert abs(s.get("overtime_hours", 0) - 68.5) < 1
+        assert abs(s.get("total_actual_hours", 0) - 96) < 1
+        assert abs(s.get("bonus_hours", 0) - 16) < 1
+        assert abs(s.get("overtime_hours", 0) - 58) < 1
         assert s.get("hourly_rate") == 6000
-        assert abs(s.get("overtime_amount", 0) - 411000) < 5
+        assert abs(s.get("overtime_amount", 0) - 348000) < 5
 
     def test_summary_totals(self, admin_headers, faculty_id):
         r = self._get(admin_headers, faculty_id)
