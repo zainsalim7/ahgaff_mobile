@@ -319,7 +319,7 @@ async def _build_ctx(db, rec: dict, subject: str, people_in: List[dict]) -> tupl
     hj = Gregorian(now.year, now.month, now.day).to_hijri()
     ctx = {"اسم_المرسل_إليه": rec.get("name", ""), "صفة_المرسل_إليه": rec.get("title", ""), "جهة_المرسل_إليه": rec.get("organization", ""), "تكريم": rec.get("suffix", ""),
            "الموضوع": subject or "", "التاريخ": now.strftime("%Y/%m/%d") + "م", "التاريخ_الهجري": f"{hj.year}/{hj.month:02d}/{hj.day:02d}هـ", "العام_الجامعي": await _academic_year_display(db),
-           "اسم_الطالب": "", "رقم_القيد": "", "الكلية": "", "القسم": "", "المستوى": "", "الجنسية": "", "اسم_الموظف": "", "الوظيفة": "", "وحدة_الموظف": "", "اسم_المدرس": "", "جدول_الأسماء": "", "قائمة_الأسماء": "", "عدد_الأسماء": ""}
+           "اسم_الطالب": "", "رقم_القيد": "", "الكلية": "", "القسم": "", "المستوى": "", "الجنسية": "", "اسم_الموظف": "", "الوظيفة": "", "وحدة_الموظف": "", "اسم_المدرس": "", "جدول_الأسماء": "{جدول_الأسماء}", "قائمة_الأسماء": "", "عدد_الأسماء": ""}
     rows = [r for r in [await _person_row(db, p.get("kind", "student"), p.get("id", "")) for p in people_in] if r]
     if rows:
         first = rows[0]
@@ -591,7 +591,7 @@ async def finalize_draft(lid: str, base_url: Optional[str] = None, current_user:
     sctx = {**ctx, "اسم_الموقع": ex.get("signatory_name", ""), "صفة_الموقع": ex.get("signatory_title", "")}
     upd = {**(await _finalize_fields(db, series, base_url, ex.get("valid_days"), current_user)), **_lh_fields(settings, series), "draft_number": ex.get("number_display"),
            "sections": {k: _apply_vars(v, sctx) for k, v in (inputs.get("sections") or {}).items() if k in SECTION_KEYS and v} or ex.get("sections") or {},
-           "body": _apply_vars((inputs.get("body") or ex.get("body") or "").strip(), ctx), "table": table, "people": people}
+           "body": _apply_vars((inputs.get("body") or ex.get("body") or "").strip(), ctx), "table": (ex.get("table") if ex.get("custom_table") and not people else table), "people": people}
     if ex.get("signatory_position_id"):
         upd["signatory_name"], upd["signatory_title"] = await _resolve_sig(db, ex["signatory_position_id"], ex.get("signatory_name"), ex.get("signatory_title"), settings)
     await db.letters.update_one({"_id": ex["_id"]}, {"$set": upd})

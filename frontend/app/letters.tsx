@@ -17,7 +17,7 @@ import { PeoplePicker, Person } from '../src/components/letters/PeoplePicker';
 
 
 export default function LettersPage() {
-  const params = useLocalSearchParams<{ student_id?: string; employee_id?: string; teacher_id?: string; name?: string; tab?: string; tpl?: string }>();
+  const params = useLocalSearchParams<{ student_id?: string; employee_id?: string; teacher_id?: string; name?: string; tab?: string; tpl?: string; id?: string }>();
   const [tab, setTab] = useState<'issue' | 'templates' | 'log' | 'settings'>('issue');
   const router = useRouter();
   const [templates, setTemplates] = useState<any[]>([]);
@@ -83,6 +83,7 @@ export default function LettersPage() {
     if (pre) { setPeopleKind(pre.kind); setPeople([{ ...pre, label: (params.name as string) || 'المحدد' }]); }
   }, [params.student_id, params.employee_id, params.teacher_id]); // eslint-disable-line
   useEffect(() => { if (params.tab && ['issue', 'templates', 'log', 'settings'].includes(params.tab)) setTab(params.tab as any); }, [params.tab]);
+  useEffect(() => { if (params.id) { setTab('issue'); loadDraft(String(params.id)); } }, [params.id]); // eslint-disable-line
   useEffect(() => {
     if (!params.tpl || !templates.length) return;
     const t = templates.find((x) => x.id === params.tpl);
@@ -160,12 +161,15 @@ export default function LettersPage() {
     try { const r = await api.post('/letters/draft', issuePayload()); setDraft({ id: r.data.id, number: r.data.number }); setLast(null); }
     catch (e) { setErr(errOf(e, 'فشل حفظ المسودة')); } finally { setBusy(false); }
   };
-  const resetForm = () => { setDraft(null); setLast(null); setTplId(''); setSubject(''); setBody(''); setPeople([]); setRecId(''); setRec({ name: '', title: '', organization: '', suffix: 'المحترم' }); setLayout({}); setSecOverrides({}); setValidDays(''); setSig(EMPTY_SIGNATORY); setBatch(null); setPerPerson(false); setPersonAsRec(false); };
+  const [attachments, setAttachments] = useState<any[]>([]);
+  const dlAttachment = async (a: any) => { const r = await api.get(`/letters/${draft?.id}/attachments/${a.id}`, { responseType: 'blob' }); const u = URL.createObjectURL(r.data); const el = document.createElement('a'); el.href = u; el.download = a.filename; el.click(); URL.revokeObjectURL(u); };
+  const dlWithAttachments = async () => { const r = await api.get(`/letters/${draft?.id}/pdf-with-attachments`, { responseType: 'blob' }); const u = URL.createObjectURL(r.data); const el = document.createElement('a'); el.href = u; el.download = `${draft?.number} مع المرفقات.pdf`; el.click(); URL.revokeObjectURL(u); };
+  const resetForm = () => { setAttachments([]); setDraft(null); setLast(null); setTplId(''); setSubject(''); setBody(''); setPeople([]); setRecId(''); setRec({ name: '', title: '', organization: '', suffix: 'المحترم' }); setLayout({}); setSecOverrides({}); setValidDays(''); setSig(EMPTY_SIGNATORY); setBatch(null); setPerPerson(false); setPersonAsRec(false); };
   const loadDraft = async (id: string) => {
     try {
       const { data: d } = await api.get(`/letters/${id}`);
       const inp0 = d.inputs || {};
-      setDraft({ id: d.id, number: d.number_display }); setLast(null);
+      setDraft({ id: d.id, number: d.number_display }); setLast(null); setAttachments(d.attachments || []);
       setTplId(d.template_id || ''); setSubject(d.subject || ''); setBody(inp0.body || d.body || '');
       const r0 = inp0.recipient || d.recipient || {};
       if (r0.id) { setRecMode('list'); setRecId(r0.id); } else { setRecMode('manual'); setRec({ name: r0.name || '', title: r0.title || '', organization: r0.organization || '', suffix: r0.suffix || 'المحترم' }); }
@@ -279,6 +283,15 @@ export default function LettersPage() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}><button onClick={() => setShowLayout(false)} style={btn('#0f2440')} data-testid="letter-layout-done">تم</button></div>
               </Modal>
+            )}
+            {draft && attachments.length > 0 && (
+              <div style={{ marginTop: 12, padding: 10, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, fontSize: 12.5 }} data-testid="letter-attachments">
+                <b>📎 المرفقات ({attachments.length})</b>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                  {attachments.map((a) => <button key={a.id} onClick={() => dlAttachment(a)} style={btn('#fff', { color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '5px 10px', fontSize: 12 })} data-testid={`letter-attachment-${a.id}`}>{a.filename} ({Math.round(a.size / 1024)} KB)</button>)}
+                  <button onClick={dlWithAttachments} style={btn('#1d4ed8', { padding: '5px 10px', fontSize: 12 })} data-testid="letter-pdf-with-attachments-btn">📄 الخطاب + المرفقات PDF</button>
+                </div>
+              </div>
             )}
             {draft && <div style={{ marginTop: 12, padding: 10, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, fontSize: 12.5 }} data-testid="letter-draft-info">📝 مسودة محفوظة برقم <b>{draft.number}</b> — التعديلات تُحفظ على نفس النسخة، وعند الاعتماد تأخذ الرقم الرسمي. <button onClick={resetForm} style={{ border: 'none', background: 'none', color: '#2563eb', cursor: 'pointer', fontSize: 12 }}>خطاب جديد</button></div>}
             {batch && <div style={{ marginTop: 12, padding: 10, background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, fontSize: 12.5 }} data-testid="letter-batch-issued">✅ صدر <b>{batch.count}</b> خطاباً مستقلاً وتم تنزيل PDF المجمّع{batch.skipped?.length ? ` (تُخطّي ${batch.skipped.length} غير موجود)` : ''}

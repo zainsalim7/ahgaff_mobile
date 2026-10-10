@@ -9,6 +9,7 @@ import { goBack } from '../src/utils/navigation';
 import api, { teachersAPI, departmentsAPI, facultiesAPI } from '../src/services/api';
 import { OvertimeSheet, lvl } from '../src/components/reports/OvertimeSheet';
 import { OvertimePolicyModal } from '../src/components/reports/OvertimePolicyModal';
+import { RaiseLetterBar } from '../src/components/reports/RaiseLetterBar';
 import { useAuth } from '../src/contexts/AuthContext';
 import { exportName, filenameFromResponse } from '../src/utils/exportName';
 import { DASH, NUM_FONT, dashStyles } from '../src/components/dashboard/dashTheme';
@@ -240,7 +241,7 @@ export default function TeacherWorkloadReport() {
             </View>
 
             {view === 'sheet' ? (
-              <View style={dashStyles.card} testID="tw-sheet-card"><OvertimeSheet teachers={rows} period={period} threshold={75} /></View>
+              <View style={dashStyles.card} testID="tw-sheet-card">{!isTeacher && <RaiseLetterBar params={params} disabled={rows.length === 0} />}<OvertimeSheet teachers={rows} period={period} threshold={75} /></View>
             ) : (
             <View style={dashStyles.card} testID="tw-table">
               <View style={styles.tableHead}>
