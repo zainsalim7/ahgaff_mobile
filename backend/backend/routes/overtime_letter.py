@@ -82,15 +82,12 @@ async def put_templates(data: dict, current_user: dict = Depends(get_current_use
 
 def _summary_table(report: dict) -> dict:
     """جدول ملخص (سطر لكل أستاذ) بصيغة جدول الخطابات {headers, rows} — يُعرض مكان {جدول_الأسماء}"""
-    rows, cur = [], ""
+    rows = []
     for i, t in enumerate(report["teachers"], 1):
-        s = t["summary"]; cur = s.get("currency") or cur
-        amt = f"{s['overtime_amount']:,.0f}" if s.get("overtime_amount") else "—"
-        rows.append([str(i), t["teacher_name"], t.get("academic_title") or "—", f"{s['required_hours']:g}", f"{s['total_actual_hours']:g}", f"{max(0.0, s['overtime_hours']):g}", amt])
-    tot = report["summary"]
-    tot_amt = f"{tot['total_overtime_amount']:,.0f} {cur}" if tot.get("total_overtime_amount") else "—"
-    rows.append(["", "الإجمالي", "", f"{tot['total_required_hours']:g}", f"{tot['total_actual_hours']:g}", f"{tot['total_overtime_hours']:g}", tot_amt])
-    return {"headers": ["م", "الأستاذ", "الرتبة", "النصاب", "المنجز", "الساعات الإضافية", "المستحق"], "rows": rows}
+        s = t["summary"]
+        rows.append([str(i), t["teacher_name"], t.get("academic_title") or "—", t.get("department_name") or "—", f"{max(0.0, s['overtime_hours']):g}"])
+    rows.append(["", "الإجمالي", "", "", f"{report['summary']['total_overtime_hours']:g}"])
+    return {"headers": ["م", "اسم الأستاذ", "الدرجة / الصفة الأكاديمية", "القسم", "الساعات الإضافية"], "rows": rows}
 
 
 @router.get("/reports/teacher-workload/letter-status")
