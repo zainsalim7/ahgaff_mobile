@@ -7,7 +7,7 @@ export const lvl = (c: any) => `${LEVELS[c.level] || c.level || ''} ${c.section 
 const f1 = (v: any) => (v === null || v === undefined || v === '' ? '' : Number(v).toFixed(1));
 
 /** 📋 كشف الساعات الإضافية — سطر لكل مقرر مع دمج خلايا الأستاذ (HTML على الويب) */
-export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: number; issuer?: string }> = ({ teachers, period, threshold }) => {
+export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: number; issuer?: string; raisedMap?: Record<string, any[]> }> = ({ teachers, period, threshold, raisedMap = {} }) => {
   const anyBonus = teachers.some((t) => t.summary.bonus_enabled);
   const divisor = teachers.find((t) => t.summary.bonus_enabled)?.summary.bonus_divisor ?? 6;
   const anyRate = teachers.some((t) => t.summary.hourly_rate);
@@ -48,7 +48,7 @@ export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: 
             return cs.map((c: any, k: number) => (
               <tr key={`${t.teacher_db_id}-${k}`} data-testid={`sheet-row-${t.teacher_db_id}-${k}`} style={{ backgroundColor: i % 2 ? '#f8fafc' : '#fff', borderTop: k === 0 && i > 0 ? '2.5px solid #334155' : undefined }}>
                 {k === 0 && <td rowSpan={n} style={td}>{i + 1}</td>}
-                {k === 0 && <td rowSpan={n} style={{ ...td, textAlign: 'right', fontWeight: 700, whiteSpace: 'normal', minWidth: 120 }} data-testid={`sheet-teacher-${t.teacher_db_id}`}>{t.academic_title} {t.teacher_name}<div style={{ fontSize: 10.5, color: '#64748b', fontWeight: 500 }}>{t.department_name}</div></td>}
+                {k === 0 && <td rowSpan={n} style={{ ...td, textAlign: 'right', fontWeight: 700, whiteSpace: 'normal', minWidth: 120 }} data-testid={`sheet-teacher-${t.teacher_db_id}`}>{t.academic_title} {t.teacher_name}<div style={{ fontSize: 10.5, color: '#64748b', fontWeight: 500 }}>{t.department_name}</div>{raisedMap[t.teacher_db_id] ? <div style={{ fontSize: 10, color: '#7c3aed', fontWeight: 700, marginTop: 2 }} data-testid={`sheet-raised-${t.teacher_db_id}`}>✉ سبق رفعه: {raisedMap[t.teacher_db_id].map((l: any) => l.number).join('، ')}</div> : null}</td>}
                 <td style={{ ...td, textAlign: 'right' }}>{c.course_name}{c.department_name ? <div style={{ fontSize: 10.5, color: '#64748b' }} data-testid="sheet-course-dept">{c.department_name}</div> : null}</td>
                 <td style={td}>{lvl(c)}</td>
                 <td style={td}>{f1(c.weekly_hours)}</td>

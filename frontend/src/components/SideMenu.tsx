@@ -131,6 +131,9 @@ const MENU_ITEMS: MenuItem[] = [
   { id: 'report-workload', label: 'نصاب التدريس', icon: 'briefcase', path: '/report-teacher-workload', permissions: [
     PERMISSIONS.REPORT_TEACHER_WORKLOAD
   ]},
+  { id: 'overtime-letters', label: 'سجل خطابات الساعات الإضافية', icon: 'albums', path: '/overtime-letters', permissions: [
+    PERMISSIONS.REPORT_TEACHER_WORKLOAD
+  ]},
   { id: 'report-warnings', label: 'الإنذارات', icon: 'warning', path: '/report-warnings', permissions: [
     PERMISSIONS.REPORT_WARNINGS
   ]},

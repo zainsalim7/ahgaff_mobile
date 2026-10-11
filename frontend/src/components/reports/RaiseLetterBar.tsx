@@ -9,7 +9,7 @@ const notify = (m: string) => (Platform.OS === 'web' ? window.alert(m) : Alert.a
 const STATUS_AR: Record<string, string> = { draft: 'مسودة', issued: 'صادر', revoked: 'ملغي', pending: 'قيد التوقيع', approved: 'معتمد' };
 
 /** 🔖 شارة الخطابات المرفوعة لهذه الفترة + زر «رفع كخطاب» */
-export const RaiseLetterBar: React.FC<{ params: any; disabled?: boolean }> = ({ params, disabled }) => {
+export const RaiseLetterBar: React.FC<{ params: any; disabled?: boolean; raised?: any[]; onDone?: () => void }> = ({ params, disabled, raised = [], onDone }) => {
   const router = useRouter();
   const [status, setStatus] = useState<any>(null);
   const [open, setOpen] = useState(false);
@@ -23,19 +23,25 @@ export const RaiseLetterBar: React.FC<{ params: any; disabled?: boolean }> = ({ 
       <TouchableOpacity style={[st.btn, disabled && { opacity: 0.5 }]} onPress={() => setOpen(true)} disabled={disabled} testID="raise-letter-btn">
         <Ionicons name="mail-outline" size={16} color="#fff" /><Text style={st.btnText}>رفع كخطاب رسمي</Text>
       </TouchableOpacity>
+      <TouchableOpacity style={[st.btn, { backgroundColor: '#475569' }]} onPress={() => router.push('/overtime-letters' as any)} testID="raise-letter-register-btn">
+        <Ionicons name="albums-outline" size={15} color="#fff" /><Text style={st.btnText}>سجل الخطابات</Text>
+      </TouchableOpacity>
+      {raised.length > 0 && <View style={[st.badge, { backgroundColor: '#fef3c7' }]} testID="raise-letter-raised-count"><Ionicons name="alert-circle-outline" size={13} color="#b45309" /><Text style={[st.badgeText, { color: '#92400e' }]}>{raised.length} أستاذاً سبق رفعهم عن فترة متداخلة</Text></View>}
       {status?.items?.map((it: any) => (
         <TouchableOpacity key={it.letter_id} style={[st.badge, it.status === 'revoked' && { backgroundColor: '#f1f5f9' }]} onPress={() => router.push(`/letters?id=${it.letter_id}` as any)} testID={`raise-letter-badge-${it.letter_id}`}>
           <Ionicons name="document-text-outline" size={13} color={DASH.navy} />
           <Text style={st.badgeText}>{it.mode === 'amend' ? 'تعديلي ' : ''}رُفع بالخطاب {it.number} · {String(it.issued_at || it.created_at).slice(0, 10)} · {STATUS_AR[it.status] || it.status}</Text>
         </TouchableOpacity>
       ))}
-      <RaiseLetterModal visible={open} onClose={() => setOpen(false)} params={params} hasActive={!!status?.has_active} onDone={load} />
+      <RaiseLetterModal visible={open} onClose={() => setOpen(false)} params={params} hasActive={!!status?.has_active} raised={raised} onDone={() => { load(); onDone?.(); }} />
     </View>
   );
 };
 
-const RaiseLetterModal: React.FC<{ visible: boolean; onClose: () => void; params: any; hasActive: boolean; onDone: () => void }> = ({ visible, onClose, params, hasActive, onDone }) => {
+const RaiseLetterModal: React.FC<{ visible: boolean; onClose: () => void; params: any; hasActive: boolean; raised: any[]; onDone: () => void }> = ({ visible, onClose, params, hasActive, raised, onDone }) => {
   const router = useRouter();
+  const [dupMode, setDupMode] = useState<'exclude' | 'tag'>('exclude');
+  const [keep, setKeep] = useState<Record<string, boolean>>({});  // أساتذة مكررون اختار المستخدم إبقاءهم رغم ذلك
   const [tpls, setTpls] = useState<any[]>([]);
   const [recs, setRecs] = useState<any[]>([]);
   const [tpl, setTpl] = useState('');
@@ -63,7 +69,8 @@ const RaiseLetterModal: React.FC<{ visible: boolean; onClose: () => void; params
     if (!recipient.name && !recipient.title) { notify('حدد الجهة المرسل إليها'); return; }
     setBusy(true);
     try {
-      const r = await api.post('/reports/teacher-workload/raise-letter', { template_key: tpl, start_date: params.start_date, end_date: params.end_date, faculty_id: params.faculty_id, department_id: params.department_id, teacher_id: params.teacher_id, hide_empty: !!params.hide_empty, only_overtime: !!params.only_overtime, recipient, extra_note: note, mode: hasActive ? 'amend' : 'new', base_url: Platform.OS === 'web' ? window.location.origin : '' });
+      const exclude_teacher_ids = dupMode === 'exclude' ? raised.filter((r) => !keep[r.teacher_id]).map((r) => r.teacher_id) : [];
+      const r = await api.post('/reports/teacher-workload/raise-letter', { template_key: tpl, start_date: params.start_date, end_date: params.end_date, faculty_id: params.faculty_id, department_id: params.department_id, teacher_id: params.teacher_id, hide_empty: !!params.hide_empty, only_overtime: !!params.only_overtime, recipient, extra_note: note, mode: hasActive ? 'amend' : 'new', base_url: Platform.OS === 'web' ? window.location.origin : '', exclude_teacher_ids, tag_previous: dupMode === 'tag' || Object.values(keep).some(Boolean) });
       setResult(r.data); onDone();
     } catch (e: any) { notify(e?.response?.data?.detail || 'فشل إنشاء الخطاب'); } finally { setBusy(false); }
   };
@@ -88,6 +95,21 @@ const RaiseLetterModal: React.FC<{ visible: boolean; onClose: () => void; params
           ) : (
             <ScrollView style={{ maxHeight: 520 }}>
               {hasActive && <Text style={st.warn}>⚠️ هذه الفترة مرفوعة مسبقاً — سيُنشأ خطاب <Text style={{ fontWeight: '800' }}>تعديلي/إلحاقي</Text></Text>}
+              {raised.length > 0 && (
+                <View style={st.dupBox} testID="raise-dup-box">
+                  <Text style={st.dupTitle}>⚠️ {raised.length} أستاذاً سبق رفعهم في خطاب غير ملغى عن فترة متداخلة:</Text>
+                  {raised.map((r) => (
+                    <View key={r.teacher_id} style={st.dupLine} testID={`raise-dup-${r.teacher_id}`}>
+                      {dupMode === 'exclude' && <TouchableOpacity onPress={() => setKeep({ ...keep, [r.teacher_id]: !keep[r.teacher_id] })} testID={`raise-dup-keep-${r.teacher_id}`}><Ionicons name={keep[r.teacher_id] ? 'checkbox' : 'square-outline'} size={18} color={keep[r.teacher_id] ? DASH.blue : '#94a3b8'} /></TouchableOpacity>}
+                      <Text style={st.dupText}>{r.teacher_name} — {r.letters.map((l: any) => `${l.number} (${l.start_date} → ${l.end_date}${l.same_period ? '، نفس الفترة' : ''}، ${STATUS_AR[l.status] || l.status})`).join('؛ ')}</Text>
+                    </View>
+                  ))}
+                  <View style={st.chips}>
+                    <TouchableOpacity style={[st.chip, dupMode === 'exclude' && st.chipOn]} onPress={() => setDupMode('exclude')} testID="raise-dup-exclude"><Text style={[st.chipText, dupMode === 'exclude' && { color: '#fff' }]}>استبعادهم من الخطاب{dupMode === 'exclude' ? ' (علّم من تريد إبقاءه بوسم)' : ''}</Text></TouchableOpacity>
+                    <TouchableOpacity style={[st.chip, dupMode === 'tag' && st.chipOn]} onPress={() => setDupMode('tag')} testID="raise-dup-tag"><Text style={[st.chipText, dupMode === 'tag' && { color: '#fff' }]}>إدراج الجميع بوسم «سبق رفعه»</Text></TouchableOpacity>
+                  </View>
+                </View>
+              )}
               <Text style={st.lbl}>نوع الخطاب / الجهة</Text>
               {tpls.map((t) => (
                 <TouchableOpacity key={t.key} style={[st.opt, tpl === t.key && st.optOn]} onPress={() => { setTpl(t.key); setRecId(''); }} testID={`raise-tpl-${t.key}`}>
@@ -135,6 +157,10 @@ const st = StyleSheet.create({
   lbl: { fontSize: 12.5, fontWeight: '700', color: DASH.ink, textAlign: 'right', marginTop: 10, marginBottom: 6 },
   hint: { fontSize: 11, color: DASH.muted, textAlign: 'right', marginTop: 8, lineHeight: 17 },
   warn: { fontSize: 12, color: '#b45309', backgroundColor: '#fff7ed', padding: 8, borderRadius: 8, textAlign: 'right' },
+  dupBox: { backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fcd34d', borderRadius: 10, padding: 10, marginTop: 8, gap: 6 },
+  dupTitle: { fontSize: 12.5, fontWeight: '800', color: '#92400e', textAlign: 'right' },
+  dupLine: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
+  dupText: { flex: 1, fontSize: 11.5, color: '#78350f', textAlign: 'right', lineHeight: 17 },
   ok: { fontSize: 13, color: DASH.green, fontWeight: '700', textAlign: 'right', lineHeight: 20 },
   opt: { padding: 10, borderRadius: 10, backgroundColor: '#f1f5f9', marginBottom: 6 },
   optOn: { backgroundColor: DASH.navy },

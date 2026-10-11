@@ -187,7 +187,24 @@ async def semester_for_period(db, start_str: str, end_str: str) -> Optional[dict
     return act
 
 
-async def compute_workload(db, teachers: List[dict], start: datetime, end: datetime, hide_empty: bool = False, only_overtime: bool = False) -> dict:
+def report_totals(result: list) -> dict:
+    """إجماليات الكشف (تُعاد عند استبعاد أساتذة من الخطاب)"""
+    return {
+        "total_teachers": len(result),
+        "total_required_hours": round(sum(t["summary"]["required_hours"] for t in result), 2),
+        "total_scheduled_hours": round(sum(t["summary"]["total_scheduled_hours"] for t in result), 2),
+        "total_actual_hours": round(sum(t["summary"]["total_actual_hours"] for t in result), 2),
+        "total_difference_hours": round(sum(t["summary"]["difference_hours"] for t in result), 2),
+        "total_expected_hours": round(sum(t["summary"]["expected_hours"] for t in result), 2),
+        "total_shortfall_hours": round(sum(t["summary"]["shortfall_hours"] for t in result), 2),
+        "total_bonus_hours": round(sum(t["summary"]["bonus_hours"] for t in result), 2),
+        "total_overtime_hours": round(sum(max(0.0, t["summary"]["overtime_hours"]) for t in result), 2),
+        "total_overtime_amount": round(sum(t["summary"]["overtime_amount"] or 0 for t in result), 2),
+        "threshold": LOW_RATE_THRESHOLD,
+    }
+
+
+async def compute_workload(db, teachers: List[dict], start: datetime, end: datetime, hide_empty: bool = False, only_overtime: bool = False, exclude_ids: Optional[set] = None) -> dict:
     """يعيد نفس بنية /reports/teacher-workload القديمة + أعمدة كشف الساعات الإضافية"""
     from .calendar_events import holiday_dates
     policies = await load_policies(db)
@@ -330,24 +347,14 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
         result = [t for t in result if t["summary"]["total_scheduled_hours"] > 0]
     if only_overtime:
         result = [t for t in result if t["summary"]["overtime_hours"] > 0]
+    if exclude_ids:
+        result = [t for t in result if t["teacher_db_id"] not in exclude_ids]
     return {
         "holidays": [{"date": k, "name": v} for k, v in sorted(holidays.items())],
         "period": {"start_date": start.isoformat(), "end_date": end.isoformat(), "total_weeks": total_weeks, "holiday_days": len(holidays),
                    "semester_name": (sem or {}).get("name", ""), "academic_year": (sem or {}).get("academic_year", "")},
         "teachers": result,
-        "summary": {
-            "total_teachers": len(result),
-            "total_required_hours": round(sum(t["summary"]["required_hours"] for t in result), 2),
-            "total_scheduled_hours": round(sum(t["summary"]["total_scheduled_hours"] for t in result), 2),
-            "total_actual_hours": round(sum(t["summary"]["total_actual_hours"] for t in result), 2),
-            "total_difference_hours": round(sum(t["summary"]["difference_hours"] for t in result), 2),
-            "total_expected_hours": round(sum(t["summary"]["expected_hours"] for t in result), 2),
-            "total_shortfall_hours": round(sum(t["summary"]["shortfall_hours"] for t in result), 2),
-            "total_bonus_hours": round(sum(t["summary"]["bonus_hours"] for t in result), 2),
-            "total_overtime_hours": round(sum(max(0.0, t["summary"]["overtime_hours"]) for t in result), 2),
-            "total_overtime_amount": round(sum(t["summary"]["overtime_amount"] or 0 for t in result), 2),
-            "threshold": LOW_RATE_THRESHOLD,
-        },
+        "summary": report_totals(result),
     }
 
 

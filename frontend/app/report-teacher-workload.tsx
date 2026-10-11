@@ -42,6 +42,12 @@ export default function TeacherWorkloadReport() {
   const [view, setView] = useState<'summary' | 'sheet'>('summary');
   const [hideEmpty, setHideEmpty] = useState(true);
   const [onlyOvertime, setOnlyOvertime] = useState(false);
+  const [raised, setRaised] = useState<any[]>([]);
+  const raisedMap = useMemo(() => Object.fromEntries(raised.map((r) => [r.teacher_id, r.letters])), [raised]);
+  const loadRaised = async (p: any) => {
+    try { const r = await api.get('/reports/teacher-workload/raised', { params: { start_date: p.start_date, end_date: p.end_date, faculty_id: p.faculty_id, department_id: p.department_id, teacher_id: p.teacher_id } }); setRaised(r.data.items || []); }
+    catch { setRaised([]); }
+  };
   const [policyOpen, setPolicyOpen] = useState(false);
   const [teacherId, setTeacherId] = useState('');
   const [teacherQ, setTeacherQ] = useState('');
@@ -80,9 +86,10 @@ export default function TeacherWorkloadReport() {
     try {
       const r = await api.get('/reports/teacher-workload', { params });
       setData(r.data.teachers || []); setPeriod(r.data.period); setRan(true);
+      if (!isTeacher) loadRaised(params);
     } catch (e: any) { Alert.alert('خطأ', e?.response?.data?.detail || 'فشل تنفيذ التقرير'); }
     finally { setLoading(false); }
-  }, [params]);
+  }, [params, isTeacher]);
 
   useEffect(() => { if (isTeacher) run(); }, [isTeacher, run]);
 
@@ -255,7 +262,7 @@ export default function TeacherWorkloadReport() {
             )}
 
             {view === 'sheet' ? (
-              <View style={dashStyles.card} testID="tw-sheet-card">{!isTeacher && <RaiseLetterBar params={params} disabled={rows.length === 0} />}<OvertimeSheet teachers={rows} period={period} threshold={75} /></View>
+              <View style={dashStyles.card} testID="tw-sheet-card">{!isTeacher && <RaiseLetterBar params={params} disabled={rows.length === 0} raised={raised} onDone={() => loadRaised(params)} />}<OvertimeSheet teachers={rows} period={period} threshold={75} raisedMap={raisedMap} /></View>
             ) : (
             <View style={dashStyles.card} testID="tw-table">
               <View style={styles.tableHead}>
@@ -280,6 +287,7 @@ export default function TeacherWorkloadReport() {
                         <Text style={styles.tName}>{t.academic_title ? `${t.academic_title} ` : ''}{t.teacher_name}</Text>
                         <Text style={styles.tSub}>{t.department_name || deptName(t.department_id) || '—'} · {s.total_courses} مقرر · نصاب {s.weekly_hours} س/أسبوع{s.bonus_enabled ? ` · إضافة ${s.bonus_hours} س` : ''}</Text>
                         {!!s.note && <Text style={styles.tNote} testID={`tw-row-note-${t.teacher_id}`}>⏱ {s.note}</Text>}
+                        {!!raisedMap[t.teacher_db_id || ''] && <Text style={styles.tRaised} testID={`tw-row-raised-${t.teacher_id}`}>✉ سبق رفعه بالخطاب {raisedMap[t.teacher_db_id || ''].map((l: any) => `${l.number} (${l.start_date} → ${l.end_date})`).join('، ')}</Text>}
                       </View>
                       <View style={{ flex: 2, minWidth: 160 }}>
                         <View style={styles.track}><View style={[styles.fill, { width: `${Math.min(100, s.completion_rate)}%`, backgroundColor: rateColor(s.completion_rate) }]} /></View>
@@ -383,6 +391,7 @@ const styles = StyleSheet.create({
   tName: { fontSize: 14, fontWeight: '800', color: DASH.ink, textAlign: 'right' },
   tSub: { fontSize: 11, color: DASH.muted, textAlign: 'right', marginTop: 2 },
   tNote: { fontSize: 11, color: '#b45309', textAlign: 'right', marginTop: 3, fontWeight: '700' },
+  tRaised: { fontSize: 11, color: '#7c3aed', textAlign: 'right', marginTop: 3, fontWeight: '700' },
   lateBox: { flexDirection: 'row-reverse', gap: 10, alignItems: 'flex-start', backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fcd34d', borderRadius: 12, padding: 12, marginBottom: 14 },
   lateTitle: { fontSize: 12.5, fontWeight: '800', color: '#92400e', textAlign: 'right' },
   lateLine: { fontSize: 11.5, color: '#78350f', textAlign: 'right', marginTop: 3, lineHeight: 18 },

@@ -172,6 +172,7 @@ export default function RootLayout() {
           <Stack.Screen name="report-student" options={{ title: 'تقرير الطالب' }} />
           <Stack.Screen name="dashboard-digests" options={{ title: 'الملخصات الأسبوعية' }} />
           <Stack.Screen name="report-teacher-workload" options={{ title: 'تقرير نصاب المدرسين' }} />
+          <Stack.Screen name="overtime-letters" options={{ title: 'سجل خطابات الساعات الإضافية' }} />
           <Stack.Screen name="report-lesson-completion" options={{ title: 'تقرير إنجاز الدروس' }} />
           <Stack.Screen name="report-teacher-delays" options={{ title: 'تقرير تأخر المعلمين' }} />
           <Stack.Screen name="report-warnings" options={{ title: 'الإنذارات' }} />

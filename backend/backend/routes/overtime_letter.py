@@ -2,6 +2,9 @@
 - قوالب لأربع جهات (رئاسة/نائب أكاديمي، الأمين العام، المالية، شؤون الموظفين) قابلة للتعديل.
 - يُنشئ مسودة في نظام الخطابات بجدول ملخص (سطر لكل أستاذ) ويرفق PDF الكشف + Excel المستحقات (GridFS).
 - ربط عكسي: الفترة المرفوعة تُسجَّل ولا تُرفع مرة أخرى إلا كـ«إلحاق/تعديل».
+- منع التكرار على مستوى الأستاذ: كل خطاب يحفظ قائمة أساتذته (linked_report.teachers_list)؛ قبل الرفع تُفحص فترات متداخلة
+  لكل أستاذ في خطابات غير ملغاة (مسودة أو صادرة) → استبعاد أو إدراج بوسم «سبق رفعه».
+- سجل خطابات الكشوف (/reports/teacher-workload/letters) لمن له صلاحية تقرير النصاب فقط.
 """
 import io
 import html
@@ -16,6 +19,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from .deps import get_db, get_current_user, has_permission
 from .teacher_overtime import compute_workload, select_teachers, parse_period, build_sheet_pdf, build_sheet_excel, _issuer
+from models.permissions import UserRole, Permission
 
 router = APIRouter(tags=["التقارير - رفع الكشف كخطاب"])
 SETTINGS_KEY = "overtime_letter_templates"
@@ -50,6 +54,8 @@ class RaiseIn(BaseModel):
     extra_note: Optional[str] = ""
     mode: str = "new"  # new | amend
     base_url: Optional[str] = ""
+    exclude_teacher_ids: List[str] = []   # أساتذة يُستبعدون من الخطاب (سبق رفعهم)
+    tag_previous: bool = False            # إدراج من سبق رفعهم مع وسم بدل استبعادهم
 
 
 def _fs(db):
@@ -86,7 +92,8 @@ def _summary_table(report: dict) -> dict:
     rows = []
     for i, t in enumerate(report["teachers"], 1):
         s = t["summary"]
-        rows.append([str(i), t["teacher_name"], t.get("academic_title") or "—", t.get("department_name") or "—", f"{max(0.0, s['overtime_hours']):g}"])
+        name = t["teacher_name"] + (f" (سبق رفعه بالخطاب {t['prev_letter']})" if t.get("prev_letter") else "")
+        rows.append([str(i), name, t.get("academic_title") or "—", t.get("department_name") or "—", f"{max(0.0, s['overtime_hours']):g}"])
     rows.append(["", "الإجمالي", "", "", f"{report['summary']['total_overtime_hours']:g}"])
     return {"headers": ["م", "اسم الأستاذ", "الدرجة / الصفة الأكاديمية", "القسم", "الساعات الإضافية"], "rows": rows}
 
@@ -109,13 +116,88 @@ async def letter_status(start_date: str, end_date: str, faculty_id: Optional[str
     return {"items": out, "has_active": bool(active)}
 
 
+def _can_register(user: dict) -> bool:
+    return user.get("role") == UserRole.ADMIN or has_permission(user, Permission.REPORT_TEACHER_WORKLOAD) or has_permission(user, Permission.MANAGE_SETTINGS)
+
+
+async def find_raised(db, teacher_ids: List[str], start_date: str, end_date: str, exclude_letter: Optional[str] = None) -> dict:
+    """خطابات غير ملغاة (مسودة/صادرة) تشمل هؤلاء الأساتذة في فترة متداخلة → {teacher_id: [letters]}"""
+    q = {"linked_report.type": "overtime", "is_revoked": {"$ne": True}, "linked_report.teachers_list.teacher_id": {"$in": teacher_ids},
+         "linked_report.start_date": {"$lte": end_date}, "linked_report.end_date": {"$gte": start_date}}
+    out: dict = {}
+    async for lt in db.letters.find(q, {"number_display": 1, "status": 1, "linked_report": 1, "issued_at": 1, "created_at": 1}).sort("created_at", -1):
+        if exclude_letter and str(lt["_id"]) == exclude_letter:
+            continue
+        lr = lt["linked_report"]
+        for te in lr.get("teachers_list", []):
+            if te["teacher_id"] in teacher_ids:
+                out.setdefault(te["teacher_id"], []).append({"letter_id": str(lt["_id"]), "number": lt.get("number_display"), "status": lt.get("status"),
+                                                             "start_date": lr["start_date"], "end_date": lr["end_date"], "overtime_hours": te.get("overtime_hours"),
+                                                             "same_period": lr["start_date"] == start_date and lr["end_date"] == end_date})
+    return out
+
+
+@router.get("/reports/teacher-workload/raised")
+async def raised_teachers(start_date: str, end_date: str, faculty_id: Optional[str] = None, department_id: Optional[str] = None, teacher_id: Optional[str] = None,
+                          current_user: dict = Depends(get_current_user)):
+    """لكل أستاذ في النطاق: الخطابات (غير الملغاة) التي سبق رفعه فيها عن فترة متداخلة — للشارات ونافذة الرفع"""
+    db = get_db()
+    teachers = await select_teachers(db, current_user, teacher_id, faculty_id, department_id)
+    ids = [str(t["_id"]) for t in teachers]
+    raised = await find_raised(db, ids, start_date, end_date)
+    names = {str(t["_id"]): t.get("full_name", "") for t in teachers}
+    return {"items": [{"teacher_id": tid, "teacher_name": names.get(tid, ""), "letters": ls} for tid, ls in raised.items()], "count": len(raised)}
+
+
+@router.get("/reports/teacher-workload/letters")
+async def overtime_letters_register(q: Optional[str] = None, teacher_id: Optional[str] = None, status: Optional[str] = None, year: Optional[int] = None,
+                                    current_user: dict = Depends(get_current_user)):
+    """📒 سجل خطابات كشوف الساعات الإضافية — لمن له صلاحية تقرير النصاب (حسب نطاق كليته)"""
+    if not _can_register(current_user):
+        raise HTTPException(status_code=403, detail="غير مصرح لك — تحتاج صلاحية تقرير نصاب المدرسين")
+    db = get_db()
+    f: dict = {"linked_report.type": "overtime"}
+    if not (current_user.get("role") == UserRole.ADMIN or has_permission(current_user, Permission.MANAGE_SETTINGS)):
+        f["linked_report.faculty_id"] = current_user.get("faculty_id") or "__none__"
+    if teacher_id:
+        f["linked_report.teachers_list.teacher_id"] = teacher_id
+    if status == "revoked":
+        f["is_revoked"] = True
+    elif status:
+        f["status"] = status; f["is_revoked"] = {"$ne": True}
+    if year:
+        f["linked_report.start_date"] = {"$regex": f"^{year}-"}
+    fac = {str(x["_id"]): x["name"] for x in await db.faculties.find({}, {"name": 1}).to_list(200)}
+    dep = {str(x["_id"]): x["name"] for x in await db.departments.find({}, {"name": 1}).to_list(1000)}
+    rows = []
+    async for lt in db.letters.find(f).sort("created_at", -1).limit(500):
+        lr = lt["linked_report"]
+        tl = lr.get("teachers_list", [])
+        if q and not (q in (lt.get("number_display") or "") or q in (lt.get("subject") or "") or any(q in (te.get("name") or "") for te in tl)):
+            continue
+        rows.append({"letter_id": str(lt["_id"]), "number": lt.get("number_display"), "draft_number": lt.get("draft_number"),
+                     "status": "revoked" if lt.get("is_revoked") else lt.get("status"), "mode": "amend" if "تعديلي" in (lt.get("subject") or "") else "new",
+                     "subject": lt.get("subject"), "recipient": (lt.get("recipient") or {}).get("title") or (lt.get("recipient") or {}).get("name"),
+                     "start_date": lr.get("start_date"), "end_date": lr.get("end_date"),
+                     "scope": (dep.get(lr.get("department_id")) if lr.get("department_id") else None) or (fac.get(lr.get("faculty_id")) if lr.get("faculty_id") else None) or "الجامعة",
+                     "teachers": lr.get("teachers") or len(tl), "overtime_hours": lr.get("overtime_hours"), "amount": lr.get("amount"),
+                     "excluded": len(lr.get("excluded") or []), "teachers_list": tl,
+                     "created_at": lt.get("created_at"), "created_by": lt.get("created_by_name") or lt.get("issued_by_name") or "", "issued_at": lt.get("issued_at"),
+                     "attachments": len(lt.get("attachments") or [])})
+    return {"items": rows, "count": len(rows)}
+
+
 async def rebuild_overtime_table(db, current_user: dict, lt: dict):
     """إعادة توليد جدول الأسماء لخطاب مرتبط بكشف الساعات الإضافية (بعد فقده عند تعديل المسودة)"""
     lr = lt.get("linked_report") or {}
     if lr.get("type") != "overtime":
         return None
     start, end = parse_period(lr["start_date"], lr["end_date"])
-    report = await compute_workload(db, await select_teachers(db, current_user, None, lr.get("faculty_id"), lr.get("department_id")), start, end, True, bool(lr.get("only_overtime")))
+    report = await compute_workload(db, await select_teachers(db, current_user, None, lr.get("faculty_id"), lr.get("department_id")), start, end, True, bool(lr.get("only_overtime")), set(lr.get("excluded") or []))
+    prev = {te["teacher_id"]: te.get("prev_letter") for te in lr.get("teachers_list", []) if te.get("prev_letter")}
+    for t in report["teachers"]:
+        if t["teacher_db_id"] in prev:
+            t["prev_letter"] = prev[t["teacher_db_id"]]
     return _summary_table(report) if report["teachers"] else None
 
 
@@ -140,9 +222,17 @@ async def raise_letter(data: RaiseIn, current_user: dict = Depends(get_current_u
             raise HTTPException(status_code=409, detail=f"هذه الفترة مرفوعة مسبقاً بالخطاب {'، '.join(live)} — اختر «إلحاق/تعديل» لإصدار خطاب تعديلي")
 
     start, end = parse_period(data.start_date, data.end_date)
-    report = await compute_workload(db, await select_teachers(db, current_user, data.teacher_id, data.faculty_id, data.department_id), start, end, data.hide_empty, data.only_overtime)
+    exclude = set(data.exclude_teacher_ids or [])
+    report = await compute_workload(db, await select_teachers(db, current_user, data.teacher_id, data.faculty_id, data.department_id), start, end, data.hide_empty, data.only_overtime, exclude)
     if not report["teachers"]:
-        raise HTTPException(status_code=400, detail="لا يوجد أساتذة في الكشف لهذه الفلاتر")
+        raise HTTPException(status_code=400, detail="لا يوجد أساتذة في الكشف لهذه الفلاتر (بعد الاستبعاد)")
+    raised = await find_raised(db, [t["teacher_db_id"] for t in report["teachers"]], data.start_date, data.end_date)
+    if raised and not data.tag_previous:
+        names = "، ".join(f"{t['teacher_name']} ({raised[t['teacher_db_id']][0]['number']})" for t in report["teachers"] if t["teacher_db_id"] in raised)
+        raise HTTPException(status_code=409, detail=f"سبق رفع {len(raised)} أستاذاً عن فترة متداخلة: {names} — استبعدهم أو اختر إدراجهم بوسم «سبق رفعه»")
+    for t in report["teachers"]:
+        if t["teacher_db_id"] in raised:
+            t["prev_letter"] = raised[t["teacher_db_id"]][0]["number"]
     fac_name = report["teachers"][0].get("faculty_name") if data.faculty_id else "الجامعة"
     if data.department_id:
         fac_name = f"{report['teachers'][0].get('department_name') or ''} — {fac_name}"
@@ -176,12 +266,21 @@ async def raise_letter(data: RaiseIn, current_user: dict = Depends(get_current_u
                                   (f"مستحقات الساعات الإضافية {data.start_date} - {data.end_date}.xlsx", build_sheet_excel(report, issuer).getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")):
         fid = await fs.upload_from_stream(fname, content, metadata={"letter_id": lid, "content_type": ctype})
         atts.append({"id": str(fid), "filename": fname, "content_type": ctype, "size": len(content)})
-    await db.letters.update_one({"_id": ObjectId(lid)}, {"$set": {"attachments": atts, "table": _summary_table(report), "custom_table": True, "linked_report": {"type": "overtime", "period_key": key, "start_date": data.start_date, "end_date": data.end_date, "only_overtime": data.only_overtime,
-                                                                                                         "faculty_id": data.faculty_id, "department_id": data.department_id, "teachers": tot["total_teachers"],
-                                                                                                         "overtime_hours": tot["total_overtime_hours"], "amount": tot.get("total_overtime_amount")}}})
+    teachers_list = [{"teacher_id": t["teacher_db_id"], "name": t["teacher_name"], "department_name": t.get("department_name"), "overtime_hours": round(max(0.0, t["summary"]["overtime_hours"]), 2),
+                      "amount": t["summary"].get("overtime_amount"), "prev_letter": t.get("prev_letter")} for t in report["teachers"]]
+    await db.letters.update_one({"_id": ObjectId(lid)}, {"$set": {"attachments": atts, "table": _summary_table(report), "custom_table": True, "created_by_name": current_user.get("full_name", ""),
+                                                                 "linked_report": {"type": "overtime", "period_key": key, "start_date": data.start_date, "end_date": data.end_date, "only_overtime": data.only_overtime,
+                                                                                   "faculty_id": data.faculty_id, "department_id": data.department_id, "teachers": tot["total_teachers"],
+                                                                                   "overtime_hours": tot["total_overtime_hours"], "amount": tot.get("total_overtime_amount"),
+                                                                                   "teachers_list": teachers_list, "excluded": sorted(exclude)}}})
     await db.overtime_letter_links.insert_one({"period_key": key, "letter_id": lid, "mode": data.mode, "template_key": data.template_key,
                                                "created_at": datetime.now(timezone.utc).isoformat(), "created_by": current_user.get("full_name", "")})
-    return {"letter_id": lid, "number": res["number"], "status": "draft", "attachments": atts, "message": f"أُنشئت مسودة الخطاب {res['number']} بمرفقين — أكملها واعتمدها من نظام الخطابات"}
+    msg = f"أُنشئت مسودة الخطاب {res['number']} بمرفقين — أكملها واعتمدها من نظام الخطابات"
+    if exclude:
+        msg += f" · استُبعد {len(exclude)} أستاذاً سبق رفعهم"
+    if raised:
+        msg += f" · {len(raised)} أستاذاً أُدرجوا بوسم «سبق رفعه»"
+    return {"letter_id": lid, "number": res["number"], "status": "draft", "attachments": atts, "excluded": len(exclude), "tagged": len(raised), "message": msg}
 
 
 @router.get("/letters/{lid}/attachments/{aid}")
