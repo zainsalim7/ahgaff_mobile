@@ -565,6 +565,16 @@ async def save_draft(data: IssueIn, current_user: dict = Depends(get_current_use
         ex = await _load_visible(db, current_user, data.draft_id)
         if ex.get("status") != "draft":
             raise HTTPException(status_code=400, detail="المسودة غير موجودة أو صدرت رسمياً")
+        if ex.get("custom_table") and not doc.get("people"):
+            doc["table"] = ex.get("table")  # جدول مخصص (مثل كشف الساعات الإضافية) — لا يُستبدل بجدول الأسماء الفارغ
+            if not (doc["table"] or {}).get("rows"):
+                from .overtime_letter import rebuild_overtime_table
+                doc["table"] = await rebuild_overtime_table(db, current_user, ex)
+            if doc["table"] and "{جدول_الأسماء}" not in doc["body"]:
+                def _ins(b: str) -> str:
+                    i = b.rfind("<p")
+                    return (b[:i] + "<p>{جدول_الأسماء}</p>" + b[i:]) if i > 0 else b + "<p>{جدول_الأسماء}</p>"
+                doc["body"] = _ins(doc["body"]); doc["inputs"]["body"] = _ins(doc["inputs"]["body"])
         await db.letters.update_one({"_id": ex["_id"]}, {"$set": doc})
         return {"id": str(ex["_id"]), "number": ex["number_display"], "status": "draft"}
     counter = await db.letter_counters.find_one_and_update({"_id": "draft"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)

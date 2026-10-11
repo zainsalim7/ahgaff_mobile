@@ -108,6 +108,16 @@ async def letter_status(start_date: str, end_date: str, faculty_id: Optional[str
     return {"items": out, "has_active": bool(active)}
 
 
+async def rebuild_overtime_table(db, current_user: dict, lt: dict):
+    """إعادة توليد جدول الأسماء لخطاب مرتبط بكشف الساعات الإضافية (بعد فقده عند تعديل المسودة)"""
+    lr = lt.get("linked_report") or {}
+    if lr.get("type") != "overtime":
+        return None
+    start, end = parse_period(lr["start_date"], lr["end_date"])
+    report = await compute_workload(db, await select_teachers(db, current_user, None, lr.get("faculty_id"), lr.get("department_id")), start, end, True)
+    return _summary_table(report) if report["teachers"] else None
+
+
 @router.post("/reports/teacher-workload/raise-letter")
 async def raise_letter(data: RaiseIn, current_user: dict = Depends(get_current_user)):
     """✉️ إنشاء مسودة خطاب رسمي بالكشف + المرفقات (PDF الكشف، Excel المستحقات)"""
