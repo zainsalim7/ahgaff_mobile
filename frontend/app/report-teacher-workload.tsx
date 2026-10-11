@@ -229,7 +229,7 @@ export default function TeacherWorkloadReport() {
                 ['الساعات المنفَّذة', `${Math.round(totals.act * 10) / 10} س`, DASH.teal, `من ${Math.round(totals.sch * 10) / 10} س مجدولة`],
                 ['المحاضرات المنفَّذة', `${totals.exe}/${totals.lec}`, DASH.purple, 'منفَّذة / مجدولة'],
                 ['نسبة الإنجاز', `${totals.rate}%`, rateColor(totals.rate), totals.below ? `${totals.below} مدرس تحت 75%` : 'الجميع ≥ 75%'],
-                ['الساعات الإضافية', `${Math.round(totals.ot * 10) / 10} س`, DASH.green, totals.sf ? `نقص ${Math.round(totals.sf * 10) / 10} س · ${totals.lowCourses} مقرر تحت 75%` : 'بعد الإضافة − النصاب'],
+                ['الساعات الإضافية', `${Math.round(totals.ot * 10) / 10} س`, DASH.green, totals.sf ? `نقص ${Math.round(totals.sf * 10) / 10} س · ${totals.lowCourses} مقرر تحت 75%` : (data.some((t) => t.summary.bonus_enabled) ? 'بعد الإضافة − النصاب' : 'المنجز − النصاب')],
                 ...(totals.amt ? [['المستحق المالي', `${totals.amt.toLocaleString('en')} ${totals.cur}`, DASH.gold, 'الساعات الإضافية × سعر الساعة']] : []),
               ].map(([l, v, c, sub]) => (
                 <View key={String(l)} style={[dashStyles.card, styles.kpi]}>

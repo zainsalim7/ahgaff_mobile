@@ -394,6 +394,18 @@ SHEET_HEADERS = ["م", "اسم الأستاذ", "المادة", "المستوى"
                  "إجمالي الساعات الإضافية", "النقص", "نسبة الإنجاز", "الملاحظات"]
 
 
+BONUS_COLS = (10, 11)  # «إضافة ساعة لكل N» و«الساعات بعد الإضافة» — تظهر فقط إن فُعِّلت الإضافة لكلية ما
+
+
+def any_bonus(report: dict) -> bool:
+    return any(t["summary"].get("bonus_enabled") for t in report["teachers"])
+
+
+def _cols(seq, with_bonus: bool):
+    """يحذف عمودي الإضافة من قائمة بترتيب الأعمدة إن كانت الإضافة معطّلة"""
+    return list(seq) if with_bonus else [v for i, v in enumerate(seq) if i not in BONUS_COLS]
+
+
 def _lvl(c: dict) -> str:
     lv = {1: "الأول", 2: "الثاني", 3: "الثالث", 4: "الرابع", 5: "الخامس", 6: "السادس"}.get(c.get("level"), str(c.get("level") or ""))
     return f"{lv} {c.get('section') or ''}".strip()
@@ -409,8 +421,9 @@ def _fmt(v) -> str:
 
 
 def sheet_rows(report: dict):
-    """صفوف الكشف: سطر لكل مقرر، وقيم الأستاذ تُكرَّر (تُدمج لاحقاً)"""
+    """صفوف الكشف: سطر لكل مقرر، وقيم الأستاذ تُكرَّر (تُدمج لاحقاً)؛ عمودا الإضافة يُحذفان إن كانت معطّلة"""
     rows, spans = [], []
+    with_bonus = any_bonus(report)
     idx = 0
     for t in report["teachers"]:
         s = t["summary"]
@@ -428,6 +441,7 @@ def sheet_rows(report: dict):
                           _fmt(s["overtime_hours"]), _fmt(c.get("shortfall_hours")), f"{c['completion_rate']}%" if c.get("completion_rate") != "" else "", note],
                 "is_low": bool(c.get("is_low")),
             })
+            rows[-1]["cells"] = _cols(rows[-1]["cells"], with_bonus)
         spans.append((first, len(rows) - 1))
     return rows, spans
 
@@ -483,7 +497,8 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
     p = report["period"]
     pols = {t["summary"]["bonus_divisor"] for t in report["teachers"] if t["summary"]["bonus_enabled"]}
     div_label = f"{int(min(pols)) if pols and min(pols).is_integer() else (min(pols) if pols else 6)}"
-    headers = [h.format(n=div_label, m=50) for h in SHEET_HEADERS]
+    with_bonus = any_bonus(report)
+    headers = _cols([h.format(n=div_label, m=50) for h in SHEET_HEADERS], with_bonus)
     rows, spans = sheet_rows(report)
 
     el = []
@@ -492,10 +507,10 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
         el.append(RLImage(logo, width=16 * mm, height=16 * mm))
     sem = f"للفصل {p.get('semester_name') or ''} {p.get('academic_year') or ''}".strip()
     el += [Paragraph(ar(f"كشف يبين الساعات الإضافية للأساتذة {sem}"), st_title),
-           Paragraph(ar(f"الفترة من {str(p['start_date'])[:10]} إلى {str(p['end_date'])[:10]}   ·   عدد الأسابيع: {p['total_weeks']}   ·   أيام الإجازات الرسمية: {p.get('holiday_days', 0)}   ·   جهة الإصدار: {issuer or 'قسم التسجيل'}"), st_sub),
+           Paragraph(ar(f"الفترة من {str(p['start_date'])[:10]} إلى {str(p['end_date'])[:10]}   ·   عدد الأسابيع: {p['total_weeks']}   ·   أيام الإجازات الرسمية: {p.get('holiday_days', 0)}   ·   جهة الإصدار: {issuer or 'قسم التسجيل'}" + ("" if with_bonus else "   ·   الإضافة غير مفعّلة")), st_sub),
            Spacer(1, 3 * mm)]
 
-    widths = [7, 34, 30, 17, 13, 13, 12, 15, 14, 14, 16, 18, 16, 11, 12, 35]
+    widths = _cols([7, 34, 30, 17, 13, 13, 12, 15, 14, 14, 16, 18, 16, 11, 12, 35], with_bonus)
     total_w = sum(widths)
     avail = landscape(A4)[0] - 16 * mm
     widths = [w / total_w * avail for w in widths]
@@ -507,7 +522,8 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
     style = [("BACKGROUND", (0, 0), (-1, 0), NAVY), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#94a3b8")),
              ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]
     ncols = len(headers)
-    merge_cols = {0, 1, 5, 6, 9, 10, 11, 12}  # أعمدة الأستاذ تُدمج عبر أسطره
+    merge_cols = {0, 1, 5, 6, 9, 10, 11, 12} if with_bonus else {0, 1, 5, 6, 9, 10}  # أعمدة الأستاذ تُدمج عبر أسطره
+    low_col = 14 if with_bonus else 12
     SEP = colors.HexColor("#334155")
     for (a, b) in spans:
         if b > a:
@@ -517,14 +533,14 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
         style.append(("LINEBELOW", (0, b + 1), (-1, b + 1), 1.3, SEP))  # فاصل أغمق بين أستاذ وآخر
     for i, r in enumerate(rows, start=1):
         if r["is_low"]:
-            col = ncols - 1 - 14
+            col = ncols - 1 - low_col
             style.append(("BACKGROUND", (col, i), (col, i), PINK))
     t.setStyle(TableStyle(style))
     el.append(t)
     s = report["summary"]
     el += [Spacer(1, 4 * mm),
            Paragraph(ar(f"الإجمالي: {s['total_teachers']} أستاذ · النصاب {s['total_required_hours']:g} س · المنجز {s['total_actual_hours']:g} س · الإضافة {s['total_bonus_hours']:g} س · الساعات الإضافية {s['total_overtime_hours']:g} س · النقص {s['total_shortfall_hours']:g} س"), st_small),
-           Paragraph(wrap_ar("المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية. الافتراضية = الساعات الأسبوعية × أسابيع المقرر من التحضير الأول حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية). النصاب = النصاب الأسبوعي × الأسابيع من التحضير الأول للأستاذ إن بدأ متأخراً. الإضافة = المنجز ÷ المُقسِّم (إن فُعِّلت للكلية). الساعات الإضافية = (المنجز + الإضافة) − النصاب. تُظلَّل نسبة الإنجاز الأقل من 75٪."
+           Paragraph(wrap_ar("المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية. الافتراضية = الساعات الأسبوعية × أسابيع المقرر من التحضير الأول حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية). النصاب = النصاب الأسبوعي × الأسابيع من التحضير الأول للأستاذ إن بدأ متأخراً. " + ("الإضافة = المنجز ÷ المُقسِّم (للكليات المفعَّل فيها). الساعات الإضافية = (المنجز + الإضافة) − النصاب. " if with_bonus else "الساعات الإضافية = المنجز − النصاب. ") + "تُظلَّل نسبة الإنجاز الأقل من 75٪."
                         + (f"  |  أُصدر بواسطة: {generated_by}" if generated_by else "") + f"  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}", 150), st_small)]
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=8 * mm, leftMargin=8 * mm, topMargin=8 * mm, bottomMargin=8 * mm, title="كشف الساعات الإضافية").build(el)
@@ -541,7 +557,8 @@ def build_sheet_excel(report: dict, issuer: str) -> io.BytesIO:
     ws.sheet_view.rightToLeft = True
     p = report["period"]
     pols = {t["summary"]["bonus_divisor"] for t in report["teachers"] if t["summary"]["bonus_enabled"]}
-    headers = [h.format(n=f"{min(pols):g}" if pols else "6", m=50) for h in SHEET_HEADERS]
+    with_bonus = any_bonus(report)
+    headers = _cols([h.format(n=f"{min(pols):g}" if pols else "6", m=50) for h in SHEET_HEADERS], with_bonus)
     n = len(headers)
     thin = Side(style="thin", color="94A3B8"); border = Border(left=thin, right=thin, top=thin, bottom=thin)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -562,15 +579,15 @@ def build_sheet_excel(report: dict, issuer: str) -> io.BytesIO:
                 pass
             c = ws.cell(row=ri, column=ci, value=v); c.alignment = center; c.border = border
         if r["is_low"]:
-            ws.cell(row=ri, column=15).fill = pink
+            ws.cell(row=ri, column=15 if with_bonus else 13).fill = pink
     thick = Side(style="medium", color="334155")
     for (a, b) in spans:
         if b > a:
-            for ci in (1, 2, 6, 7, 10, 11, 12, 13):
+            for ci in ((1, 2, 6, 7, 10, 11, 12, 13) if with_bonus else (1, 2, 6, 7, 10, 11)):
                 ws.merge_cells(start_row=a + 5, start_column=ci, end_row=b + 5, end_column=ci)
         for ci in range(1, n + 1):
             c = ws.cell(row=b + 5, column=ci); c.border = Border(left=thin, right=thin, top=thin, bottom=thick)
-    for i, w in enumerate([4, 26, 24, 14, 10, 10, 9, 12, 11, 11, 13, 14, 13, 9, 10, 30], 1):
+    for i, w in enumerate(_cols([4, 26, 24, 14, 10, 10, 9, 12, 11, 11, 13, 14, 13, 9, 10, 30], with_bonus), 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
     # ورقة المالية إن وُجد سعر ساعة

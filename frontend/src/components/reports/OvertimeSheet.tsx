@@ -12,7 +12,7 @@ export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: 
   const divisor = teachers.find((t) => t.summary.bonus_enabled)?.summary.bonus_divisor ?? 6;
   const anyRate = teachers.some((t) => t.summary.hourly_rate);
   const headers = ['م', 'اسم الأستاذ', 'المادة', 'المستوى', 'الساعات الأسبوعية', 'النصاب الأسبوعي', 'النصاب', 'الساعات الافتراضية', 'الساعات المنجزة', 'إجمالي المنجز',
-    `إضافة ساعة لكل ${divisor} ساعات`, 'الساعات بعد الإضافة (50 دقيقة)', 'إجمالي الساعات الإضافية', 'النقص', 'نسبة الإنجاز', 'الملاحظات', ...(anyRate ? ['المستحق'] : [])];
+    ...(anyBonus ? [`إضافة ساعة لكل ${divisor} ساعات`, 'الساعات بعد الإضافة (50 دقيقة)'] : []), 'إجمالي الساعات الإضافية', 'النقص', 'نسبة الإنجاز', 'الملاحظات', ...(anyRate ? ['المستحق'] : [])];
 
   if (Platform.OS !== 'web') {
     return (
@@ -36,7 +36,7 @@ export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: 
     <div style={{ overflowX: 'auto', direction: 'rtl' }} data-testid="overtime-sheet">
       <div style={{ textAlign: 'center', marginBottom: 8 }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: '#0f2440' }}>كشف يبين الساعات الإضافية للأساتذة {period?.semester_name ? `للفصل ${period.semester_name} ${period.academic_year || ''}` : ''}</div>
-        <div style={{ fontSize: 12, color: '#64748b' }}>الفترة من {String(period?.start_date || '').slice(0, 10)} إلى {String(period?.end_date || '').slice(0, 10)} · عدد الأسابيع: {period?.total_weeks}{period?.holiday_days ? ` · أيام الإجازات الرسمية: ${period.holiday_days}` : ''}{anyBonus ? '' : ' · الإضافة معطّلة لهذه الكلية'}</div>
+        <div style={{ fontSize: 12, color: '#64748b' }}>الفترة من {String(period?.start_date || '').slice(0, 10)} إلى {String(period?.end_date || '').slice(0, 10)} · عدد الأسابيع: {period?.total_weeks}{period?.holiday_days ? ` · أيام الإجازات الرسمية: ${period.holiday_days}` : ''}{anyBonus ? '' : ' · الإضافة غير مفعّلة'}</div>
       </div>
       <table style={{ borderCollapse: 'collapse', width: '100%', fontFamily: 'inherit' }}>
         <thead><tr>{headers.map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
@@ -57,8 +57,8 @@ export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: 
                 <td style={td}>{f1(c.expected_hours)}</td>
                 <td style={td}>{f1(c.actual_hours)}</td>
                 {k === 0 && <td rowSpan={n} style={{ ...td, fontWeight: 700 }}>{f1(s.total_actual_hours)}</td>}
-                {k === 0 && <td rowSpan={n} style={td}>{s.bonus_enabled ? f1(s.bonus_hours) : '—'}</td>}
-                {k === 0 && <td rowSpan={n} style={td}>{f1(s.hours_after_bonus)}</td>}
+                {anyBonus && k === 0 && <td rowSpan={n} style={td} data-testid={`sheet-bonus-${t.teacher_db_id}`}>{s.bonus_enabled ? f1(s.bonus_hours) : '—'}</td>}
+                {anyBonus && k === 0 && <td rowSpan={n} style={td}>{f1(s.hours_after_bonus)}</td>}
                 {k === 0 && <td rowSpan={n} style={{ ...td, fontWeight: 800, color: s.overtime_hours >= 0 ? '#15803d' : '#b91c1c' }} data-testid={`sheet-overtime-${t.teacher_db_id}`}>{f1(s.overtime_hours)}</td>}
                 <td style={{ ...td, color: c.shortfall_hours > 0 ? '#b91c1c' : '#334155' }}>{f1(c.shortfall_hours)}</td>
                 <td style={{ ...td, fontWeight: 800, backgroundColor: c.is_low ? '#fbcfe8' : undefined }} data-testid={c.is_low ? 'sheet-low-cell' : undefined}>{c.completion_rate !== '' ? `${c.completion_rate}%` : ''}</td>
@@ -73,7 +73,7 @@ export const OvertimeSheet: React.FC<{ teachers: any[]; period: any; threshold: 
         </tbody>
       </table>
       <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.8 }}>
-        المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية · الافتراضية = الساعات الأسبوعية × أسابيع المقرر من التحضير الأول حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية) · النصاب = النصاب الأسبوعي × الأسابيع من التحضير الأول للأستاذ إن بدأ متأخراً · الإضافة = المنجز ÷ المُقسِّم (إن فُعِّلت للكلية) · الساعات الإضافية = (المنجز + الإضافة) − النصاب · تُظلَّل نسبة الإنجاز الأقل من {threshold}٪
+        المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية · الافتراضية = الساعات الأسبوعية × أسابيع المقرر من التحضير الأول حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية) · النصاب = النصاب الأسبوعي × الأسابيع من التحضير الأول للأستاذ إن بدأ متأخراً {anyBonus ? ' · الإضافة = المنجز ÷ المُقسِّم (للكليات المفعَّل فيها) · الساعات الإضافية = (المنجز + الإضافة) − النصاب' : ' · الساعات الإضافية = المنجز − النصاب'} · تُظلَّل نسبة الإنجاز الأقل من {threshold}٪
       </div>
     </div>
   );
