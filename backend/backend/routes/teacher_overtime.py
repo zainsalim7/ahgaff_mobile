@@ -1,6 +1,6 @@
 """📊 كشف الساعات الإضافية للأساتذة — امتداد لتقرير نصاب المدرسين
 - سياسة لكل كلية: تفعيل الإضافة (ساعة لكل N ساعات، كسرياً)، المُقسِّم، سعر الساعة الإضافية حسب الرتبة الأكاديمية.
-- الحساب لكل مقرر: الساعات الافتراضية من أول محاضرة حتى نهاية الفترة، المنجزة، النقص، نسبة الإنجاز، ملاحظات تلقائية.
+- الحساب لكل مقرر: الافتراضية = الأسبوعية × الأسابيع الكاملة من بداية المحاضرات (حد قاطع، الإجازات لا تُخصم بل تُحتسب ساعاتها للأستاذ)، المنجزة، النقص، نسبة الإنجاز، ملاحظات تلقائية.
 """
 import io
 from datetime import datetime, timedelta
@@ -114,9 +114,9 @@ def _d(v) -> Optional[datetime]:
 
 
 def weeks_between(start: datetime, end: datetime) -> int:
-    """عدد الأسابيع (لأقرب أسبوع كامل، أدناه 1) — كما يُحدَّد في ترويسة الكشف"""
+    """عدد الأسابيع الكاملة (كل 7 أيام = أسبوع، أدناه 1) — حد قاطع كما في ترويسة الكشف"""
     days = (end.date() - start.date()).days + 1
-    return max(1, round(days / 7))
+    return max(1, days // 7)
 
 
 AR_DAYS = {"الإثنين": 0, "الاثنين": 0, "الثلاثاء": 1, "الأربعاء": 2, "الخميس": 3, "الجمعة": 4, "السبت": 5, "الأحد": 6,
@@ -235,14 +235,6 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             # محاضرات تقع في إجازة رسمية ولم تُنفَّذ تُستبعد من المجدولة (لا تُعد نقصاً)
             executed_dates = {str(l.get("date"))[:10] for l in lectures if str(l["_id"]) in executed_ids}
             lectures = [l for l in lectures if str(l.get("date"))[:10] not in holidays or str(l["_id"]) in executed_ids]
-            # بداية المقرر = التحضير الأول (أول محاضرة سُجّل لها حضور)؛ وإلا أول محاضرة مجدولة
-            exec_dates = [d for d in (_d(l.get("date")) for l in lectures if str(l["_id"]) in executed_ids) if d]
-            first_attendance = min(exec_dates) if exec_dates else None
-            skipped_before = 0
-            if first_attendance:
-                before_ids = {str(l["_id"]) for l in lectures if (_d(l.get("date")) or first_attendance) < first_attendance}
-                skipped_before = len(before_ids)
-                lectures = [l for l in lectures if str(l["_id"]) not in before_ids]
             excused = [l for l in lectures if l.get("status") == LectureStatus.ABSENT_EXCUSED]
             executed = [l for l in lectures if str(l["_id"]) in executed_ids]
 
@@ -251,30 +243,31 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             excused_hours = round(sum(_lec_hours(l) for l in excused), 2)
             weekly = await _course_weekly_hours(db, tid, course)
 
+            # بداية المقرر = تاريخ بداية توليد المحاضرات (أول محاضرة مجدولة في الفترة)
             dates = [d for d in (_d(l.get("date")) for l in lectures) if d]
-            first = first_attendance or (min(dates) if dates else None)
+            first = min(dates) if dates else None
             notes = []
             start_week = 1
             if first:
                 course_weeks = weeks_between(first, end)
                 start_week = (first.date() - start.date()).days // 7 + 1
                 if start_week > 1:
-                    basis = f"التحضير الأول {first.strftime('%Y-%m-%d')}" if first_attendance else "أول محاضرة مجدولة"
-                    notes.append(f"بدأ متأخراً من الأسبوع {start_week} ({basis}؛ الافتراضية من {course_weeks} أسابيع)")
-                    if skipped_before:
-                        notes.append(f"{skipped_before} محاضرة مجدولة قبل التحضير الأول لم تُحتسب")
+                    notes.append(f"بدأ من الأسبوع {start_week} (بداية المحاضرات {first.strftime('%Y-%m-%d')}؛ الافتراضية من {course_weeks} أسابيع)")
             else:
                 course_weeks = 0
                 notes.append("لا محاضرات مجدولة في الفترة")
+            # الإجازات الرسمية لا تُخصم من الافتراضية ولا النصاب؛ ساعاتها تُحتسب للمدرس كمنفَّذة (لا يظهر نقص)
             holiday_hours, holiday_names = 0.0, []
             if first and holidays:
                 day_hours = await _course_day_hours(db, cid, lectures, weekly)
                 holiday_hours, holiday_names = _holiday_deduction(holidays, day_hours, first, end, executed_dates)
-            expected = round(max(0.0, weekly * course_weeks - excused_hours - holiday_hours), 2)
+            taught_hours = actual_hours
+            actual_hours = round(actual_hours + holiday_hours, 2)
+            expected = round(max(0.0, weekly * course_weeks - excused_hours), 2)
             if excused_hours:
                 notes.append(f"غياب بعذر {excused_hours:g} س (خُصم من الافتراضية)")
             if holiday_hours:
-                notes.append(f"إجازة رسمية {holiday_hours:g} س ({'، '.join(holiday_names)})")
+                notes.append(f"إجازة رسمية {holiday_hours:g} س محتسبة ({'، '.join(holiday_names)})")
             shortfall = round(max(0.0, expected - actual_hours), 2)
             rate = round(actual_hours / expected * 100) if expected > 0 else (100 if actual_hours > 0 else 0)
 
@@ -285,15 +278,15 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
                 "department_id": course.get("department_id"), "department_name": dep_docs.get(course.get("department_id") or "", {}).get("name", ""),
                 "level": course.get("level"), "section": course.get("section") or "",
                 "weekly_hours": weekly, "first_lecture_date": first.strftime("%Y-%m-%d") if first else None, "course_weeks": course_weeks,
-                "first_attendance_date": first_attendance.strftime("%Y-%m-%d") if first_attendance else None, "start_week": start_week, "late_start": start_week > 1,
+                "start_week": start_week, "late_start": start_week > 1,
                 "scheduled_lectures": len(lectures), "executed_lectures": len(executed), "excused_lectures": len(excused),
-                "scheduled_hours": scheduled_hours, "actual_hours": actual_hours, "excused_hours": excused_hours,
+                "scheduled_hours": scheduled_hours, "actual_hours": actual_hours, "taught_hours": taught_hours, "excused_hours": excused_hours,
                 "expected_hours": expected, "holiday_hours": holiday_hours, "shortfall_hours": shortfall, "completion_rate": rate, "is_low": expected > 0 and rate < LOW_RATE_THRESHOLD,
                 "note": "، ".join(notes),
             })
 
         courses_data.sort(key=lambda c: ((c["level"] or 0), c["course_name"], c["section"]))
-        # نصاب المدرس من التحضير الأول له (أقدم بداية بين مقرراته) إن بدأ متأخراً عن الفترة
+        # نصاب المدرس حد قاطع: الأسبوعي × الأسابيع الكاملة؛ يبدأ من بداية محاضراته إن كان توليدها بعد بداية الفترة
         firsts = [_d(c["first_lecture_date"]) for c in courses_data if c.get("first_lecture_date")]
         teacher_first = min(firsts) if firsts else None
         effective_weeks, teacher_start_week, teacher_note = total_weeks, 1, ""
@@ -302,8 +295,7 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             if teacher_start_week > 1:
                 effective_weeks = weeks_between(teacher_first, end)
                 required_hours = round(weekly_hours * effective_weeks, 2)
-                any_att = any(c.get("first_attendance_date") for c in courses_data)
-                teacher_note = (f"بدأ التدريس متأخراً — {'التحضير الأول' if any_att else 'أول محاضرة'} {teacher_first.strftime('%Y-%m-%d')} (الأسبوع {teacher_start_week})"
+                teacher_note = (f"بداية المحاضرات {teacher_first.strftime('%Y-%m-%d')} (الأسبوع {teacher_start_week})"
                                 f" · النصاب محسوب من {effective_weeks} أسابيع بدل {total_weeks}")
         bonus_enabled = bool(pol.get("bonus_enabled"))
         divisor = float(pol.get("bonus_divisor") or 6)
@@ -322,7 +314,8 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
             "summary": {
                 "total_courses": len(courses_data), "weekly_hours": weekly_hours, "total_weeks": total_weeks,
                 "effective_weeks": effective_weeks, "start_week": teacher_start_week, "late_start": teacher_start_week > 1,
-                "first_attendance_date": teacher_first.strftime("%Y-%m-%d") if teacher_first else None, "note": teacher_note,
+                "first_lecture_date": teacher_first.strftime("%Y-%m-%d") if teacher_first else None, "note": teacher_note,
+                "holiday_hours": round(sum(c["holiday_hours"] for c in courses_data), 2),
                 "required_hours": required_hours, "total_scheduled_hours": round(total_scheduled, 2), "total_actual_hours": round(total_actual, 2),
                 "difference_hours": round(total_actual - required_hours, 2),
                 "completion_rate": round(total_actual / required_hours * 100, 2) if required_hours > 0 else 0,
@@ -540,7 +533,7 @@ def build_sheet_pdf(report: dict, issuer: str, generated_by: str) -> io.BytesIO:
     s = report["summary"]
     el += [Spacer(1, 4 * mm),
            Paragraph(ar(f"الإجمالي: {s['total_teachers']} أستاذ · النصاب {s['total_required_hours']:g} س · المنجز {s['total_actual_hours']:g} س · الإضافة {s['total_bonus_hours']:g} س · الساعات الإضافية {s['total_overtime_hours']:g} س · النقص {s['total_shortfall_hours']:g} س"), st_small),
-           Paragraph(wrap_ar("المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية. الافتراضية = الساعات الأسبوعية × أسابيع المقرر من التحضير الأول حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر والإجازات الرسمية). النصاب = النصاب الأسبوعي × الأسابيع من التحضير الأول للأستاذ إن بدأ متأخراً. " + ("الإضافة = المنجز ÷ المُقسِّم (للكليات المفعَّل فيها). الساعات الإضافية = (المنجز + الإضافة) − النصاب. " if with_bonus else "الساعات الإضافية = المنجز − النصاب. ") + "تُظلَّل نسبة الإنجاز الأقل من 75٪."
+           Paragraph(wrap_ar("المنجز = محاضرات سُجّل لها حضور بمدتها الفعلية. الافتراضية = الساعات الأسبوعية × الأسابيع الكاملة من بداية المحاضرات حتى نهاية الفترة (يُخصم غياب الأستاذ بعذر فقط). النصاب = النصاب الأسبوعي × الأسابيع الكاملة (حد قاطع). الإجازات الرسمية لا تُخصم وتُحتسب ساعاتها للأستاذ. " + ("الإضافة = المنجز ÷ المُقسِّم (للكليات المفعَّل فيها). الساعات الإضافية = (المنجز + الإضافة) − النصاب. " if with_bonus else "الساعات الإضافية = المنجز − النصاب. ") + "تُظلَّل نسبة الإنجاز الأقل من 75٪."
                         + (f"  |  أُصدر بواسطة: {generated_by}" if generated_by else "") + f"  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}", 150), st_small)]
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=8 * mm, leftMargin=8 * mm, topMargin=8 * mm, bottomMargin=8 * mm, title="كشف الساعات الإضافية").build(el)

@@ -16,7 +16,7 @@ import { DASH, NUM_FONT, dashStyles } from '../src/components/dashboard/dashThem
 
 interface Course { course_name: string; course_code: string; level?: number; section?: string; weekly_hours?: number; expected_hours?: number; shortfall_hours?: number; completion_rate?: number; is_low?: boolean; note?: string; scheduled_lectures: number; executed_lectures: number; scheduled_hours: number; actual_hours: number }
 interface TeacherWL { teacher_id: string; teacher_db_id?: string; teacher_name: string; academic_title?: string; department_id: string; department_name?: string; faculty_id?: string; weekly_hours: number; courses: Course[];
-  summary: { total_courses: number; weekly_hours: number; total_weeks: number; required_hours: number; total_scheduled_hours: number; total_actual_hours: number; difference_hours: number; completion_rate: number; expected_hours?: number; shortfall_hours?: number; bonus_enabled?: boolean; bonus_hours?: number; hours_after_bonus?: number; overtime_hours?: number; hourly_rate?: number | null; overtime_amount?: number | null; currency?: string; late_start?: boolean; effective_weeks?: number; start_week?: number; first_attendance_date?: string | null; note?: string } }
+  summary: { total_courses: number; weekly_hours: number; total_weeks: number; required_hours: number; total_scheduled_hours: number; total_actual_hours: number; difference_hours: number; completion_rate: number; expected_hours?: number; shortfall_hours?: number; bonus_enabled?: boolean; bonus_hours?: number; hours_after_bonus?: number; overtime_hours?: number; hourly_rate?: number | null; overtime_amount?: number | null; currency?: string; late_start?: boolean; effective_weeks?: number; start_week?: number; first_lecture_date?: string | null; holiday_hours?: number; note?: string } }
 
 const iso = (d: Date) => d.toISOString().split('T')[0];
 const QUICK = [
@@ -225,7 +225,7 @@ export default function TeacherWorkloadReport() {
             <View style={styles.kpis} testID="tw-summary">
               {[
                 ['المدرسون', data.length, DASH.blue, `${period ? period.total_weeks : ''} أسبوع`],
-                ['النصاب المطلوب', `${Math.round(totals.req * 10) / 10} س`, DASH.navy2, lateTeachers.length ? (data.length === 1 ? `من التحضير الأول · ${lateTeachers[0].summary.effective_weeks} أسابيع بدل ${period?.total_weeks}` : `${lateTeachers.length} مدرس بدأ متأخراً — نصابه من التحضير الأول`) : 'أسبوعي × الأسابيع'],
+                ['النصاب المطلوب', `${Math.round(totals.req * 10) / 10} س`, DASH.navy2, lateTeachers.length ? (data.length === 1 ? `من بداية المحاضرات · ${lateTeachers[0].summary.effective_weeks} أسابيع بدل ${period?.total_weeks}` : `${lateTeachers.length} مدرس بدأت محاضراته بعد بداية الفترة`) : 'أسبوعي × الأسابيع الكاملة (حد قاطع)'],
                 ['الساعات المنفَّذة', `${Math.round(totals.act * 10) / 10} س`, DASH.teal, `من ${Math.round(totals.sch * 10) / 10} س مجدولة`],
                 ['المحاضرات المنفَّذة', `${totals.exe}/${totals.lec}`, DASH.purple, 'منفَّذة / مجدولة'],
                 ['نسبة الإنجاز', `${totals.rate}%`, rateColor(totals.rate), totals.below ? `${totals.below} مدرس تحت 75%` : 'الجميع ≥ 75%'],
@@ -244,7 +244,7 @@ export default function TeacherWorkloadReport() {
               <View style={styles.lateBox} testID="tw-late-start-note">
                 <Ionicons name="time-outline" size={16} color="#b45309" />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.lateTitle}>بداية متأخرة عن الفترة — النصاب محسوب من التحضير الأول</Text>
+                  <Text style={styles.lateTitle}>محاضرات بدأت بعد بداية الفترة — النصاب محسوب من تاريخ بداية توليد المحاضرات</Text>
                   {lateTeachers.slice(0, 6).map((t) => <Text key={t.teacher_db_id || t.teacher_id} style={styles.lateLine}>• {t.academic_title ? `${t.academic_title} ` : ''}{t.teacher_name}: {t.summary.note}</Text>)}
                   {lateTeachers.length > 6 && <Text style={styles.lateLine}>… و{lateTeachers.length - 6} آخرون (التفاصيل في صف كل مدرس)</Text>}
                 </View>
