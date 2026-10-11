@@ -63,7 +63,7 @@ const RaiseLetterModal: React.FC<{ visible: boolean; onClose: () => void; params
     if (!recipient.name && !recipient.title) { notify('حدد الجهة المرسل إليها'); return; }
     setBusy(true);
     try {
-      const r = await api.post('/reports/teacher-workload/raise-letter', { template_key: tpl, start_date: params.start_date, end_date: params.end_date, faculty_id: params.faculty_id, department_id: params.department_id, teacher_id: params.teacher_id, hide_empty: !!params.hide_empty, recipient, extra_note: note, mode: hasActive ? 'amend' : 'new', base_url: Platform.OS === 'web' ? window.location.origin : '' });
+      const r = await api.post('/reports/teacher-workload/raise-letter', { template_key: tpl, start_date: params.start_date, end_date: params.end_date, faculty_id: params.faculty_id, department_id: params.department_id, teacher_id: params.teacher_id, hide_empty: !!params.hide_empty, only_overtime: !!params.only_overtime, recipient, extra_note: note, mode: hasActive ? 'amend' : 'new', base_url: Platform.OS === 'web' ? window.location.origin : '' });
       setResult(r.data); onDone();
     } catch (e: any) { notify(e?.response?.data?.detail || 'فشل إنشاء الخطاب'); } finally { setBusy(false); }
   };

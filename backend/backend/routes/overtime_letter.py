@@ -45,6 +45,7 @@ class RaiseIn(BaseModel):
     department_id: Optional[str] = None
     teacher_id: Optional[str] = None
     hide_empty: bool = True
+    only_overtime: bool = False
     recipient: dict
     extra_note: Optional[str] = ""
     mode: str = "new"  # new | amend
@@ -114,7 +115,7 @@ async def rebuild_overtime_table(db, current_user: dict, lt: dict):
     if lr.get("type") != "overtime":
         return None
     start, end = parse_period(lr["start_date"], lr["end_date"])
-    report = await compute_workload(db, await select_teachers(db, current_user, None, lr.get("faculty_id"), lr.get("department_id")), start, end, True)
+    report = await compute_workload(db, await select_teachers(db, current_user, None, lr.get("faculty_id"), lr.get("department_id")), start, end, True, bool(lr.get("only_overtime")))
     return _summary_table(report) if report["teachers"] else None
 
 
@@ -139,7 +140,7 @@ async def raise_letter(data: RaiseIn, current_user: dict = Depends(get_current_u
             raise HTTPException(status_code=409, detail=f"هذه الفترة مرفوعة مسبقاً بالخطاب {'، '.join(live)} — اختر «إلحاق/تعديل» لإصدار خطاب تعديلي")
 
     start, end = parse_period(data.start_date, data.end_date)
-    report = await compute_workload(db, await select_teachers(db, current_user, data.teacher_id, data.faculty_id, data.department_id), start, end, data.hide_empty)
+    report = await compute_workload(db, await select_teachers(db, current_user, data.teacher_id, data.faculty_id, data.department_id), start, end, data.hide_empty, data.only_overtime)
     if not report["teachers"]:
         raise HTTPException(status_code=400, detail="لا يوجد أساتذة في الكشف لهذه الفلاتر")
     fac_name = report["teachers"][0].get("faculty_name") if data.faculty_id else "الجامعة"
@@ -175,7 +176,7 @@ async def raise_letter(data: RaiseIn, current_user: dict = Depends(get_current_u
                                   (f"مستحقات الساعات الإضافية {data.start_date} - {data.end_date}.xlsx", build_sheet_excel(report, issuer).getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")):
         fid = await fs.upload_from_stream(fname, content, metadata={"letter_id": lid, "content_type": ctype})
         atts.append({"id": str(fid), "filename": fname, "content_type": ctype, "size": len(content)})
-    await db.letters.update_one({"_id": ObjectId(lid)}, {"$set": {"attachments": atts, "table": _summary_table(report), "custom_table": True, "linked_report": {"type": "overtime", "period_key": key, "start_date": data.start_date, "end_date": data.end_date,
+    await db.letters.update_one({"_id": ObjectId(lid)}, {"$set": {"attachments": atts, "table": _summary_table(report), "custom_table": True, "linked_report": {"type": "overtime", "period_key": key, "start_date": data.start_date, "end_date": data.end_date, "only_overtime": data.only_overtime,
                                                                                                          "faculty_id": data.faculty_id, "department_id": data.department_id, "teachers": tot["total_teachers"],
                                                                                                          "overtime_hours": tot["total_overtime_hours"], "amount": tot.get("total_overtime_amount")}}})
     await db.overtime_letter_links.insert_one({"period_key": key, "letter_id": lid, "mode": data.mode, "template_key": data.template_key,

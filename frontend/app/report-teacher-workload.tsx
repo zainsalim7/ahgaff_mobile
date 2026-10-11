@@ -41,6 +41,7 @@ export default function TeacherWorkloadReport() {
   const [dept, setDept] = useState('');
   const [view, setView] = useState<'summary' | 'sheet'>('summary');
   const [hideEmpty, setHideEmpty] = useState(true);
+  const [onlyOvertime, setOnlyOvertime] = useState(false);
   const [policyOpen, setPolicyOpen] = useState(false);
   const [teacherId, setTeacherId] = useState('');
   const [teacherQ, setTeacherQ] = useState('');
@@ -70,8 +71,9 @@ export default function TeacherWorkloadReport() {
     if (dept && !isTeacher) p.department_id = dept;
     if (fac && !isTeacher) p.faculty_id = fac;
     if (hideEmpty && !isTeacher) p.hide_empty = true;
+    if (onlyOvertime && !isTeacher) p.only_overtime = true;
     return p;
-  }, [from, to, teacherId, dept, fac, hideEmpty, isTeacher]);
+  }, [from, to, teacherId, dept, fac, hideEmpty, onlyOvertime, isTeacher]);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -212,6 +214,7 @@ export default function TeacherWorkloadReport() {
                 {Platform.OS === 'web' ? <input type="date" value={to} onChange={(e: any) => { setTo(e.target.value); setQuick(''); }} style={dateInput as any} data-testid="tw-date-to" /> : <TextInput value={to} onChangeText={setTo} style={styles.dateNative} />}
               </View>
               <TouchableOpacity style={[styles.chip, hideEmpty && styles.chipOn]} onPress={() => setHideEmpty(!hideEmpty)} testID="tw-hide-empty"><Text style={[styles.chipText, hideEmpty && styles.chipTextOn]}>{hideEmpty ? '✓ ' : ''}إخفاء من لا محاضرات لهم</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.chip, onlyOvertime && styles.chipOn]} onPress={() => setOnlyOvertime(!onlyOvertime)} testID="tw-only-overtime"><Text style={[styles.chipText, onlyOvertime && styles.chipTextOn]}>{onlyOvertime ? '✓ ' : ''}إخفاء من لا إضافي لهم</Text></TouchableOpacity>
               <TouchableOpacity style={styles.runBtn} onPress={run} disabled={loading} testID="tw-run-btn">
                 {loading ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="play" size={14} color="#fff" />}<Text style={styles.runText}>تنفيذ التقرير</Text>
               </TouchableOpacity>

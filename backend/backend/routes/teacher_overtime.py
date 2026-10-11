@@ -187,7 +187,7 @@ async def semester_for_period(db, start_str: str, end_str: str) -> Optional[dict
     return act
 
 
-async def compute_workload(db, teachers: List[dict], start: datetime, end: datetime, hide_empty: bool = False) -> dict:
+async def compute_workload(db, teachers: List[dict], start: datetime, end: datetime, hide_empty: bool = False, only_overtime: bool = False) -> dict:
     """يعيد نفس بنية /reports/teacher-workload القديمة + أعمدة كشف الساعات الإضافية"""
     from .calendar_events import holiday_dates
     policies = await load_policies(db)
@@ -328,6 +328,8 @@ async def compute_workload(db, teachers: List[dict], start: datetime, end: datet
 
     if hide_empty:
         result = [t for t in result if t["summary"]["total_scheduled_hours"] > 0]
+    if only_overtime:
+        result = [t for t in result if t["summary"]["overtime_hours"] > 0]
     return {
         "holidays": [{"date": k, "name": v} for k, v in sorted(holidays.items())],
         "period": {"start_date": start.isoformat(), "end_date": end.isoformat(), "total_weeks": total_weeks, "holiday_days": len(holidays),
@@ -617,11 +619,11 @@ async def _issuer(db, current_user: dict) -> str:
 
 @router.get("/export/report/teacher-workload/sheet-pdf")
 async def export_sheet_pdf(teacher_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                           faculty_id: Optional[str] = None, department_id: Optional[str] = None, hide_empty: bool = False, current_user: dict = Depends(get_current_user)):
+                           faculty_id: Optional[str] = None, department_id: Optional[str] = None, hide_empty: bool = False, only_overtime: bool = False, current_user: dict = Depends(get_current_user)):
     """📄 كشف الساعات الإضافية — PDF أفقي بشكل الكشف الرسمي"""
     db = get_db()
     start, end = parse_period(start_date, end_date)
-    report = await compute_workload(db, await select_teachers(db, current_user, teacher_id, faculty_id, department_id), start, end, hide_empty)
+    report = await compute_workload(db, await select_teachers(db, current_user, teacher_id, faculty_id, department_id), start, end, hide_empty, only_overtime)
     buf = build_sheet_pdf(report, await _issuer(db, current_user), current_user.get("full_name", ""))
     fname = export_filename("كشف الساعات الإضافية للأساتذة", f"{start.strftime('%Y-%m-%d')} الى {end.strftime('%Y-%m-%d')}", ext="pdf")
     return StreamingResponse(buf, media_type="application/pdf", headers=export_headers(fname))
@@ -629,11 +631,11 @@ async def export_sheet_pdf(teacher_id: Optional[str] = None, start_date: Optiona
 
 @router.get("/export/report/teacher-workload/sheet-excel")
 async def export_sheet_excel(teacher_id: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                             faculty_id: Optional[str] = None, department_id: Optional[str] = None, hide_empty: bool = False, current_user: dict = Depends(get_current_user)):
+                             faculty_id: Optional[str] = None, department_id: Optional[str] = None, hide_empty: bool = False, only_overtime: bool = False, current_user: dict = Depends(get_current_user)):
     """📊 كشف الساعات الإضافية — Excel (+ ورقة المستحقات المالية عند وجود سعر ساعة)"""
     db = get_db()
     start, end = parse_period(start_date, end_date)
-    report = await compute_workload(db, await select_teachers(db, current_user, teacher_id, faculty_id, department_id), start, end, hide_empty)
+    report = await compute_workload(db, await select_teachers(db, current_user, teacher_id, faculty_id, department_id), start, end, hide_empty, only_overtime)
     out = build_sheet_excel(report, await _issuer(db, current_user))
     fname = export_filename("كشف الساعات الإضافية للأساتذة", f"{start.strftime('%Y-%m-%d')} الى {end.strftime('%Y-%m-%d')}", ext="xlsx")
     return StreamingResponse(out, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=export_headers(fname))
