@@ -1126,6 +1126,13 @@ export default function CourseLecturesScreen() {
             })()}
           </View>
 
+          {canManageLectures && (
+            <TouchableOpacity onPress={() => router.push({ pathname: '/course-history', params: { courseId } })} style={{ alignSelf: 'flex-start', flexDirection: 'row-reverse', alignItems: 'center', gap: 6, backgroundColor: '#eef2ff', borderWidth: 1, borderColor: '#c7d2fe', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 12, marginBottom: 10 }} testID="course-history-link">
+              <Ionicons name="time-outline" size={15} color="#3730a3" />
+              <Text style={{ fontSize: 12.5, fontWeight: '800', color: '#3730a3' }}>سجل التغييرات (من أنشأ/عدّل/حذف ومتى)</Text>
+            </TouchableOpacity>
+          )}
+
           {/* 👥 لوحة المجموعات */}
           {groupInfo.length > 0 && (
             <View style={[styles.filterCard, { marginBottom: 10 }]} testID="course-groups-panel">

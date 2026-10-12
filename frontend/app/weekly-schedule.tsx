@@ -344,6 +344,7 @@ export default function WeeklySchedulePage() {
   const [genLecEnd, setGenLecEnd] = useState('');
   const [genLecHolidays, setGenLecHolidays] = useState<string[]>([]);
   const [genLecHolidayInput, setGenLecHolidayInput] = useState('');
+  const [genLecAllowPast, setGenLecAllowPast] = useState(false);
   const [genLecPreview, setGenLecPreview] = useState<any>(null);
   const [genLecLoading, setGenLecLoading] = useState(false);
   const [resyncLoading, setResyncLoading] = useState(false);
@@ -410,6 +411,7 @@ export default function WeeklySchedulePage() {
         end_date: genLecEnd,
         holidays: genLecHolidays,
         dry_run: dryRun,
+        allow_past: genLecAllowPast,
       });
       if (dryRun) {
         setGenLecPreview(res.data);
@@ -1863,8 +1865,13 @@ export default function WeeklySchedulePage() {
                   ✅ سيتم إنشاء: <strong>{genLecPreview.to_create}</strong> محاضرة
                   <br />📚 عدد المقررات: <strong>{genLecPreview.courses_count}</strong> | خانات الجدول: <strong>{genLecPreview.schedule_slots}</strong>
                   <br />⏭️ موجودة مسبقاً (تُتخطى): <strong>{genLecPreview.already_exist}</strong>
-                  {genLecPreview.holidays_count > 0 ? <><br />🏖️ عطلات مستثناة: <strong>{genLecPreview.holidays_count}</strong> يوم</> : null}
+                  {genLecPreview.holidays_count > 0 ? <><br />🏖️ عطلات مستثناة: <strong>{genLecPreview.holidays_count}</strong> يوم{(genLecPreview.calendar_holidays || []).length > 0 ? ` (منها ${genLecPreview.calendar_holidays.length} من تقويم الإجازات الرسمية)` : ''}</> : null}
+                  {genLecPreview.past_days_skipped > 0 ? <><br />⛔ أيام ماضية مستثناة: <strong>{genLecPreview.past_days_skipped}</strong> يوم (لا تُولَّد محاضرات ماضية إلا بتفعيل الخيار أدناه)</> : null}
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontSize: 12, color: '#b71c1c', fontWeight: 700, cursor: 'pointer' }} data-testid="gen-lec-allow-past">
+                  <input type="checkbox" checked={genLecAllowPast} onChange={(e) => { setGenLecAllowPast(e.target.checked); setGenLecPreview(null); }} />
+                  تضمين التواريخ الماضية (تحذير: ستُنشأ محاضرات فائتة تتحول إلى «غياب أستاذ» تلقائياً)
+                </label>
                 {(genLecPreview.slot_times_used || []).length > 0 && (
                   <div style={{ marginTop: 8, borderTop: '1px dashed #80cbc4', paddingTop: 6 }} data-testid="gen-lec-slot-times">
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#00695c', marginBottom: 4 }}>🕑 أوقات الفترات التي ستُستخدم:</div>

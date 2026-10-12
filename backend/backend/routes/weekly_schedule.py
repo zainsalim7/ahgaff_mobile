@@ -1219,6 +1219,25 @@ async def get_schedule_conflicts(
 
 
 
+async def _assert_slot_matches_course(db, course_id: str, department_id: str, level, section: str, shared: bool = False):
+    """🛡️ يرفض وضع مقرر في خانة لا تطابق قسمه/مستواه/شعبته (الشُعب المشتركة تُستثنى من فحص الشعبة)"""
+    if not course_id or not ObjectId.is_valid(course_id):
+        raise HTTPException(status_code=400, detail="المقرر غير صالح")
+    c = await db.courses.find_one({"_id": ObjectId(course_id)}, {"name": 1, "department_id": 1, "level": 1, "section": 1})
+    if not c:
+        raise HTTPException(status_code=404, detail="المقرر غير موجود")
+    problems = []
+    if c.get("department_id") and department_id and c["department_id"] != department_id:
+        dep = await db.departments.find_one({"_id": ObjectId(c["department_id"])}, {"name": 1}) if ObjectId.is_valid(c["department_id"]) else None
+        problems.append(f"المقرر يتبع قسم «{(dep or {}).get('name', '؟')}» وليس القسم المختار")
+    if c.get("level") is not None and level is not None and int(c["level"]) != int(level):
+        problems.append(f"المقرر للمستوى {c['level']} وليس {level}")
+    if not shared and (c.get("section") or "") and (c.get("section") or "") != (section or ""):
+        problems.append(f"المقرر لشعبة «{c['section']}» وليس «{section or 'بلا شعبة'}»")
+    if problems:
+        raise HTTPException(status_code=400, detail={"message": f"لا يمكن وضع «{c.get('name', '')}» في هذه الخانة: " + "؛ ".join(problems) + ". اختر المقرر الصحيح لهذا الصف أو صحّح بيانات المقرر.", "conflicts": problems})
+
+
 @router.post("/weekly-schedule")
 async def create_schedule_slot(
     data: ScheduleSlotCreate,
@@ -1242,6 +1261,9 @@ async def create_schedule_slot(
         t = (m_dep, m.level, (m.section or "").strip())
         if t not in targets:
             targets.append(t)
+
+    # 🛡️ الخانة يجب أن تطابق قسم/مستوى/شعبة المقرر (منع الخانات الشاردة التي تخلط مزامنة الأوقات والتوليد)
+    await _assert_slot_matches_course(db, data.course_id, data.department_id, data.level, data.section or "", bool(data.merge_with))
 
     # 👥 المجموعة
     slot_group, slot_group_name = await _validate_slot_group(db, data.course_id, data.group, data.slot_type)
@@ -1515,7 +1537,7 @@ async def update_schedule_slot(
     if "room_id" in update and update["room_id"] != existing.get("room_id"):
         moved["new_room_id"] = update["room_id"]
     if moved:
-        sync = await _sync_future_lectures(db, existing, "move", **moved)
+        sync = await _sync_future_lectures(db, existing, "move", actor=current_user, **moved)
         message += _sync_summary(sync)
 
     # ⏱ حلحلة أوقات الأيام المتأثرة (إزاحة متسلسلة بدون نقل أو حذف)
@@ -1534,7 +1556,7 @@ async def update_schedule_slot(
         synced = 0
         for d in days_to_resolve:
             if d:
-                synced += await _resync_slot_times_for_day(db, existing.get("faculty_id", ""), d)
+                synced += await _resync_slot_times_for_day(db, existing.get("faculty_id", ""), d, current_user)
         if synced:
             message += f" 🕑 تم تحديث أوقات {synced} محاضرة قادمة"
 
@@ -1668,7 +1690,7 @@ async def apply_rebalance(
     for d in days:
         shifted += await _resolve_day_times(db, faculty_id, d, changes_out=_tch)
         if d:
-            synced += await _resync_slot_times_for_day(db, faculty_id, d)
+            synced += await _resync_slot_times_for_day(db, faculty_id, d, current_user)
     msg = f"⚖️ تمت الموازنة: تعديل مدة {len(applied)} محاضرة لتوافق الساعات المعتمدة" + _shift_summary(shifted)
     if synced:
         msg += f" 🕑 تم تحديث أوقات {synced} محاضرة قادمة"
@@ -2181,10 +2203,10 @@ async def delete_schedule_slot(
             if siblings:
                 await db.weekly_schedule.delete_many({"merge_group_id": slot["merge_group_id"]})
                 for sib in siblings:
-                    await _sync_future_lectures(db, sib, "delete")
+                    await _sync_future_lectures(db, sib, "delete", actor=current_user)
                 message = f"تم حذف المحاضرة المشتركة من {len(siblings) + 1} جدول"
         # 🔄 (جدول ← نظام) حذف المحاضرات اليومية المستقبلية المولّدة من هذه الخلية
-        sync = await _sync_future_lectures(db, slot, "delete")
+        sync = await _sync_future_lectures(db, slot, "delete", actor=current_user)
         message += _sync_summary(sync)
         # ⏱ إعادة حساب أوقات اليوم (فك الإزاحات المرتبطة بالمحاضرة المحذوفة)
         _tch = []
@@ -3756,7 +3778,7 @@ async def _faculty_slot_times(db, faculty_id: str) -> dict:
     return {s["slot_number"]: (s.get("start_time", ""), s.get("end_time", "")) for s in (settings or {}).get("time_slots", [])}
 
 
-async def _resync_slot_times_for_day(db, faculty_id: str, day: str) -> int:
+async def _resync_slot_times_for_day(db, faculty_id: str, day: str, actor: Optional[dict] = None) -> int:
     """🕑 مزامنة أوقات المحاضرات المستقبلية المولّدة مع الأوقات الفعلية (مدد مخصصة/إزاحات)
     بعد أي تغيير في المدد — الماضي محفوظ والمعاد جدولتها يدوياً تُستثنى."""
     from datetime import timedelta
@@ -3768,6 +3790,7 @@ async def _resync_slot_times_for_day(db, faculty_id: str, day: str) -> int:
     if not slot_times:
         return 0
     slots = await db.weekly_schedule.find({"faculty_id": faculty_id, "day": day}).to_list(2000)
+    slots = await _own_slots_only(db, slots)
     per_course: dict = defaultdict(list)
     for s in slots:
         st, en = slot_times.get(s.get("slot_number"), ("", ""))
@@ -3808,8 +3831,38 @@ async def _resync_slot_times_for_day(db, faculty_id: str, day: str) -> int:
             _, st, en = expected[i]
             if lec.get("start_time") != st or lec.get("end_time") != en:
                 await db.lectures.update_one({"_id": lec["_id"]}, {"$set": {"start_time": st, "end_time": en}})
+                await record_lecture_change(db, lec, {"start_time": st, "end_time": en}, "schedule_day_resync", actor, f"مزامنة أوقات {day} بعد تعديل الجدول")
                 updated += 1
     return updated
+
+
+async def _own_slots_only(db, slots: list) -> list:
+    """🛡️ يستبعد الخانات الشاردة: خانة قسمها/مستواها لا يطابق مقررها (لا تُحتسب في مزامنة الأوقات)"""
+    cids = list({s.get("course_id") for s in slots if s.get("course_id") and ObjectId.is_valid(s.get("course_id"))})
+    if not cids:
+        return slots
+    meta = {str(c["_id"]): c async for c in db.courses.find({"_id": {"$in": [ObjectId(x) for x in cids]}}, {"department_id": 1, "level": 1})}
+    out = []
+    for s in slots:
+        c = meta.get(s.get("course_id"))
+        if c and ((c.get("department_id") and s.get("department_id") and c["department_id"] != s["department_id"])
+                  or (c.get("level") is not None and s.get("level") is not None and int(c["level"]) != int(s["level"]))):
+            continue
+        out.append(s)
+    return out
+
+
+async def record_lecture_change(db, lec: dict, changes: dict, action: str, actor: Optional[dict], reason: str = ""):
+    """📜 سجل تغيّر المحاضرة (وقت/تاريخ/قاعة/حالة): من/إلى/بواسطة/السبب — للتحقيق لاحقاً"""
+    diff = {k: {"from": lec.get(k), "to": v} for k, v in changes.items() if lec.get(k) != v}
+    if not diff:
+        return
+    await db.lecture_change_log.insert_one({
+        "lecture_id": str(lec["_id"]), "course_id": lec.get("course_id"), "date": lec.get("date"),
+        "action": action, "changes": diff, "reason": reason,
+        "by_id": (actor or {}).get("id", ""), "by_name": (actor or {}).get("full_name") or (actor or {}).get("username") or "النظام",
+        "at": datetime.now(timezone.utc),
+    })
 
 
 @router.post("/weekly-schedule/tag-generated-lectures")
@@ -4383,7 +4436,7 @@ async def compact_schedule_chain(
         )
     _tch = []
     await _resolve_day_times(db, data.faculty_id, data.day, changes_out=_tch)
-    synced = await _resync_slot_times_for_day(db, data.faculty_id, data.day)
+    synced = await _resync_slot_times_for_day(db, data.faculty_id, data.day, current_user)
     await notify_time_shifts(db, _tch)
     await log_activity(current_user, "compact_schedule", "weekly_schedule", data.anchor_slot_id or "", None,
                        {"summary": f"تقديم {len(changes)} محاضرة ({data.day}) بفاصل {gap} دقيقة: " +
@@ -4481,7 +4534,7 @@ async def get_schedule_change_log(
     return out
 
 
-async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_slot_number=None, new_room_id=None) -> dict:
+async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_slot_number=None, new_room_id=None, actor: Optional[dict] = None) -> dict:
     """المستقبل يتبع الجدول والماضي محفوظ: نقل/حذف المحاضرات اليومية المستقبلية المولّدة من موقع الخلية القديم.
     تُستثنى: الماضية، غير المجدولة، التي عليها حضور، والمعاد جدولتها يدوياً."""
     from datetime import timedelta
@@ -4523,6 +4576,9 @@ async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_s
         del_ids = [l["_id"] for l in cands if str(l["_id"]) not in att_ids]
         res["skipped_attendance"] = len(cands) - len(del_ids)
         if del_ids:
+            for l in cands:
+                if l["_id"] in del_ids:
+                    await record_lecture_change(db, l, {"status": "deleted"}, "schedule_slot_deleted", actor, "حذف خانة الجدول الأسبوعي")
             r = await db.lectures.delete_many({"_id": {"$in": del_ids}})
             res["deleted"] = r.deleted_count
         return res
@@ -4562,6 +4618,7 @@ async def _sync_future_lectures(db, slot: dict, action: str, new_day=None, new_s
                 res["skipped_conflict"] += 1
                 continue
             await db.lectures.update_one({"_id": lec["_id"]}, {"$set": upd})
+            await record_lecture_change(db, lec, upd, "schedule_slot_moved", actor, "نقل/تعديل خانة الجدول الأسبوعي")
             res["updated"] += 1
         except DuplicateKeyError:
             res["skipped_conflict"] += 1
@@ -4647,6 +4704,7 @@ class GenerateLecturesFromScheduleRequest(BaseModel):
     end_date: str    # YYYY-MM-DD
     holidays: List[str] = []  # تواريخ معطلة تُتخطى
     dry_run: bool = True  # معاينة فقط دون إنشاء
+    allow_past: bool = False  # ⛔ افتراضياً لا تُولَّد محاضرات بتواريخ ماضية (تتحول فوراً إلى غياب أستاذ)
 
 
 @router.post("/weekly-schedule/generate-lectures")
@@ -4675,12 +4733,26 @@ async def generate_lectures_from_schedule(
     if (end_d - start_d).days > 370:
         raise HTTPException(status_code=400, detail="الفترة أطول من سنة — قلّص النطاق")
     holidays_set = set(data.holidays or [])
+    # 🏖️ الإجازات الرسمية من التقويم تُستثنى تلقائياً
+    from .calendar_events import holiday_dates
+    calendar_holidays = await holiday_dates(db, data.start_date, data.end_date)
+    holidays_set |= set(calendar_holidays)
+    # ⛔ التواريخ الماضية
+    from datetime import timedelta as _td0
+    today_str = (datetime.now(timezone.utc) + _td0(hours=3)).strftime("%Y-%m-%d")
+    past_days_skipped = 0
+    if not data.allow_past and data.start_date < today_str:
+        past_days_skipped = (min(end_d, datetime.strptime(today_str, "%Y-%m-%d").date()) - start_d).days
+        start_d = max(start_d, datetime.strptime(today_str, "%Y-%m-%d").date())
+        if end_d < start_d:
+            return {"dry_run": data.dry_run, "to_create": 0, "already_exist": 0, "past_days_skipped": past_days_skipped, "courses_count": 0,
+                    "message": "كل الفترة المختارة في الماضي — لا يُولَّد شيء (فعّل «تضمين التواريخ الماضية» إن كنت متأكداً)"}
 
-    # خانات الجدول ضمن النطاق
+    # خانات الجدول ضمن النطاق (الخانات الشاردة التي لا تطابق مقررها تُستبعد)
     sched_query = {"faculty_id": data.faculty_id}
     if data.department_id:
         sched_query["department_id"] = data.department_id
-    slots = await db.weekly_schedule.find(sched_query).to_list(5000)
+    slots = await _own_slots_only(db, await db.weekly_schedule.find(sched_query).to_list(5000))
     if not slots:
         raise HTTPException(status_code=400, detail="لا يوجد جدول أسبوعي في هذا النطاق — ولّد الجدول أولاً")
 
@@ -4734,13 +4806,12 @@ async def generate_lectures_from_schedule(
     if not candidates:
         return {"dry_run": data.dry_run, "to_create": 0, "already_exist": 0, "holidays_skipped": len(holidays_set), "courses_count": 0, "message": "لا توجد مواعيد ضمن الفترة المحددة"}
 
-    # المحاضرات الموجودة مسبقاً (نحترمها ونتخطاها) — بأي حالة غير ملغاة
+    # المحاضرات الموجودة مسبقاً (نحترمها ونتخطاها) — بأي حالة بما فيها الملغاة (الإلغاء قرار لا يُعاد توليده)
     course_ids = list({c["course_id"] for c in candidates if c["course_id"]})
     existing = set()
     async for lec in db.lectures.find({
         "course_id": {"$in": course_ids},
         "date": {"$gte": data.start_date, "$lte": data.end_date},
-        "status": {"$ne": "cancelled"},
     }, {"course_id": 1, "date": 1, "start_time": 1, "group": 1}):
         existing.add((lec.get("course_id"), lec.get("date"), lec.get("start_time"), lec.get("group") or ""))
 
@@ -4761,7 +4832,10 @@ async def generate_lectures_from_schedule(
             "schedule_slots": len(slots),
             "date_range": f"{data.start_date} → {data.end_date}",
             "holidays_count": len(holidays_set),
-            "message": f"سيتم إنشاء {len(to_create)} محاضرة لـ{len(course_ids)} مقرراً (تخطي {already} موجودة مسبقاً)",
+            "calendar_holidays": sorted(calendar_holidays.items()),
+            "past_days_skipped": past_days_skipped,
+            "message": f"سيتم إنشاء {len(to_create)} محاضرة لـ{len(course_ids)} مقرراً (تخطي {already} موجودة مسبقاً)"
+                       + (f" — استُثني {past_days_skipped} يوماً ماضياً" if past_days_skipped else "") + (f" — {len(calendar_holidays)} يوم إجازة من التقويم" if calendar_holidays else ""),
         }
 
     # التنفيذ الفعلي — الفهرس الفريد uniq_course_date_start شبكة أمان إضافية
@@ -4786,7 +4860,9 @@ async def generate_lectures_from_schedule(
                 "semester_id": course_sem.get(c["course_id"]),
                 "created_at": now,
                 "created_by": current_user.get("id", ""),
+                "created_by_name": current_user.get("full_name") or current_user.get("username", ""),
                 "generated_from_schedule": True,
+                "generation_range": f"{data.start_date}→{data.end_date}",
                 **({"group": c["group"], "group_name": c["group_name"], **({"teacher_id": c["teacher_id"]} if c.get("teacher_id") else {})} if c.get("group") else {}),
             })
             created += 1
@@ -4795,14 +4871,16 @@ async def generate_lectures_from_schedule(
 
     await log_activity(
         current_user, "generate_lectures_from_schedule", "weekly_schedule", data.faculty_id, None,
-        {"department_id": data.department_id, "range": f"{data.start_date}→{data.end_date}", "created": created, "skipped": already + dup_skipped},
+        {"department_id": data.department_id, "range": f"{data.start_date}→{data.end_date}", "created": created, "skipped": already + dup_skipped,
+         "allow_past": data.allow_past, "past_days_skipped": past_days_skipped, "calendar_holidays": len(calendar_holidays)},
     )
     return {
         "dry_run": False,
         "created": created,
         "already_exist": already + dup_skipped,
         "courses_count": len(course_ids),
-        "message": f"تم إنشاء {created} محاضرة لـ{len(course_ids)} مقرراً (تخطي {already + dup_skipped} موجودة مسبقاً)",
+        "past_days_skipped": past_days_skipped,
+        "message": f"تم إنشاء {created} محاضرة لـ{len(course_ids)} مقرراً (تخطي {already + dup_skipped} موجودة مسبقاً)" + (f" — استُثني {past_days_skipped} يوماً ماضياً" if past_days_skipped else ""),
     }
 
 
@@ -4839,7 +4917,7 @@ async def resync_lecture_times(
     sched_query: dict = {"faculty_id": data.faculty_id}
     if data.department_id:
         sched_query["department_id"] = data.department_id
-    slots = await db.weekly_schedule.find(sched_query).to_list(5000)
+    slots = await _own_slots_only(db, await db.weekly_schedule.find(sched_query).to_list(5000))
     if not slots:
         raise HTTPException(status_code=400, detail="لا يوجد جدول أسبوعي في هذا النطاق")
 
@@ -4889,7 +4967,7 @@ async def resync_lecture_times(
                 if lec["_id"] in locked_ids and not data.include_locked:
                     continue
                 changes.append({
-                    "_id": lec["_id"], "date": date_str,
+                    "_id": lec["_id"], "date": date_str, "course_id": cid,
                     "old": f"{lec.get('start_time', '')} - {lec.get('end_time', '')}",
                     "new": f"{st} - {en}", "st": st, "en": en,
                     "locked": lec["_id"] in locked_ids,
@@ -4903,6 +4981,8 @@ async def resync_lecture_times(
                     {"_id": ch["_id"]},
                     {"$set": _set, **({"$unset": {"time_locked": "", "time_locked_at": "", "time_locked_by_name": ""}} if ch["locked"] else {})},
                 )
+                await record_lecture_change(db, {"_id": ch["_id"], "course_id": ch.get("course_id"), "date": ch["date"], "start_time": ch["old"].split(" - ")[0], "end_time": ch["old"].split(" - ")[-1]},
+                                            _set, "resync_lecture_times", current_user, "مزامنة أوقات المحاضرات مع الجدول")
             except DuplicateKeyError:
                 pass
         await log_activity(
@@ -5023,7 +5103,7 @@ async def merge_schedule_slots(data: MergeSlotsRequest, current_user: dict = Dep
 
     sync = {}
     for g in group_a:
-        s = await _sync_future_lectures(db, g, "move", new_day=b["day"], new_slot_number=b["slot_number"])
+        s = await _sync_future_lectures(db, g, "move", new_day=b["day"], new_slot_number=b["slot_number"], actor=current_user)
         sync = {k: sync.get(k, 0) + v for k, v in s.items()} if sync else s
     total = len(group_a) + len(group_b)
     _tch = []
@@ -5453,7 +5533,7 @@ async def move_schedule_slot(
     # 🔄 (جدول ← نظام) المحاضرات اليومية المستقبلية تتبع الموقع الجديد
     sync = {}
     for g in group:
-        s = await _sync_future_lectures(db, g, "move", new_day=data.target_day, new_slot_number=data.target_slot_number)
+        s = await _sync_future_lectures(db, g, "move", new_day=data.target_day, new_slot_number=data.target_slot_number, actor=current_user)
         sync = {k: sync.get(k, 0) + v for k, v in s.items()} if sync else s
     msg = "تم نقل المحاضرة بنجاح" if len(group) == 1 else f"تم نقل المحاضرة المشتركة ({len(group)} جداول) بنجاح"
     # ⏱ حلحلة أوقات اليومين (القديم والجديد)
@@ -5533,10 +5613,10 @@ async def swap_schedule_slots(
     # 🔄 (جدول ← نظام) محاضرات الطرفين المستقبلية تتبع الموقعين الجديدين
     combined = {}
     for g in group_a:
-        s = await _sync_future_lectures(db, g, "move", new_day=pos_b["day"], new_slot_number=pos_b["slot_number"])
+        s = await _sync_future_lectures(db, g, "move", new_day=pos_b["day"], new_slot_number=pos_b["slot_number"], actor=current_user)
         combined = {k: combined.get(k, 0) + v for k, v in s.items()} if combined else s
     for g in group_b:
-        s = await _sync_future_lectures(db, g, "move", new_day=pos_a["day"], new_slot_number=pos_a["slot_number"])
+        s = await _sync_future_lectures(db, g, "move", new_day=pos_a["day"], new_slot_number=pos_a["slot_number"], actor=current_user)
         combined = {k: combined.get(k, 0) + v for k, v in s.items()}
     # ⏱ حلحلة أوقات اليومين بعد التبديل
     shifted = []

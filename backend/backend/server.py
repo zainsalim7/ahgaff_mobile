@@ -231,6 +231,7 @@ from routes.hr_cards import router as hr_cards_router, public_router as hr_cards
 from routes.hr_card_print import router as hr_card_print_router
 from routes.teacher_overtime import router as teacher_overtime_router
 from routes.overtime_letter import router as overtime_letter_router
+from routes.course_history import router as course_history_router
 from routes.hr_letters import router as hr_letters_router, public_router as hr_letters_public_router
 from routes.hr_profile_requests import router as hr_profile_requests_router
 from routes.hr_locations import router as hr_locations_router
@@ -9703,6 +9704,10 @@ async def update_lecture(
             )
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail="يوجد محاضرة مطابقة لنفس المقرر في نفس التاريخ ووقت البداية — تم رفض التعديل (حماية قاعدة البيانات)")
+        # 📜 سجل تغيّر المحاضرة (وقت/تاريخ/قاعة/حالة)
+        from routes.weekly_schedule import record_lecture_change
+        await record_lecture_change(db, lecture, {k: update_data[k] for k in ("date", "start_time", "end_time", "room", "status") if k in update_data},
+                                    "manual_update", current_user, data.reschedule_note or data.cancellation_reason or "تعديل يدوي")
 
     # 🔗 إلغاء/إعادة تفعيل محاضرة مشتركة يسري على الشعب الأخرى (فقط حقول الحالة والسبب)
     siblings = []
@@ -9735,6 +9740,8 @@ async def delete_lecture(
     topic_id = lecture.get("plan_topic_id")
     course_id = lecture.get("course_id")
 
+    from routes.weekly_schedule import record_lecture_change
+    await record_lecture_change(db, lecture, {"status": "deleted"}, "manual_delete", current_user, "حذف يدوي")
     result = await db.lectures.delete_one({"_id": ObjectId(lecture_id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="المحاضرة غير موجودة")
@@ -18260,6 +18267,7 @@ app.include_router(hr_cards_public_router, prefix="/api")
 app.include_router(hr_card_print_router, prefix="/api")
 app.include_router(teacher_overtime_router, prefix="/api")
 app.include_router(overtime_letter_router, prefix="/api")
+app.include_router(course_history_router, prefix="/api")
 app.include_router(hr_router, prefix="/api")
 app.include_router(hr_leaves_router, prefix="/api")
 app.include_router(hr_attendance_router, prefix="/api")

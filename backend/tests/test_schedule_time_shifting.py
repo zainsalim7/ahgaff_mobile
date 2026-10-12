@@ -235,7 +235,7 @@ class TestDeleteUnShift:
             "faculty_id": FACULTY_ID,
             "department_id": src["department_id"],
             "level": src["level"],
-            "section": "TEST_Z",
+            "section": src.get("section") or "",
             "day": "الخميس",
             "course_id": src["course_id"],
             "teacher_id": src["teacher_id"],

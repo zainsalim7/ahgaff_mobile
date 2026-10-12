@@ -229,7 +229,7 @@ class TestGenerateLecturesWithGroups:
         start, end = self._window()
         r = requests.post(f"{BASE_URL}/api/weekly-schedule/generate-lectures", headers=admin_h, json={
             "faculty_id": FACULTY_ID, "department_id": DEPT_ID,
-            "start_date": start, "end_date": end, "dry_run": True,
+            "start_date": start, "end_date": end, "dry_run": True, "allow_past": True,
         })
         assert r.status_code == 200, r.text
         d = r.json()
@@ -248,7 +248,7 @@ class TestGenerateLecturesWithGroups:
 
         r = requests.post(f"{BASE_URL}/api/weekly-schedule/generate-lectures", headers=admin_h, json={
             "faculty_id": FACULTY_ID, "department_id": DEPT_ID,
-            "start_date": start, "end_date": end, "dry_run": False,
+            "start_date": start, "end_date": end, "dry_run": False, "allow_past": True,
         })
         assert r.status_code == 200, r.text
         d = r.json()
@@ -274,7 +274,7 @@ class TestGenerateLecturesWithGroups:
         # Re-run → both groups already exist (dry_run)
         r2 = requests.post(f"{BASE_URL}/api/weekly-schedule/generate-lectures", headers=admin_h, json={
             "faculty_id": FACULTY_ID, "department_id": DEPT_ID,
-            "start_date": start, "end_date": end, "dry_run": True,
+            "start_date": start, "end_date": end, "dry_run": True, "allow_past": True,
         })
         d2 = r2.json()
         assert d2.get("to_create", 0) == 0, f"regen should skip both: {d2}"

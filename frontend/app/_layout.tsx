@@ -161,6 +161,7 @@ export default function RootLayout() {
           <Stack.Screen name="add-department" options={{ title: 'إدارة الأقسام' }} />
           <Stack.Screen name="reports" options={{ title: 'التقارير' }} />
           <Stack.Screen name="course-lectures" options={{ title: 'محاضرات المقرر' }} />
+          <Stack.Screen name="course-history" options={{ title: 'سجل تغييرات المقرر' }} />
           <Stack.Screen name="permissions" options={{ title: 'الصلاحيات' }} />
           <Stack.Screen name="general-settings" options={{ title: 'الإعدادات العامة' }} />
           <Stack.Screen name="change-password" options={{ title: 'تغيير كلمة المرور', headerShown: false }} />
