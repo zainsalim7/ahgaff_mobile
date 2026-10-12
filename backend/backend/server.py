@@ -18978,10 +18978,13 @@ async def _ensure_weekly_schedule_unique_indexes(db):
 
 
 
+from routes.lecture_repairs import AUTO_DUPE_REASON, repair_group_dupe_cancellations
+
+
 async def _ensure_lectures_unique_index(db):
     """
     🔒 حماية جذرية ضد المحاضرات المكررة في lectures:
-    1. نبحث عن أي تكرارات قائمة (نفس course_id/date/start_time بحالة نشطة).
+    1. نبحث عن أي تكرارات قائمة (نفس course_id/date/start_time/group بحالة نشطة).
     2. نُبقي على المحاضرة الأهم (المنعقدة أولاً ثم الأقدم) ونُلغي الفائض (لا نحذف حفاظاً على سجلات الحضور).
     3. ننشئ فهرس فريد جزئي بحيث ترفض MongoDB أي إدخال مكرر حتى لو أخطأ الكود.
     """
@@ -18991,7 +18994,8 @@ async def _ensure_lectures_unique_index(db):
         pipe = [
             {"$match": {"status": {"$in": active_statuses}}},
             {"$group": {
-                "_id": {"c": "$course_id", "d": "$date", "s": "$start_time"},
+                # 👥 المجموعة جزء من المفتاح — محاضرات مجموعتين في نفس الوقت ليست تكراراً
+                "_id": {"c": "$course_id", "d": "$date", "s": "$start_time", "g": {"$ifNull": ["$group", ""]}},
                 "docs": {"$push": {"id": "$_id", "created_at": "$created_at", "status": "$status"}},
                 "count": {"$sum": 1},
             }},
@@ -19008,7 +19012,7 @@ async def _ensure_lectures_unique_index(db):
                     {"_id": extra["id"]},
                     {"$set": {
                         "status": LectureStatus.CANCELLED,
-                        "cancellation_reason": "أُلغيت تلقائياً: محاضرة مكررة (نفس المقرر والتاريخ والوقت)",
+                        "cancellation_reason": AUTO_DUPE_REASON,
                         "cancelled_at": get_yemen_time(),
                         "cancelled_by_name": "النظام (تنظيف تلقائي)",
                     }},
@@ -19020,6 +19024,11 @@ async def _ensure_lectures_unique_index(db):
                 )
         if cancelled_total > 0:
             logging.warning(f"[lectures dedupe] TOTAL cancelled duplicates: {cancelled_total}")
+
+        # 🩹 استعادة محاضرات المجموعات القادمة التي أُلغيت خطأً بالتنظيف القديم (بلا مراعاة group)
+        _rep = await repair_group_dupe_cancellations(db)
+        if _rep["restored"]:
+            logging.warning(f"[lectures dedupe] restored {_rep['restored']} group lectures wrongly cancelled as duplicates")
 
         # فهرس فريد جزئي: يشمل الحالات النشطة فقط (الملغاة مستثناة ليمكن إعادة الإنشاء بعد الإلغاء)
         # 👥 يتضمن المجموعة حتى يمكن لمجموعتين مختلفتين من نفس المقرر أن تكونا في نفس الوقت

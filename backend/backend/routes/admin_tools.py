@@ -19,6 +19,19 @@ from models.permissions import UserRole
 router = APIRouter(tags=["أدوات الأدمن"])
 
 
+# ==================== 🩹 استعادة محاضرات المجموعات المُلغاة خطأً كـ«مكررة» ====================
+@router.post("/admin/lectures/repair-group-duplicates")
+async def repair_group_duplicates(include_past: bool = False, dry_run: bool = True, current_user: dict = Depends(get_current_user)):
+    """التنظيف القديم كان يعدّ محاضرات مجموعتين في نفس الوقت تكراراً ويلغي إحداهما. يستعيد المُلغاة خطأً (القادمة افتراضياً، أو كلها مع include_past)."""
+    if current_user.get("role") != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح لك — هذه الأداة للأدمن فقط")
+    from .lecture_repairs import repair_group_dupe_cancellations
+    res = await repair_group_dupe_cancellations(get_db(), include_past=include_past, dry_run=dry_run)
+    if not dry_run and res["restored"]:
+        await log_activity(current_user, "lectures_repair_group_dupes", "lectures", None, "استعادة محاضرات مجموعات", {"restored": res["restored"], "include_past": include_past})
+    return res
+
+
 # ==================== إصلاح أرقام القيد المنتهية بـ.0 ====================
 @router.post("/admin/students/fix-dotted-ids")
 async def fix_dotted_ids(current_user: dict = Depends(get_current_user)):

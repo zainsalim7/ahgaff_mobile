@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 COURSE_ID = "698f0000d803b27aab0120af"
 TARGET_LECTURE_ID = "6ac234164b7f763cfb72eff6"  # 2026-10-07 10:00 group 1 scheduled
+SIBLING_G2_LECTURE_ID = "6ac234164b7f763cfb72f01a"  # 2026-10-07 10:00 group 2 (same slot)
 GROUP1_TEACHER = "698ad3da31ab437a06176e2a"
 GROUP2_TEACHER = "698bc0593a8982391e9ba188"
 
@@ -122,16 +123,21 @@ class TestGroupsAttendance:
 # ---------- 3) PUT /api/lectures/{id} group changes ----------
 
 class TestLectureGroupChange:
-    """Use the pinned future lecture TARGET_LECTURE_ID and restore to group '1' at the end."""
+    """Use the pinned future lecture TARGET_LECTURE_ID and restore to group '1' at the end.
+    The sibling group-2 lecture at the same slot is cancelled temporarily so the group change doesn't conflict."""
 
     @pytest.fixture(scope="class", autouse=True)
     def _restore_target(self, request):
         tok = _login("admin", "admin123")
         hdr = {"Authorization": f"Bearer {tok}"}
+        requests.put(f"{BASE_URL}/api/lectures/{SIBLING_G2_LECTURE_ID}", headers=hdr,
+                     json={"status": "cancelled", "cancellation_reason": "test"}, timeout=15)
 
         def _reset():
             requests.put(f"{BASE_URL}/api/lectures/{TARGET_LECTURE_ID}",
                          headers=hdr, json={"group": "1"}, timeout=15)
+            requests.put(f"{BASE_URL}/api/lectures/{SIBLING_G2_LECTURE_ID}", headers=hdr,
+                         json={"status": "scheduled"}, timeout=15)
         yield
         _reset()
 
