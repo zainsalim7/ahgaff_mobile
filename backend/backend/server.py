@@ -6396,15 +6396,36 @@ async def get_course(course_id: str, current_user: dict = Depends(get_current_us
         "is_active": course.get("is_active", True)
     }
 
+async def _teacher_group_scope(course: dict, current_user: dict) -> tuple:
+    """👥 (is_owner, group_keys): هل المستخدم مدرّس المقرر الأساسي؟ وإلا مفاتيح المجموعات التي يقودها فيه"""
+    user = await db.users.find_one({"_id": ObjectId(current_user["id"])}, {"teacher_record_id": 1})
+    ids = {current_user["id"], str((user or {}).get("teacher_record_id") or "")} - {""}
+    is_owner = str(course.get("teacher_id")) in ids
+    keys = [g.get("key") for g in (course.get("groups") or []) if g.get("teacher_id") in ids and g.get("key")]
+    return is_owner, keys
+
+
+def _resolve_group_filter(is_owner: bool, keys: list, group: Optional[str]) -> Optional[dict]:
+    """يرجع شرط Mongo لحقل group (أو None = بلا فلتر). يرفع 403 إن طُلبت مجموعة خارج نطاق قائد المجموعة"""
+    if group:
+        if not is_owner and group not in keys:
+            raise HTTPException(status_code=403, detail="هذه المجموعة ليست ضمن مجموعاتك")
+        return {"group": group}
+    if not is_owner and keys:
+        return {"group": {"$in": keys}}
+    return None
+
+
 @api_router.get("/courses/{course_id}/lecture-stats")
 async def get_course_lecture_stats(
     course_id: str,
     semester_id: Optional[str] = None,
+    group: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
     """إحصائيات محاضرات مقرر معين (خفيف وسريع - بدون تحميل كامل المحاضرات).
 
-    يدعم فلتر اختياري بالفصل عبر `semester_id`.
+    يدعم فلتر اختياري بالفصل عبر `semester_id`، وبالمجموعة عبر `group` 👥.
     """
     try:
         course = await db.courses.find_one({"_id": ObjectId(course_id)})
@@ -6413,16 +6434,19 @@ async def get_course_lecture_stats(
     if not course:
         raise HTTPException(status_code=404, detail="المقرر غير موجود")
 
-    # تحقق الصلاحيات: المعلم على مقرراته فقط
+    group_filter = {"group": group} if group else None
+    # تحقق الصلاحيات: المعلم على مقرراته (أو مجموعاته) فقط
     if current_user["role"] == UserRole.TEACHER:
-        user = await db.users.find_one({"_id": ObjectId(current_user["id"])})
-        teacher_record_id = (user or {}).get("teacher_record_id") or current_user["id"]
-        if str(course.get("teacher_id")) != str(teacher_record_id):
+        is_owner, keys = await _teacher_group_scope(course, current_user)
+        if not is_owner and not keys:
             raise HTTPException(status_code=403, detail="هذا المقرر ليس ضمن مقرراتك")
+        group_filter = _resolve_group_filter(is_owner, keys, group)
     elif current_user["role"] != UserRole.ADMIN and not has_permission(current_user, "view_lectures") and not has_permission(current_user, "manage_lectures"):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
 
     match: dict = {"course_id": course_id}
+    if group_filter:
+        match.update(group_filter)
     # 🔧 توحيد الفلترة: نطبّق فلتر فصل المقرر نفسه افتراضياً
     # (وليس الفصل النشط) كي تتطابق الأرقام مع توقع المستخدم.
     from routes._active_semester import (
@@ -7269,20 +7293,31 @@ async def import_enrollments_excel(
 async def get_enrolled_students_for_attendance(
     course_id: str,
     fields: Optional[str] = None,
+    group: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    """الحصول على الطلاب المسجلين للحضور"""
+    """الحصول على الطلاب المسجلين للحضور — `group` 👥 يحصر على طلاب المجموعة، وقائد المجموعة يُحصر على مجموعاته تلقائياً"""
     course = await db.courses.find_one({"_id": ObjectId(course_id)})
     if not course:
         raise HTTPException(status_code=404, detail="المقرر غير موجود")
-    
+
+    enr_q: dict = {"course_id": course_id}
+    group_filter = {"group": group} if group else None
+    if current_user["role"] == UserRole.TEACHER:
+        is_owner, keys = await _teacher_group_scope(course, current_user)
+        if is_owner or keys:
+            group_filter = _resolve_group_filter(is_owner, keys, group)
+    if group_filter:
+        enr_q.update(group_filter)
+
     # Get enrollments
-    enrollments = await db.enrollments.find({"course_id": course_id}).to_list(10000)
+    enrollments = await db.enrollments.find(enr_q).to_list(10000)
     
     if not enrollments:
         # If no enrollments, return empty (or could fall back to old behavior)
         return []
     
+    enr_group = {e["student_id"]: (e.get("group") or "") for e in enrollments}
     # Get student details
     student_ids = [ObjectId(e["student_id"]) for e in enrollments]
     students = await db.students.find({
@@ -7299,6 +7334,7 @@ async def get_enrolled_students_for_attendance(
             "department_id": student["department_id"],
             "level": student["level"],
             "section": student["section"],
+            "group": enr_group.get(str(student["_id"]), ""),
             "qr_code": student.get("qr_code", "")
         })
     
@@ -10999,8 +11035,17 @@ async def record_attendance_session(
     # Delete existing attendance for this lecture (فقط إذا لم تكن مكتملة)
     await db.attendance.delete_many({"lecture_id": session.lecture_id})
     
+    # 👥 محاضرة مجموعة: تُقبل سجلات طلاب تلك المجموعة فقط (حماية من نسخة قديمة من التطبيق)
+    records = session.records
+    skipped_other_group = 0
+    if lecture.get("group"):
+        _allowed = {e["student_id"] async for e in db.enrollments.find(
+            {"course_id": lecture["course_id"], "group": lecture["group"]}, {"student_id": 1})}
+        records = [r for r in session.records if r.student_id in _allowed]
+        skipped_other_group = len(session.records) - len(records)
+
     attendance_records = []
-    for record in session.records:
+    for record in records:
         att_record = {
             "lecture_id": session.lecture_id,
             "course_id": lecture["course_id"],
@@ -11018,7 +11063,7 @@ async def record_attendance_session(
         await db.attendance.insert_many(attendance_records)
         
         # التحقق من نسب الغياب وإنشاء إشعارات للطلاب الغائبين
-        for record in session.records:
+        for record in records:
             if record.status == AttendanceStatus.ABSENT:
                 await check_and_create_absence_notifications(record.student_id, lecture["course_id"])
     
@@ -11067,7 +11112,10 @@ async def record_attendance_session(
         except Exception as _e:
             logging.warning(f"geofence notify failed: {_e}")
     
-    return {"message": f"تم تسجيل حضور {len(attendance_records)} طالب بنجاح"}
+    _msg = f"تم تسجيل حضور {len(attendance_records)} طالب بنجاح"
+    if skipped_other_group:
+        _msg += f" (تم تجاهل {skipped_other_group} طالباً من خارج مجموعة المحاضرة)"
+    return {"message": _msg, "skipped_other_group": skipped_other_group}
 
     # TODO: Send push notifications after attendance (background task)
     # This will be triggered when we have enough FCM tokens registered

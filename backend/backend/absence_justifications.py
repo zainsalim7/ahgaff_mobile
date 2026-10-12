@@ -68,12 +68,24 @@ def build_router(db, get_current_user, send_push_many=None, user_from_token=None
             "faculty_id": faculty_id,
         }
     async def teacher_courses(user: dict, ctx: dict, course_id: Optional[str] = None) -> dict:
+        """مقررات الأستاذ: كمدرس أساسي أو كقائد مجموعة (groups[].teacher_id). `_group_keys` = مجموعاته إن كان قائد مجموعة فقط"""
         ids = [i for i in [ctx.get("teacher_record_id"), user["id"]] if i]
-        q = {"teacher_id": {"$in": ids}}
+        q = {"$or": [{"teacher_id": {"$in": ids}}, {"groups.teacher_id": {"$in": ids}}]}
         if course_id:
             q["_id"] = ObjectId(course_id)
         courses = await db.courses.find(q).to_list(500)
-        return {str(c["_id"]): c for c in courses}
+        result = {}
+        for c in courses:
+            keys = [g.get("key") for g in (c.get("groups") or []) if g.get("teacher_id") in ids]
+            c["_group_keys"] = keys if c.get("teacher_id") not in ids else []
+            result[str(c["_id"])] = c
+        return result
+
+    def lecture_in_scope(lec: dict, course: dict, group: Optional[str] = None) -> bool:
+        if group and (lec.get("group") or "") != group:
+            return False
+        keys = course.get("_group_keys") or []
+        return not keys or (lec.get("group") or "") in keys
     def serialize(doc: dict) -> dict:
         return {
             "id": str(doc["_id"]),
@@ -137,7 +149,7 @@ def build_router(db, get_current_user, send_push_many=None, user_from_token=None
             "max_file_size": MAX_FILE_SIZE,
         }
     @router.get("/absent-lectures")
-    async def absent_lectures(course_id: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    async def absent_lectures(course_id: Optional[str] = None, group: Optional[str] = None, current_user: dict = Depends(get_current_user)):
         """محاضرات الأستاذ ذات حالة غائب / غائب بعذر مع حالة التبرير والمهلة"""
         ctx = await teacher_context(current_user)
         courses = await teacher_courses(current_user, ctx, course_id)
@@ -147,6 +159,7 @@ def build_router(db, get_current_user, send_push_many=None, user_from_token=None
             "course_id": {"$in": list(courses.keys())},
             "status": {"$in": [STATUS_ABSENT, STATUS_ABSENT_EXCUSED]},
         }).sort([("date", -1), ("start_time", -1)]).to_list(1000)
+        lectures = [l for l in lectures if lecture_in_scope(l, courses.get(l["course_id"], {}), group)]
         lecture_ids = [str(l["_id"]) for l in lectures]
         requests = await db.absence_justifications.find({
             "lecture_ids": {"$in": lecture_ids},
@@ -186,6 +199,7 @@ def build_router(db, get_current_user, send_push_many=None, user_from_token=None
                 "start_time": lec["start_time"],
                 "end_time": lec["end_time"],
                 "room": lec.get("room", ""),
+                "group": lec.get("group"),
                 "status": lec.get("status"),
                 "deadline_at": dl.isoformat() if dl else None,
                 "remaining_seconds": max(0, int((dl - current).total_seconds())) if dl else None,
@@ -245,7 +259,7 @@ def build_router(db, get_current_user, send_push_many=None, user_from_token=None
             raise HTTPException(status_code=404, detail="إحدى المحاضرات غير موجودة")
         current = now()
         for lec in lectures:
-            if lec["course_id"] not in courses:
+            if lec["course_id"] not in courses or not lecture_in_scope(lec, courses[lec["course_id"]]):
                 raise HTTPException(status_code=403, detail="إحدى المحاضرات لا تخصك")
             if lec.get("status") != STATUS_ABSENT:
                 raise HTTPException(status_code=400, detail=f"محاضرة {lec['date']} ليست بحالة غائب")
@@ -283,7 +297,7 @@ def build_router(db, get_current_user, send_push_many=None, user_from_token=None
             "lectures": [{
                 "id": str(l["_id"]), "course_id": l["course_id"],
                 "course_name": (courses.get(l["course_id"]) or {}).get("name", ""),
-                "date": l["date"], "start_time": l["start_time"], "end_time": l["end_time"], "room": l.get("room", ""),
+                "date": l["date"], "start_time": l["start_time"], "end_time": l["end_time"], "room": l.get("room", ""), "group": l.get("group"),
             } for l in lectures],
             "excuse_type": excuse_type,
             "description": description,
