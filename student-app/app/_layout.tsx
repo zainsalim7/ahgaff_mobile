@@ -32,6 +32,7 @@ export default function RootLayout() {
         <Stack.Screen name="notifications" options={{ title: 'الإشعارات' }} />
         <Stack.Screen name="change-password" options={{ title: 'تغيير كلمة المرور', headerShown: false }} />
         <Stack.Screen name="student-card" options={{ title: 'بطاقة الطالب' }} />
+        <Stack.Screen name="excuses" options={{ title: 'أعذار الغياب' }} />
       </Stack>
     </View>
   );

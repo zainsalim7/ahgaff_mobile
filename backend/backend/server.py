@@ -232,6 +232,7 @@ from routes.hr_card_print import router as hr_card_print_router
 from routes.teacher_overtime import router as teacher_overtime_router
 from routes.overtime_letter import router as overtime_letter_router
 from routes.course_history import router as course_history_router
+from routes.student_excuses import router as student_excuses_router, excused_students_for_lecture as _excused_students_for_lecture
 from routes.hr_letters import router as hr_letters_router, public_router as hr_letters_public_router
 from routes.hr_profile_requests import router as hr_profile_requests_router
 from routes.hr_locations import router as hr_locations_router
@@ -11044,6 +11045,20 @@ async def record_attendance_session(
         records = [r for r in session.records if r.student_id in _allowed]
         skipped_other_group = len(session.records) - len(records)
 
+    # 📐 اللائحة: الأستاذ لا يسجّل «بعذر» (العذر عبر طلب معتمد فقط) ولا «متأخر» (تُعامل حضوراً)؛
+    # ومن لديه عذر معتمد يغطي تاريخ المحاضرة يُسجَّل «بعذر» تلقائياً
+    _excused_ids = await _excused_students_for_lecture(db, lecture)
+    _is_teacher = current_user["role"] == UserRole.TEACHER
+    auto_excused = 0
+    for r in records:
+        if r.status == AttendanceStatus.LATE:
+            r.status = AttendanceStatus.PRESENT
+        if _is_teacher and r.status == AttendanceStatus.EXCUSED and r.student_id not in _excused_ids:
+            r.status = AttendanceStatus.ABSENT
+        if r.student_id in _excused_ids and r.status != AttendanceStatus.PRESENT and r.status != AttendanceStatus.EXCUSED:
+            r.status = AttendanceStatus.EXCUSED
+            auto_excused += 1
+
     attendance_records = []
     for record in records:
         att_record = {
@@ -11115,7 +11130,9 @@ async def record_attendance_session(
     _msg = f"تم تسجيل حضور {len(attendance_records)} طالب بنجاح"
     if skipped_other_group:
         _msg += f" (تم تجاهل {skipped_other_group} طالباً من خارج مجموعة المحاضرة)"
-    return {"message": _msg, "skipped_other_group": skipped_other_group}
+    if auto_excused:
+        _msg += f" — {auto_excused} طالباً سُجّلوا «بعذر» تلقائياً بموجب عذر معتمد"
+    return {"message": _msg, "skipped_other_group": skipped_other_group, "auto_excused": auto_excused}
 
     # TODO: Send push notifications after attendance (background task)
     # This will be triggered when we have enough FCM tokens registered
@@ -18301,6 +18318,7 @@ app.include_router(hr_attendance_router, prefix="/api")
 app.include_router(hr_corr_router, prefix="/api")
 app.include_router(hr_tasks_router, prefix="/api")
 app.include_router(course_groups_router, prefix="/api")
+app.include_router(student_excuses_router, prefix="/api")
 app.include_router(hr_appraisals_router, prefix="/api")
 app.include_router(hr_verify_router, prefix="/api")
 app.include_router(hr_documents_router, prefix="/api")
@@ -19151,6 +19169,10 @@ async def sync_default_roles():
             if system_key in ("dean", "department_head", "registrar", "registration_manager") and not existing.get("letters_perm_seeded"):
                 await db.roles.update_one({"_id": existing["_id"]}, {"$addToSet": {"permissions": Permission.ISSUE_LETTERS}, "$set": {"letters_perm_seeded": True}})
                 logging.info(f"تمت إضافة issue_letters إلى دور {system_key}")
+            # 📄 أعذار غياب الطلاب (اللائحة — المرحلة 2): تُمنح مرة واحدة للتسجيل والعميد
+            if system_key in ("dean", "registrar", "registration_manager") and not existing.get("excuses_perm_seeded"):
+                await db.roles.update_one({"_id": existing["_id"]}, {"$addToSet": {"permissions": Permission.MANAGE_STUDENT_EXCUSES}, "$set": {"excuses_perm_seeded": True}})
+                logging.info(f"تمت إضافة manage_student_excuses إلى دور {system_key}")
             # 📊 صلاحيات لوحة القيادة (ميزة جديدة): تُمنح مرة واحدة للأدوار القيادية إن لم تُمنح بعد
             if system_key in ("admin", "dean", "department_head") and not existing.get("dashboard_perms_seeded"):
                 await db.roles.update_one({"_id": existing["_id"]}, {

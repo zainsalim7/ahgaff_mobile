@@ -118,6 +118,7 @@ const MENU_ITEMS: MenuItem[] = [
     PERMISSIONS.REPORT_TEACHER_WORKLOAD
   ]},
   { id: 'absence-justifications', label: 'تبرير غياب الأساتذة 🩺', icon: 'medkit', path: '/absence-justifications', permissions: [], roles: ['admin', 'dean', 'department_head'] },
+  { id: 'student-excuses', label: 'أعذار غياب الطلاب 📄', icon: 'document-attach', path: '/student-excuses', permissions: [], roles: ['admin', 'dean', 'department_head', 'registrar', 'registration_manager'] },
   { id: 'attendance-locations', label: 'مواقع تحضير المحاضرات 📍', icon: 'location', path: '/attendance-locations', permissions: [], roles: ['admin', 'dean', 'department_head'] },
   { id: 'reports', label: 'جميع التقارير', icon: 'document-text', path: '/reports', permissions: [
     PERMISSIONS.VIEW_REPORTS, PERMISSIONS.EXPORT_REPORTS

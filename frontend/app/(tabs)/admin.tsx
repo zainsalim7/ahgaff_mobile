@@ -363,6 +363,16 @@ const SECTIONS: Section[] = [
         adminOnly: true,
       },
       {
+        id: 'repair-group-lectures',
+        label: 'استعادة محاضرات المجموعات',
+        description: 'إرجاع محاضرات المجموعات التي أُلغيت خطأً كـ«مكررة»',
+        icon: 'bandage',
+        color: '#7c3aed',
+        bg: '#ede9fe',
+        route: '/repair-group-lectures',
+        adminOnly: true,
+      },
+      {
         id: 'backfill-sections',
         label: 'معالجة الشُعب',
         description: 'تعبئة وتصحيح شُعب الطلاب',

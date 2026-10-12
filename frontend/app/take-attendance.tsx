@@ -339,8 +339,10 @@ export default function TakeAttendanceScreen() {
       return;
     }
     
-    const statuses = ['present', 'absent', 'excused'];
-    const currentIndex = statuses.indexOf(attendance[studentId]);
+    // 📐 اللائحة: الأستاذ لا يسجّل «بعذر» — العذر عبر طلب معتمد فقط (الإدارة تحتفظ به كأداة تصحيح)
+    const isTeacherUser = user?.role === 'teacher' || authUser?.role === 'teacher';
+    const statuses = isTeacherUser ? ['present', 'absent'] : ['present', 'absent', 'excused'];
+    const currentIndex = Math.max(0, statuses.indexOf(attendance[studentId]));
     const nextIndex = (currentIndex + 1) % statuses.length;
     setAttendance({ ...attendance, [studentId]: statuses[nextIndex] });
   };

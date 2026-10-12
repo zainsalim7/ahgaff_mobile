@@ -15,6 +15,7 @@ import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { StatusBadge } from '../../src/components/StatusBadge';
 import { AttendanceRecord } from '../../src/types';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { formatGregorianDate, formatHijriDate, parseDate, WEEKDAYS_AR_SHORT } from '../../src/utils/dateUtils';
 
 interface CourseStats {
@@ -327,6 +328,10 @@ export default function MyAttendanceScreen() {
         </View>
         
         {!!ruleText && <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', textAlign: 'center', marginBottom: 8, lineHeight: 17 }} testID="absence-rule-text">{ruleText}</Text>}
+        <TouchableOpacity onPress={() => router.push('/excuses')} style={{ alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.18)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, marginBottom: 10 }} testID="my-excuses-btn">
+          <Ionicons name="document-attach" size={15} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12.5 }}>أعذار الغياب — تقديم طلب / متابعة</Text>
+        </TouchableOpacity>
         <View style={styles.overallStats}>
           <View style={styles.overallStatItem}>
             <Text style={styles.overallStatNumber}>{overallStats.totalLectures}</Text>

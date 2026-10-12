@@ -153,6 +153,7 @@ export default function RootLayout() {
           <Stack.Screen name="letters" options={{ title: 'الخطابات الرسمية' }} />
           <Stack.Screen name="letter-new" options={{ title: 'رسالة جديدة' }} />
           <Stack.Screen name="absence-justifications" options={{ title: 'تبرير غياب الأساتذة' }} />
+          <Stack.Screen name="student-excuses" options={{ title: 'أعذار غياب الطلاب' }} />
           <Stack.Screen name="attendance-locations" options={{ title: 'مواقع تحضير المحاضرات' }} />
           <Stack.Screen name="grades" options={{ title: 'نظام الدرجات', headerShown: false }} />
           <Stack.Screen name="schedule" options={{ title: 'جدول المحاضرات' }} />
@@ -219,6 +220,7 @@ export default function RootLayout() {
           <Stack.Screen name="course-students" options={{ title: 'طلاب المقرر' }} />
           <Stack.Screen name="manage-study-plan" options={{ title: 'إدارة الخطة الدراسية' }} />
           <Stack.Screen name="backfill-lecture-semesters" options={{ title: 'إصلاح فصول المحاضرات' }} />
+          <Stack.Screen name="repair-group-lectures" options={{ title: 'استعادة محاضرات المجموعات' }} />
           <Stack.Screen name="student-references" options={{ title: 'الأرقام المرجعية للطلاب' }} />
           <Stack.Screen name="student-autofill" options={{ title: 'ملء بيانات الطلاب' }} />
           <Stack.Screen name="notifications" options={{ title: 'الإشعارات' }} />

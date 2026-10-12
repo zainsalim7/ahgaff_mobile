@@ -66,7 +66,8 @@ export default function TakeAttendanceScreen() {
   const toggleStatus = (studentId: string) => {
     setStudents(prev => prev.map(s => {
       if (s.id !== studentId) return s;
-      const next = s.status === 'present' ? 'absent' : s.status === 'absent' ? 'excused' : 'present';
+      // 📐 اللائحة: لا «معذور» من الأستاذ — العذر عبر طلب معتمد من الإدارة فقط
+      const next = s.status === 'present' ? 'absent' : 'present';
       return { ...s, status: next };
     }));
   };
@@ -189,8 +190,8 @@ export default function TakeAttendanceScreen() {
         <View style={styles.aStat}><Text style={[styles.aStatNum, { color: '#2e7d32' }]}>{presentCount}</Text><Text style={styles.aStatLabel}>حاضر</Text></View>
         <View style={styles.aStatDivider} />
         <View style={styles.aStat}><Text style={[styles.aStatNum, { color: '#c62828' }]}>{absentCount}</Text><Text style={styles.aStatLabel}>غائب</Text></View>
-        <View style={styles.aStatDivider} />
-        <View style={styles.aStat}><Text style={[styles.aStatNum, { color: '#ef6c00' }]}>{excusedCount}</Text><Text style={styles.aStatLabel}>معذور</Text></View>
+        {excusedCount > 0 && <><View style={styles.aStatDivider} />
+        <View style={styles.aStat}><Text style={[styles.aStatNum, { color: '#ef6c00' }]}>{excusedCount}</Text><Text style={styles.aStatLabel}>بعذر معتمد</Text></View></>}
         <View style={styles.aStatDivider} />
         <View style={styles.aStat}><Text style={[styles.aStatNum, { color: '#333' }]}>{students.length}</Text><Text style={styles.aStatLabel}>الكل</Text></View>
       </View>

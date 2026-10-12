@@ -335,6 +335,16 @@ async def build_user_context(db, user: dict) -> dict:
     }
 
 
+async def get_current_user_from_token(token: str):
+    """سياق المستخدم من توكن خام (لروابط التحميل بـ ?token=) — None إن كان غير صالح"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user = await get_db().users.find_one({"_id": ObjectId(payload.get("sub"))})
+        return await build_user_context(get_db(), user) if user else None
+    except Exception:
+        return None
+
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
     """الحصول على المستخدم الحالي من التوكن"""
     db = get_db()
