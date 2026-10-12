@@ -70,8 +70,7 @@ docs/
 *.md
 !README.md
 
-# مجلدات تطوير قديمة لا تنشر على GCP
-student-app/
+# مجلدات تطوير قديمة لا تنشر على GCP (student-app مطلوب لـ cloudbuild-students.yaml)
 student-app-standalone/
 teacher-app/
 teacher-app-standalone/
