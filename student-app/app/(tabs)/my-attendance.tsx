@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../src/store/authStore';
-import { attendanceAPI, studentsAPI, settingsAPI, coursesAPI } from '../../src/services/api';
+import api, { attendanceAPI } from '../../src/services/api';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { StatusBadge } from '../../src/components/StatusBadge';
 import { AttendanceRecord } from '../../src/types';
@@ -21,7 +21,7 @@ interface CourseStats {
   course_id: string;
   course_name: string;
   course_code: string;
-  total_lectures: number;
+  total_sessions: number;
   present_count: number;
   absent_count: number;
   excused_count: number;
@@ -29,7 +29,13 @@ interface CourseStats {
   absence_rate: number;
   status: 'excellent' | 'good' | 'warning' | 'danger' | 'blocked';
   status_text: string;
+  executed_hours?: number; pct_unexcused?: number; pct_total?: number; limit_unexcused?: number; limit_total?: number;
+  remaining_unexcused_hours?: number; remaining_total_hours?: number; early?: boolean;
 }
+const STATUS_UI: Record<CourseStats['status'], { text: string; color: string }> = {
+  blocked: { text: 'مرشَّح للحرمان', color: '#9e9e9e' }, danger: { text: 'خطر الحرمان', color: '#f44336' },
+  warning: { text: 'إنذار', color: '#ff9800' }, good: { text: 'جيد', color: '#2196f3' }, excellent: { text: 'ممتاز', color: '#4caf50' },
+};
 
 // تحديد حالة الطالب بناءً على نسبة الغياب المسموح بها
 const getStudentStatus = (
@@ -73,6 +79,8 @@ export default function MyAttendanceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingRecords, setLoadingRecords] = useState(false);
   const [maxAbsencePercent, setMaxAbsencePercent] = useState(25); // القيمة الافتراضية
+  const [limits, setLimits] = useState<any>(null);
+  const [ruleText, setRuleText] = useState('');
 
   // إحصائيات عامة
   const [overallStats, setOverallStats] = useState({
@@ -84,114 +92,31 @@ export default function MyAttendanceScreen() {
 
   const fetchData = useCallback(async () => {
     try {
-      // البحث عن الطالب باستخدام API الخاص
-      let student;
-      try {
-        const studentRes = await studentsAPI.getMe();
-        student = studentRes.data;
-      } catch {
-        setLoading(false);
-        return;
-      }
-      
-      if (!student) {
-        setLoading(false);
-        return;
-      }
-
-      setStudentId(student.id);
-
-      // الحصول على نسبة الغياب المسموحة من الإعدادات
-      let currentMaxAbsence = maxAbsencePercent;
-      try {
-        const settingsRes = await settingsAPI.get();
-        if (settingsRes.data?.max_absence_percent) {
-          currentMaxAbsence = settingsRes.data.max_absence_percent;
-          setMaxAbsencePercent(currentMaxAbsence);
-        }
-      } catch (e) {
-        // استخدام القيمة الافتراضية
-      }
-
-      // جلب كل المقررات للطالب
-      const coursesRes = await coursesAPI.getAll();
-      const studentCourses = coursesRes.data.filter((c: any) => 
-        c.department_id === student.department_id &&
-        c.level === student.level &&
-        (!c.section || c.section === student.section)
-      );
-
-      // جلب سجلات الحضور للطالب
-      const recordsRes = await attendanceAPI.getStudentAttendance(student.id);
-      const allRecords: AttendanceRecord[] = recordsRes.data;
-
-      // تجميع البيانات حسب المادة
-      const recordsByCourse = new Map<string, AttendanceRecord[]>();
-      allRecords.forEach(record => {
-        const key = record.course_id || record.course_name;
-        if (!recordsByCourse.has(key)) {
-          recordsByCourse.set(key, []);
-        }
-        recordsByCourse.get(key)!.push(record);
-      });
-
-      // حساب الإحصائيات لكل مادة (بما في ذلك المقررات بدون سجلات)
-      const stats: CourseStats[] = [];
-      let totalLectures = 0;
-      let totalPresent = 0;
-      let totalAbsent = 0;
-
-      studentCourses.forEach((course: any) => {
-        const records = recordsByCourse.get(course.id) || [];
-        const present = records.filter(r => r.status === 'present').length;
-        const absent = records.filter(r => r.status === 'absent').length;
-        const excused = records.filter(r => r.status === 'excused').length;
-        const total = records.length;
-        
-        // الغياب بعذر يُحتسب كحضور
-        const effectivePresent = present + excused;
-        const rate = total > 0 ? Math.round((effectivePresent / total) * 100) : 100;
-        const absenceRate = total > 0 ? Math.round((absent / total) * 100) : 0;
-        
-        // تحديد الحالة فقط إذا كان هناك محاضرات
-        const statusInfo = total > 0 
-          ? getStudentStatus(rate, currentMaxAbsence)
-          : { status: 'excellent' as const, text: 'جديد', color: '#9e9e9e' };
-
-        stats.push({
-          course_id: course.id,
-          course_name: course.name,
-          course_code: course.code,
-          total_lectures: total,
-          present_count: present,
-          absent_count: absent,
-          excused_count: excused,
-          attendance_rate: rate,
-          absence_rate: absenceRate,
-          status: statusInfo.status,
-          status_text: total > 0 ? statusInfo.text : 'جديد',
-        });
-
-        totalLectures += total;
-        totalPresent += effectivePresent;
-        totalAbsent += absent;
-      });
-
-      // ترتيب: المقررات التي لها محاضرات أولاً، ثم حسب نسبة الحضور
-      stats.sort((a, b) => {
-        if (a.total_lectures === 0 && b.total_lectures > 0) return 1;
-        if (a.total_lectures > 0 && b.total_lectures === 0) return -1;
-        return a.attendance_rate - b.attendance_rate;
-      });
-
+      // 📐 المصدر الموحد: محرك اللائحة في الخادم (المنفَّذ فقط، بالساعات، حدّان)
+      const res = await api.get('/students/me/absence-profile');
+      const d = res.data;
+      setStudentId(d.student_id || null);
+      setLimits(d.limits);
+      setRuleText(d.rule || '');
+      setMaxAbsencePercent(d.limits?.total_limit || 25);
+      const stats: CourseStats[] = (d.courses || []).map((c: any) => ({
+        course_id: c.course_id, course_name: c.course_name, course_code: c.course_code || '',
+        total_sessions: c.executed_count, present_count: c.present_hours, absent_count: c.unexcused_hours, excused_count: c.excused_hours,
+        attendance_rate: c.attendance_rate, absence_rate: c.pct_total,
+        status: c.status === 'candidate' ? 'blocked' : c.status, status_text: c.status_ar,
+        executed_hours: c.executed_hours, pct_unexcused: c.pct_unexcused, pct_total: c.pct_total,
+        limit_unexcused: c.limit_unexcused, limit_total: c.limit_total,
+        remaining_unexcused_hours: c.remaining_unexcused_hours, remaining_total_hours: c.remaining_total_hours, early: c.early,
+      }));
       setCourseStats(stats);
+      const totalLectures = stats.reduce((a, s) => a + (s.executed_hours || 0), 0);
+      const totalAbsent = stats.reduce((a, s) => a + s.absent_count + s.excused_count, 0);
       setOverallStats({
-        totalLectures,
-        totalPresent,
-        totalAbsent,
-        overallRate: totalLectures > 0 ? Math.round((totalPresent / totalLectures) * 100) : 100,
+        totalLectures: Math.round(totalLectures * 10) / 10,
+        totalPresent: Math.round((totalLectures - totalAbsent) * 10) / 10,
+        totalAbsent: Math.round(totalAbsent * 10) / 10,
+        overallRate: totalLectures > 0 ? Math.round(((totalLectures - totalAbsent) / totalLectures) * 100) : 100,
       });
-
     } catch (error) {
       console.error('Error fetching attendance:', error);
     } finally {
@@ -239,7 +164,7 @@ export default function MyAttendanceScreen() {
   };
 
   const renderCourseCard = ({ item }: { item: CourseStats }) => {
-    const statusInfo = getStudentStatus(item.attendance_rate, maxAbsencePercent);
+    const statusInfo = { status: item.status, ...STATUS_UI[item.status] };
     const isExpanded = selectedCourse === item.course_id;
 
     return (
@@ -266,23 +191,23 @@ export default function MyAttendanceScreen() {
           <View style={styles.courseStats}>
             <View style={styles.statBox}>
               <Ionicons name="calendar" size={16} color="#666" />
-              <Text style={styles.statValue}>{item.total_lectures}</Text>
-              <Text style={styles.statLabel}>محاضرة</Text>
+              <Text style={styles.statValue}>{item.total_sessions}</Text>
+              <Text style={styles.statLabel}>منفَّذة ({item.executed_hours ?? 0} س)</Text>
             </View>
             <View style={styles.statBox}>
               <Ionicons name="checkmark-circle" size={16} color="#4caf50" />
               <Text style={[styles.statValue, { color: '#4caf50' }]}>{item.present_count}</Text>
-              <Text style={styles.statLabel}>حضور</Text>
+              <Text style={styles.statLabel}>س حضور</Text>
             </View>
             <View style={styles.statBox}>
               <Ionicons name="close-circle" size={16} color="#f44336" />
               <Text style={[styles.statValue, { color: '#f44336' }]}>{item.absent_count}</Text>
-              <Text style={styles.statLabel}>غياب</Text>
+              <Text style={styles.statLabel}>س بلا عذر ({item.pct_unexcused ?? 0}% / {item.limit_unexcused ?? 10}%)</Text>
             </View>
             <View style={styles.statBox}>
               <Ionicons name="alert-circle" size={16} color="#ff9800" />
               <Text style={[styles.statValue, { color: '#ff9800' }]}>{item.excused_count}</Text>
-              <Text style={styles.statLabel}>عذر</Text>
+              <Text style={styles.statLabel}>س بعذر · الإجمالي {item.pct_total ?? 0}% / {item.limit_total ?? 25}%</Text>
             </View>
           </View>
 
@@ -301,6 +226,17 @@ export default function MyAttendanceScreen() {
             </Text>
           </View>
 
+          {item.early && item.total_sessions > 0 && (
+            <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'right', marginTop: 6 }} testID={`early-indicator-${item.course_id}`}>مؤشر مبكر — تنفَّذت {item.total_sessions} محاضرات فقط حتى الآن</Text>
+          )}
+          {item.status === 'blocked' && (
+            <View style={[styles.warningBox, { backgroundColor: '#f3f4f6' }]}>
+              <Ionicons name="ban" size={16} color="#374151" />
+              <Text style={[styles.warningText, { color: '#374151' }]}>
+                تجاوزت الحد المسموح ({item.pct_unexcused! > item.limit_unexcused! ? `بلا عذر ${item.pct_unexcused}% > ${item.limit_unexcused}%` : `الإجمالي ${item.pct_total}% > ${item.limit_total}%`}) — القرار النهائي لمجلس الكلية آخر الفصل
+              </Text>
+            </View>
+          )}
           {/* Warning Message */}
           {item.status === 'warning' && (
             <View style={styles.warningBox}>
@@ -369,6 +305,7 @@ export default function MyAttendanceScreen() {
   }
 
   const overallStatus = getStudentStatus(overallStats.overallRate, maxAbsencePercent);
+  void limits;
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -389,10 +326,11 @@ export default function MyAttendanceScreen() {
           </View>
         </View>
         
+        {!!ruleText && <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', textAlign: 'center', marginBottom: 8, lineHeight: 17 }} testID="absence-rule-text">{ruleText}</Text>}
         <View style={styles.overallStats}>
           <View style={styles.overallStatItem}>
             <Text style={styles.overallStatNumber}>{overallStats.totalLectures}</Text>
-            <Text style={styles.overallStatLabel}>إجمالي المحاضرات</Text>
+            <Text style={styles.overallStatLabel}>ساعات منفَّذة</Text>
           </View>
           <View style={[styles.overallStatDivider]} />
           <View style={styles.overallStatItem}>

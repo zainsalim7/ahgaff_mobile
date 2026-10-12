@@ -31,7 +31,7 @@ export default function CourseHistoryPage() {
   const badSlots = (data?.slots || []).filter((s: any) => s.issues?.length);
 
   return (
-    <SafeAreaView style={reportPage.safe} edges={['top']}>
+    <SafeAreaView style={reportPage.container} edges={['top']}>
       <ScrollView contentContainerStyle={reportPage.content} testID="course-history-page">
         <ReportHero kicker="تدقيق" title={`سجل تغييرات: ${data?.course?.name || '…'}`} subtitle={data ? `المستوى ${data.course.level ?? '—'} · شعبة ${data.course.section || '—'} · ${data.lectures_count} محاضرة · ${data.count} حدث` : 'كل ما جرى على محاضرات المقرر وخانات جدوله: من، متى، وماذا تغيّر'} onBack={() => goBack()} canExport={false} />
 

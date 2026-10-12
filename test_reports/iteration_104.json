@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 104 — Phase 1 absence regulation (faculty rule) tested across backend + admin UI. 13/13 pytest cases pass. Admin UI (/report-warnings and /general-settings) verified. Student UI (/my-attendance) not tested via browser (student web login was flaky — 403); student endpoints verified via API using 1001/test1234.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_absence_phase1_iter104.py",
+    "/app/test_reports/pytest/iter104.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/absence_engine.classify correctly uses strict `>` for the candidate decision (10% exact ≠ candidate, 10.01% = candidate). Verified by 4 edge-case engine tests.",
+    "course_profiles pre-filters lectures with status='completed' and uses credited_minutes when present — hours denominator correct. Enrollment-date check skips lectures predating enrollment only when attendance record is missing — matches spec.",
+    "GET /api/reports/warnings uses faculty-level limits per course (course_limits→faculty_limits). summary.unexcused_limit falls back to the first course's limits — if no courses are found it defaults to {10,25,4}. Minor: when caller filters by faculty but has mixed-limit courses, the summary.unexcused_limit may reflect only the first course; not a bug for current rule but worth noting.",
+    "/students/me/absence-profile sorts by severity relative to each course's own limits — good.",
+    "report-warnings UI (frontend) correctly reads summary.rule, min_executed, and renders منفَّذة/بلا عذر%/الإجمالي%/س متبقية بلا عذر; early indicator rendered; no threshold pickers remain."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_absence_phase1_iter104.py"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "verified for admin flows (warnings + settings); student UI not browser-tested (noted flaky login)"},
+  "test_credentials": "admin/admin123 (OK), 1001/test1234 (student — API OK; web UI login got 403 intermittently per review-request note)",
+  "seed_data_creation": "None. Faculty settings PUT test restores original max_unexcused_percent after assertion.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Pytest file: backend/tests/test_absence_phase1_iter104.py. Covers: /api/reports/warnings (structure, row fields, level filter), /api/students/me/absence-profile (shape + DB cross-check), /api/dashboard/student (regression 200), PUT /api/faculties/{id}/settings max_unexcused_percent + warnings reflection, GET /api/reports/student/{id}/detailed rule object, 5 engine edge cases (exact-10, >10, excused=25%, excused>25%, early indicator). To re-run: `DB_NAME=test_database MONGO_URL=mongodb://localhost:27017 REACT_APP_BACKEND_URL=$URL PYTHONPATH=/app/backend pytest backend/tests/test_absence_phase1_iter104.py -v`.\n\nFrontend evidence captured: (admin → general-settings → الإعدادات tab, pick faculty from dropdown ⇒ unexcused-limit-{5,10,15,20} + total-limit {15,20,25,30,35} options render; current faculty is 10%/25%). report-warnings: run report ⇒ rule box data-testid=warnings-rule shows Arabic rule text; المحرومون tab shows 4 rows with منفَّذة/بلا عذر%/الإجمالي%/س متبقية بلا عذر/مؤشر مبكر; PDF+Excel buttons rendered.",
+  "rca of the issue": "N/A — no bugs."
+}

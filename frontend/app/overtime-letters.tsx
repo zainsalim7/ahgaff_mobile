@@ -37,7 +37,7 @@ export default function OvertimeLettersRegister() {
   const totals = rows.reduce((a, it) => ({ letters: a.letters + 1, teachers: a.teachers + (it.teachers || 0), hours: a.hours + (it.overtime_hours || 0), amount: a.amount + (it.amount || 0) }), { letters: 0, teachers: 0, hours: 0, amount: 0 });
 
   return (
-    <SafeAreaView style={reportPage.safe} edges={['top']}>
+    <SafeAreaView style={reportPage.container} edges={['top']}>
       <ScrollView contentContainerStyle={reportPage.content} testID="overtime-letters-page">
         <ReportHero kicker="التقارير · سجل خاص" title="سجل خطابات كشوف الساعات الإضافية" subtitle="كل خطاب رُفع من كشف الساعات الإضافية: الفترة، النطاق، الأساتذة، الساعات، الحالة — يظهر لمن له صلاحية تقرير النصاب فقط" onBack={() => goBack()} canExport={false}
           extra={<TouchableOpacity style={st.heroBtn} onPress={() => router.push('/report-teacher-workload' as any)} testID="ol-go-report"><Ionicons name="briefcase-outline" size={15} color="#fff" /><Text style={st.heroBtnText}>تقرير النصاب</Text></TouchableOpacity>} />

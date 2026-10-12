@@ -74,57 +74,21 @@ export default function StudentHomeScreen() {
         if (settingsRes.data?.college_name) setCollegeName(settingsRes.data.college_name);
       } catch (e) {}
 
-      // Course stats
+      // Course stats — 📐 من محرك اللائحة في الخادم (المنفَّذ فقط، بالساعات، حدّان)
       if (studentRes.data?.id) {
-        const coursesRes = await coursesAPI.getAll();
-        const studentCourses = coursesRes.data.filter((c: any) =>
-          c.department_id === studentRes.data.department_id &&
-          c.level === studentRes.data.level &&
-          (!c.section || c.section === studentRes.data.section)
-        );
-
-        const statsPromises = studentCourses.map(async (course: any) => {
-          try {
-            const statsRes = await attendanceAPI.getStudentStats(studentRes.data.id, course.id);
-            const stats = statsRes.data;
-            const totalSessions = stats.total_sessions || 0;
-            const attendanceRate = totalSessions > 0 ? (stats.attendance_rate || 0) : 100;
-            const absenceRate = 100 - attendanceRate;
-
-            let status: CourseStats['status'] = 'excellent';
-            if (totalSessions > 0) {
-              if (absenceRate > maxAbsencePercent) status = 'danger';
-              else if (absenceRate >= maxAbsencePercent * 0.7) status = 'warning';
-              else if (absenceRate >= maxAbsencePercent * 0.4) status = 'good';
-            }
-
-            return {
-              course_id: course.id,
-              course_name: course.name,
-              course_code: course.code,
-              total_lectures: totalSessions,
-              present_count: stats.present_count || 0,
-              absent_count: stats.absent_count || 0,
-              excused_count: stats.excused_count || 0,
-              attendance_rate: attendanceRate,
-              status,
-            } as CourseStats;
-          } catch {
-            return {
-              course_id: course.id,
-              course_name: course.name,
-              course_code: course.code,
-              total_lectures: 0,
-              present_count: 0,
-              absent_count: 0,
-              excused_count: 0,
-              attendance_rate: 100,
-              status: 'excellent' as const,
-            } as CourseStats;
-          }
-        });
-
-        const results = await Promise.all(statsPromises);
+        const profRes = await api.get('/students/me/absence-profile');
+        if (profRes.data?.limits?.total_limit) setMaxAbsencePercent(profRes.data.limits.total_limit);
+        const results: CourseStats[] = (profRes.data?.courses || []).map((c: any) => ({
+          course_id: c.course_id,
+          course_name: c.course_name,
+          course_code: c.course_code,
+          total_lectures: c.executed_count,
+          present_count: c.present_hours,
+          absent_count: c.unexcused_hours,
+          excused_count: c.excused_hours,
+          attendance_rate: c.attendance_rate,
+          status: (c.status === 'candidate' || c.status === 'danger') ? 'danger' : c.status === 'warning' ? 'warning' : c.status === 'good' ? 'good' : 'excellent',
+        } as CourseStats));
         setCoursesStats(results);
       }
     } catch (error) {
