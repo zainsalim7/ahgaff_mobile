@@ -2726,8 +2726,10 @@ async def create_student_notification(
 async def check_and_create_absence_notifications(student_id: str, course_id: str):
     """التحقق من نسبة الغياب وإنشاء إشعارات إذا لزم الأمر"""
     
-    # جلب الطالب
-    student = await db.students.find_one({"student_id": student_id})
+    # جلب الطالب (المعرّف قد يكون _id أو الرقم الجامعي)
+    student = await db.students.find_one({"_id": ObjectId(student_id)}) if ObjectId.is_valid(student_id) else None
+    if not student:
+        student = await db.students.find_one({"student_id": student_id})
     if not student:
         return
     
@@ -2738,52 +2740,41 @@ async def check_and_create_absence_notifications(student_id: str, course_id: str
     if not course:
         return
     
-    # جلب الإعدادات
-    settings = await db.settings.find_one({"type": "general"})
-    warning_threshold = settings.get("warning_threshold", 15) if settings else 15
-    deprivation_threshold = settings.get("deprivation_threshold", 25) if settings else 25
-    
-    # حساب نسبة الغياب
-    active_lecture_ids = await get_active_lecture_ids(course_id)
-    total_lectures = len(active_lecture_ids)
-    
-    if total_lectures == 0:
+    # 📐 محرك اللائحة: المنفَّذ فقط، بالساعات، حدّان (بلا عذر / إجمالي)
+    from services.absence_engine import student_profile
+    pr = await student_profile(db, student_db_id, course)
+    if pr["executed_count"] == 0:
         return
-    
-    records = await db.attendance.find({
-        "student_id": student_id,
-        "course_id": course_id,
-        "lecture_id": {"$in": list(active_lecture_ids)}
-    }).to_list(1000)
-    
-    absent_count = sum(1 for r in records if r["status"] == AttendanceStatus.ABSENT)
-    absence_rate = (absent_count / total_lectures) * 100
-    
-    # حساب الغيابات المتبقية
-    max_allowed = int((deprivation_threshold / 100) * total_lectures)
-    remaining_allowed = max(0, max_allowed - absent_count)
-    
-    # إنشاء إشعار حسب النسبة
-    if absence_rate >= deprivation_threshold:
+    worst = max(pr["pct_unexcused"], pr["pct_total"])
+    if pr["status"] == "candidate":
         await create_student_notification(
-            student_id=student_id,
-            student_db_id=student_db_id,
-            notification_type=NotificationType.DEPRIVATION,
-            course_name=course["name"],
-            course_id=course_id,
-            absence_rate=absence_rate,
-            remaining_allowed=0
+            student_id=student_id, student_db_id=student_db_id, notification_type=NotificationType.DEPRIVATION,
+            course_name=course["name"], course_id=course_id, absence_rate=worst, remaining_allowed=0,
         )
-    elif absence_rate >= warning_threshold:
+    elif pr["status"] in ("warning", "danger"):
         await create_student_notification(
-            student_id=student_id,
-            student_db_id=student_db_id,
-            notification_type=NotificationType.WARNING,
-            course_name=course["name"],
-            course_id=course_id,
-            absence_rate=absence_rate,
-            remaining_allowed=remaining_allowed
+            student_id=student_id, student_db_id=student_db_id, notification_type=NotificationType.WARNING,
+            course_name=course["name"], course_id=course_id, absence_rate=worst, remaining_allowed=pr["remaining_unexcused_hours"],
         )
+
+@api_router.get("/students/me/absence-profile")
+async def my_absence_profile(current_user: dict = Depends(get_current_user)):
+    """📐 نسب الغياب لكل مقررات الطالب الحالي وفق لائحة الكلية (المصدر الموحد لشاشة «حضوري»)"""
+    from services.absence_engine import student_profile, faculty_limits
+    student = await db.students.find_one({"user_id": current_user["id"]}) or (await db.students.find_one({"student_id": current_user.get("username")}))
+    if not student:
+        raise HTTPException(status_code=404, detail="لا يوجد سجل طالب مرتبط بهذا الحساب")
+    sid = str(student["_id"])
+    course_ids = [e["course_id"] async for e in db.enrollments.find({"student_id": sid}, {"course_id": 1})]
+    courses = await db.courses.find({"_id": {"$in": [ObjectId(c) for c in course_ids if ObjectId.is_valid(c)]}}).to_list(200)
+    dept = await db.departments.find_one({"_id": ObjectId(student["department_id"])}, {"faculty_id": 1}) if student.get("department_id") and ObjectId.is_valid(student["department_id"]) else None
+    limits = await faculty_limits(db, (dept or {}).get("faculty_id"))
+    profiles = await asyncio.gather(*[student_profile(db, sid, c) for c in courses]) if courses else []
+    items = [{"course_id": str(c["_id"]), "course_name": c.get("name", ""), "course_code": c.get("code", ""), "teacher_name": c.get("teacher_name"), **pr} for c, pr in zip(courses, profiles)]
+    items.sort(key=lambda x: (-(max(x["pct_unexcused"] / (x["limit_unexcused"] or 1), x["pct_total"] / (x["limit_total"] or 1))), x["course_name"]))
+    return {"student_id": student.get("student_id"), "limits": limits, "courses": items,
+            "rule": f"نسبة الغياب تُحسب من ساعات المحاضرات المنفَّذة فقط · بلا عذر حتى {limits['unexcused_limit']:g}% · الإجمالي (بعذر + بلا عذر) حتى {limits['total_limit']:g}% · التجاوز = مرشَّح للحرمان وقراره لمجلس الكلية"}
+
 
 @api_router.get("/notifications")
 async def get_notifications(
@@ -12056,81 +12047,69 @@ async def get_daily_report(
 @api_router.get("/reports/warnings")
 async def get_warnings_report(
     department_id: Optional[str] = None,
-    warning_threshold: float = 25.0,
-    deprivation_threshold: float = 40.0,
+    faculty_id: Optional[str] = None,
+    level: Optional[int] = None,
     current_user: dict = Depends(get_current_user)
 ):
-    """تقرير الإنذارات - الطلاب المعرضين للحرمان"""
+    """تقرير الإنذارات والمرشحين للحرمان — وفق لائحة الكلية (محرك absence_engine):
+    المقام = ساعات المحاضرات المنفَّذة؛ بلا عذر > حد الكلية أو الإجمالي > الحد الإجمالي ⇒ مرشَّح للحرمان."""
     if not has_permission(current_user, Permission.VIEW_REPORTS):
         raise HTTPException(status_code=403, detail="غير مصرح لك")
-    
-    # جلب المقررات
+    from services.absence_engine import course_profiles, course_limits
+
     course_query = {"is_active": True}
     if department_id:
         course_query["department_id"] = department_id
-    courses = await db.courses.find(course_query).to_list(100)
-    
-    warnings = []
-    deprivations = []
-    
+    elif faculty_id:
+        dep_ids = [str(d["_id"]) async for d in db.departments.find({"faculty_id": faculty_id}, {"_id": 1})]
+        course_query["department_id"] = {"$in": dep_ids}
+    if level is not None:
+        course_query["level"] = level
+    courses = await db.courses.find(course_query).to_list(500)
+
+    warnings, deprivations = [], []
+    students_cache: dict = {}
+    limits_used = None
     for course in courses:
         cid = str(course["_id"])
-        active_lecture_ids = await get_active_lecture_ids(cid)
-        total_lectures = len(active_lecture_ids)
-        
-        if total_lectures == 0:
-            continue
-        
-        # جلب التسجيلات
-        enrollments = await db.enrollments.find({"course_id": cid}).to_list(1000)
-        
-        for enrollment in enrollments:
-            student_id = enrollment.get("student_id")
-            if not student_id:
+        limits = await course_limits(db, course)
+        limits_used = limits_used or limits
+        profiles = await course_profiles(db, course, limits=limits)
+        for sid, pr in profiles.items():
+            if pr["status"] not in ("warning", "danger", "candidate") or pr["executed_count"] == 0:
                 continue
-            
-            # حساب الغياب
-            records = await db.attendance.find({
-                "student_id": student_id,
-                "course_id": cid,
-                "lecture_id": {"$in": list(active_lecture_ids)}
-            }).to_list(1000)
-            
-            absent_count = sum(1 for r in records if r.get("status") == AttendanceStatus.ABSENT)
-            absence_rate = (absent_count / total_lectures) * 100
-            
-            if absence_rate >= warning_threshold:
+            if sid not in students_cache:
                 try:
-                    student = await db.students.find_one({"_id": ObjectId(student_id)})
+                    students_cache[sid] = await db.students.find_one({"_id": ObjectId(sid)}, {"student_id": 1, "full_name": 1, "level": 1, "section": 1})
                 except Exception:
-                    continue
-                if student:
-                    student_data = {
-                        "student_id": student.get("student_id", ""),
-                        "student_name": student.get("full_name", ""),
-                        "course_name": course.get("name", ""),
-                        "course_code": course.get("code", ""),
-                        "total_lectures": total_lectures,
-                        "absent_count": absent_count,
-                        "absence_rate": round(absence_rate, 2),
-                        "remaining_allowed": max(0, int((deprivation_threshold / 100) * total_lectures) - absent_count)
-                    }
-                    
-                    if absence_rate >= deprivation_threshold:
-                        student_data["status"] = "محروم"
-                        deprivations.append(student_data)
-                    else:
-                        student_data["status"] = "إنذار"
-                        warnings.append(student_data)
-    
+                    students_cache[sid] = None
+            st = students_cache.get(sid)
+            if not st:
+                continue
+            row = {
+                "student_db_id": sid, "student_id": st.get("student_id", ""), "student_name": st.get("full_name", ""),
+                "course_id": cid, "course_name": course.get("name", ""), "course_code": course.get("code", ""), "level": course.get("level"), "section": course.get("section") or "",
+                "total_lectures": pr["executed_count"], "executed_hours": pr["executed_hours"],
+                "absent_count": pr["unexcused_hours"], "unexcused_hours": pr["unexcused_hours"], "excused_hours": pr["excused_hours"],
+                "absence_rate": pr["pct_unexcused"], "pct_unexcused": pr["pct_unexcused"], "pct_total": pr["pct_total"],
+                "remaining_allowed": pr["remaining_unexcused_hours"], "remaining_total_hours": pr["remaining_total_hours"],
+                "exceeded_unexcused": pr["exceeded_unexcused"], "exceeded_total": pr["exceeded_total"], "early": pr["early"],
+                "status": "مرشَّح للحرمان" if pr["status"] == "candidate" else ("خطر الحرمان" if pr["status"] == "danger" else "إنذار"),
+                "status_key": pr["status"], "status_ar": pr["status_ar"],
+            }
+            (deprivations if pr["status"] == "candidate" else warnings).append(row)
+    warnings.sort(key=lambda r: -max(r["pct_unexcused"], r["pct_total"]))
+    deprivations.sort(key=lambda r: -max(r["pct_unexcused"], r["pct_total"]))
+    limits_used = limits_used or {"unexcused_limit": 10.0, "total_limit": 25.0, "min_executed": 4}
     return {
         "warnings": warnings,
         "deprivations": deprivations,
         "summary": {
             "total_warnings": len(warnings),
             "total_deprivations": len(deprivations),
-            "warning_threshold": warning_threshold,
-            "deprivation_threshold": deprivation_threshold
+            "unexcused_limit": limits_used["unexcused_limit"], "total_limit": limits_used["total_limit"], "min_executed": limits_used["min_executed"],
+            "warning_threshold": limits_used["unexcused_limit"], "deprivation_threshold": limits_used["total_limit"],
+            "rule": f"المقام = ساعات المحاضرات المنفَّذة · بلا عذر > {limits_used['unexcused_limit']:g}% أو الإجمالي (بعذر + بلا عذر) > {limits_used['total_limit']:g}% ⇒ مرشَّح للحرمان (القرار لمجلس الكلية)",
         }
     }
 
@@ -17562,7 +17541,7 @@ async def update_faculty_settings(
     allowed_fields = [
         "levels_count", "sections", "attendance_late_minutes", "max_absence_percent",
         "primary_color", "secondary_color", "phone", "whatsapp", "email",
-        "attendance_duration_minutes", "max_attendance_delay_minutes"
+        "attendance_duration_minutes", "max_attendance_delay_minutes", "max_unexcused_percent"
     ]
     
     update_data = {k: v for k, v in data.items() if k in allowed_fields and v is not None}
@@ -19061,6 +19040,11 @@ async def create_indexes():
         # 🔒 حماية على مستوى قاعدة البيانات ضد التعارض المزدوج في الجدول الأسبوعي
         # نطبّق فهارس فريدة جزئية بعد إزالة أي تكرار قائم (نحتفظ بأقدم نسخة)
         await _ensure_weekly_schedule_unique_indexes(db)
+        # 📐 اللائحة: لا حالة «متأخر» — تُحوَّل مرة واحدة إلى «حاضر»
+        if not await db.settings.find_one({"type": "migration_late_to_present"}):
+            _r = await db.attendance.update_many({"status": "late"}, {"$set": {"status": "present", "was_late": True}})
+            await db.settings.insert_one({"type": "migration_late_to_present", "converted": _r.modified_count, "at": datetime.now(timezone.utc)})
+            logging.info(f"late→present migration: {_r.modified_count} records")
 
         # 🔒 حماية على مستوى قاعدة البيانات ضد المحاضرات المكررة (نفس المقرر/التاريخ/الوقت)
         await _ensure_lectures_unique_index(db)

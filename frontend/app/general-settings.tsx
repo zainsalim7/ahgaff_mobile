@@ -81,6 +81,7 @@ interface Settings {
   levels_count: number;
   sections: string[];
   attendance_late_minutes: number;
+  max_unexcused_percent: number;
   max_absence_percent: number;
   primary_color: string;
   secondary_color: string;
@@ -159,6 +160,7 @@ export default function GeneralSettingsScreen() {
     levels_count: 5,
     sections: [],
     attendance_late_minutes: 15,
+    max_unexcused_percent: 10,
     max_absence_percent: 25,
     primary_color: '#1565c0',
     secondary_color: '#ff9800',
@@ -172,6 +174,7 @@ export default function GeneralSettingsScreen() {
     levels_count: number;
     sections: string[];
     attendance_late_minutes: number;
+    max_unexcused_percent: number;
     max_absence_percent: number;
     attendance_duration_minutes: number;
     max_attendance_delay_minutes: number;
@@ -184,6 +187,7 @@ export default function GeneralSettingsScreen() {
     levels_count: 5,
     sections: ['أ', 'ب', 'ج'],
     attendance_late_minutes: 15,
+    max_unexcused_percent: 10,
     max_absence_percent: 25,
     attendance_duration_minutes: 15,
     max_attendance_delay_minutes: 30,
@@ -1098,6 +1102,7 @@ export default function GeneralSettingsScreen() {
           levels_count: data.levels_count || 5,
           sections: data.sections || ['أ', 'ب', 'ج'],
           attendance_late_minutes: data.attendance_late_minutes || 15,
+          max_unexcused_percent: data.max_unexcused_percent || 10,
           max_absence_percent: data.max_absence_percent || 25,
           attendance_duration_minutes: data.attendance_duration_minutes || 15,
           max_attendance_delay_minutes: data.max_attendance_delay_minutes || 30,
@@ -1223,26 +1228,21 @@ export default function GeneralSettingsScreen() {
                 <Text style={styles.cardSectionTitle}>إعدادات الحضور</Text>
               </View>
 
-              <Text style={styles.label}>دقائق التأخير المسموحة</Text>
+              <Text style={styles.label}>حد الغياب بلا عذر (%) — من ساعات المحاضرات المنفَّذة</Text>
               <View style={styles.optionsRow}>
-                {[5, 10, 15, 20, 30].map(min => (
+                {[5, 10, 15, 20].map(percent => (
                   <TouchableOpacity
-                    key={min}
-                    style={[
-                      styles.optionBtn,
-                      facultySettings.attendance_late_minutes === min && styles.optionBtnActive
-                    ]}
-                    onPress={() => setFacultySettings({ ...facultySettings, attendance_late_minutes: min })}
+                    key={percent}
+                    style={[styles.optionBtn, facultySettings.max_unexcused_percent === percent && styles.optionBtnActive]}
+                    onPress={() => setFacultySettings({ ...facultySettings, max_unexcused_percent: percent })}
+                    testID={`unexcused-limit-${percent}`}
                   >
-                    <Text style={[
-                      styles.optionText,
-                      facultySettings.attendance_late_minutes === min && styles.optionTextActive
-                    ]}>{min} د</Text>
+                    <Text style={[styles.optionText, facultySettings.max_unexcused_percent === percent && styles.optionTextActive]}>{percent}%</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              <Text style={styles.label}>نسبة الغياب القصوى المسموحة (%)</Text>
+              <Text style={styles.label}>الحد الإجمالي للغياب (بعذر + بلا عذر) (%) — تجاوز أيٍّ من الحدين = مرشَّح للحرمان</Text>
               <View style={styles.optionsRow}>
                 {[15, 20, 25, 30, 35].map(percent => (
                   <TouchableOpacity

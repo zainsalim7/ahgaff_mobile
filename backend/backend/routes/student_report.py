@@ -132,14 +132,18 @@ async def build_student_report(db, student_id: str) -> dict:
                 "student_status": s_status, "student_status_label": s_label,
                 "cancellation_reason": l.get("cancellation_reason", "") if lstatus == "cancelled" else "",
             })
-        rate = round((st["present"] + st["late"] * 0.5) / st["executed"] * 100, 1) if st["executed"] else None
+        # 📐 النِّسب من محرك اللائحة (المنفَّذ فقط، بالساعات، حدّان)
+        from services.absence_engine import student_profile
+        pr = await student_profile(db, sid, course)
+        rate = pr["attendance_rate"] if pr["executed_count"] else None
         for k in st:
             totals[k] += st[k]
         totals["lectures"] += len(lectures)
         courses_out.append({
             "course_id": cid, "course_name": course.get("name", ""), "course_code": course.get("code", ""),
             "teacher_name": teacher_name, "total_lectures": len(lectures), **st,
-            "attendance_rate": rate, "warning": rate is not None and rate < 75, "lectures": rows,
+            "attendance_rate": rate, "warning": pr["status"] in ("warning", "danger", "candidate"), "lectures": rows,
+            "rule": {k: pr[k] for k in ("executed_hours", "unexcused_hours", "excused_hours", "pct_unexcused", "pct_total", "limit_unexcused", "limit_total", "status", "status_ar", "early")},
         })
     courses_out.sort(key=lambda c: c["course_name"])
     overall = round((totals["present"] + totals["late"] * 0.5) / totals["executed"] * 100, 1) if totals["executed"] else None

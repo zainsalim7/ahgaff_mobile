@@ -18,8 +18,6 @@ export default function WarningsReport() {
   const [deprivations, setDeprivations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [selectedDept, setSelectedDept] = useState('');
-  const [warningThreshold, setWarningThreshold] = useState(25);
-  const [deprivationThreshold, setDeprivationThreshold] = useState(40);
   const [summary, setSummary] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'warnings' | 'deprivations'>('warnings');
   const [exporting, setExporting] = useState<'' | 'pdf' | 'excel'>('');
@@ -28,7 +26,7 @@ export default function WarningsReport() {
 
   const handleExport = async (fmt: 'pdf' | 'excel') => {
     setExporting(fmt);
-    const params: any = { warning_threshold: warningThreshold, deprivation_threshold: deprivationThreshold };
+    const params: any = {}
     if (selectedDept) params.department_id = selectedDept;
     await downloadReport(fmt === 'pdf' ? '/reports/warnings/export-pdf' : '/export/report/warnings/excel', params, ['تقرير الإنذارات والحرمان', deptName], fmt === 'pdf' ? 'pdf' : 'xlsx');
     setExporting('');
@@ -47,7 +45,7 @@ export default function WarningsReport() {
   const runReport = useCallback(async () => {
     setExecuting(true);
     try {
-      const params: any = { warning_threshold: warningThreshold, deprivation_threshold: deprivationThreshold };
+      const params: any = {}
       if (selectedDept) params.department_id = selectedDept;
       const reportRes = await reportsAPI.getWarningsReport(params);
       setWarnings(reportRes.data.warnings || []);
@@ -61,7 +59,7 @@ export default function WarningsReport() {
       setExecuting(false);
       setRefreshing(false);
     }
-  }, [selectedDept, warningThreshold, deprivationThreshold]);
+  }, [selectedDept]);
 
   const onRefresh = () => {
     if (!hasRun) return;
@@ -81,18 +79,6 @@ export default function WarningsReport() {
   const currentList = activeTab === 'warnings' ? warnings : deprivations;
   const total = warnings.length + deprivations.length;
 
-  const ThresholdPicker = ({ label, value, onChange, options, color, testID }: { label: string; value: number; onChange: (v: number) => void; options: number[]; color: string; testID: string }) => (
-    <View>
-      <Text style={reportPage.label}>{label}</Text>
-      <View style={styles.chipRow}>
-        {options.map(o => (
-          <TouchableOpacity key={o} style={[styles.chip, value === o && { backgroundColor: color + '18', borderColor: color }]} onPress={() => onChange(o)} testID={`${testID}-${o}`}>
-            <Text style={[styles.chipText, value === o && { color, fontWeight: '800' }]}>{o}%</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
-  );
 
   return (
     <SafeAreaView style={reportPage.container} edges={['bottom']}>
@@ -118,17 +104,21 @@ export default function WarningsReport() {
               </Picker>
             </View>
           </View>
-          <ThresholdPicker label="حد الإنذار" value={warningThreshold} onChange={setWarningThreshold} options={[15, 20, 25, 30]} color="#f97316" testID="warn-threshold" />
-          <ThresholdPicker label="حد الحرمان" value={deprivationThreshold} onChange={setDeprivationThreshold} options={[35, 40, 45, 50]} color="#dc2626" testID="deprive-threshold" />
         </ReportFilters>
+        {!!summary?.rule && (
+          <View style={{ backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 10, padding: 10, marginBottom: 12 }} testID="warnings-rule">
+            <Text style={{ fontSize: 12, color: '#1e3a8a', textAlign: 'right', lineHeight: 18, fontWeight: '700' }}>📐 {summary.rule}</Text>
+            <Text style={{ fontSize: 11, color: '#1e40af', textAlign: 'right', marginTop: 4 }}>الحدود تُضبط من إعدادات الكلية (تبويب الإعدادات) · «مؤشر مبكر» = أقل من {summary.min_executed} محاضرات منفَّذة</Text>
+          </View>
+        )}
 
         {!hasRun && !executing && <ReportEmpty text="اختر الفلاتر ثم اضغط «تنفيذ التقرير» — سيعرض الطلاب الذين يستحقون إنذاراً أو حرماناً" icon="information-circle-outline" />}
         {executing && !refreshing && <ActivityIndicator size="large" color="#1565c0" style={{ marginTop: 30 }} />}
 
         {hasRun && !executing && summary && (
           <ReportKpis items={[
-            { label: 'إنذار', value: summary.total_warnings, color: '#f97316', icon: 'warning', sub: `غياب ≥ ${summary.warning_threshold}%` },
-            { label: 'محروم', value: summary.total_deprivations, color: '#dc2626', icon: 'close-circle', sub: `غياب ≥ ${summary.deprivation_threshold}%` },
+            { label: 'إنذار / خطر', value: summary.total_warnings, color: '#f97316', icon: 'warning', sub: `اقترب من الحد (≥ 60%)` },
+            { label: 'مرشَّح للحرمان', value: summary.total_deprivations, color: '#dc2626', icon: 'close-circle', sub: `بلا عذر > ${summary.unexcused_limit}% أو الإجمالي > ${summary.total_limit}%` },
             { label: 'إجمالي الحالات', value: total, color: '#1565c0', icon: 'people', sub: `${new Set([...warnings, ...deprivations].map(s => s.student_id)).size} طالباً` },
           ]} />
         )}
@@ -164,16 +154,15 @@ export default function WarningsReport() {
                 <Text style={styles.courseCode}>({item.course_code})</Text>
               </View>
               <View style={styles.statsRow}>
-                <View style={styles.statItem}><Text style={styles.statValue}>{item.absent_count}</Text><Text style={styles.statLabel}>غياب</Text></View>
-                <View style={styles.statItem}><Text style={styles.statValue}>{item.total_lectures}</Text><Text style={styles.statLabel}>محاضرة</Text></View>
-                <View style={styles.statItem}><Text style={[styles.statValue, { color: '#dc2626' }]}>{item.absence_rate}%</Text><Text style={styles.statLabel}>نسبة الغياب</Text></View>
-                {item.remaining_allowed !== undefined && (
-                  <View style={styles.statItem}>
-                    <Text style={[styles.statValue, { color: item.remaining_allowed > 0 ? '#16a34a' : '#dc2626' }]}>{item.remaining_allowed}</Text>
-                    <Text style={styles.statLabel}>متبقي</Text>
-                  </View>
-                )}
+                <View style={styles.statItem}><Text style={styles.statValue}>{item.total_lectures}</Text><Text style={styles.statLabel}>منفَّذة ({item.executed_hours} س)</Text></View>
+                <View style={styles.statItem}><Text style={[styles.statValue, { color: item.exceeded_unexcused ? '#dc2626' : '#111827' }]}>{item.pct_unexcused}%</Text><Text style={styles.statLabel}>بلا عذر ({item.unexcused_hours} س)</Text></View>
+                <View style={styles.statItem}><Text style={[styles.statValue, { color: item.exceeded_total ? '#dc2626' : '#111827' }]}>{item.pct_total}%</Text><Text style={styles.statLabel}>الإجمالي (بعذر {item.excused_hours} س)</Text></View>
+                <View style={styles.statItem}>
+                  <Text style={[styles.statValue, { color: item.remaining_allowed > 0 ? '#16a34a' : '#dc2626' }]}>{item.remaining_allowed}</Text>
+                  <Text style={styles.statLabel}>س متبقية بلا عذر</Text>
+                </View>
               </View>
+              {item.early && <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'right', marginTop: 4 }}>مؤشر مبكر — محاضرات منفَّذة قليلة</Text>}
             </View>
           ))}
         </>)}

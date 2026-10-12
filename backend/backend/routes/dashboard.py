@@ -115,38 +115,27 @@ async def get_student_dashboard(current_user: dict = Depends(get_current_user)):
         except Exception:
             pass
 
-    # الخطوة 3: جلب إحصائيات كل المقررات بالتوازي
-    stats_tasks = [
-        _get_student_course_stats(db, student_id, str(c["_id"]))
-        for c in student_courses
-    ]
-    stats_results = await asyncio.gather(*stats_tasks) if stats_tasks else []
-
-    max_absence_percent = settings.get("max_absence_percent", 25)
+    # الخطوة 3: 📐 محرك اللائحة لكل مقرر (المنفَّذ فقط، بالساعات، حدّان)
+    from services.absence_engine import student_profile, faculty_limits
+    limits = await faculty_limits(db, dept.get("faculty_id") if dept else None)
+    stats_results = await asyncio.gather(*[student_profile(db, student_id, c) for c in student_courses]) if student_courses else []
 
     courses_stats = []
-    for course, stats in zip(student_courses, stats_results):
-        total_sessions = stats["total_sessions"]
-        rate = stats["attendance_rate"] if total_sessions > 0 else 100
-
-        status = "excellent"
-        if total_sessions > 0:
-            if rate < (100 - max_absence_percent):
-                status = "danger"
-            elif rate < (100 - max_absence_percent / 2):
-                status = "warning"
-
+    for course, pr in zip(student_courses, stats_results):
         courses_stats.append({
             "course_id": str(course["_id"]),
             "course_name": course.get("name", ""),
             "course_code": course.get("code", ""),
-            "total_sessions": total_sessions,
-            "present_count": stats["present_count"],
-            "absent_count": stats["absent_count"],
-            "late_count": stats["late_count"],
-            "excused_count": stats["excused_count"],
-            "attendance_rate": rate,
-            "status": status,
+            "total_sessions": pr["executed_count"],
+            "present_count": pr["present_hours"],
+            "absent_count": pr["unexcused_hours"],
+            "late_count": 0,
+            "excused_count": pr["excused_hours"],
+            "attendance_rate": pr["attendance_rate"],
+            "status": "danger" if pr["status"] in ("danger", "candidate") else ("warning" if pr["status"] == "warning" else "excellent"),
+            **{k: pr[k] for k in ("executed_hours", "unexcused_hours", "excused_hours", "pct_unexcused", "pct_total", "limit_unexcused", "limit_total",
+                                  "remaining_unexcused_hours", "remaining_total_hours", "early", "status_ar")},
+            "rule_status": pr["status"],
         })
 
     return {
@@ -163,7 +152,7 @@ async def get_student_dashboard(current_user: dict = Depends(get_current_user)):
         },
         "department_name": dept.get("name") if dept else "",
         "college_name": faculty_name or "",
-        "max_absence_percent": max_absence_percent,
+        "max_absence_percent": limits["total_limit"], "max_unexcused_percent": limits["unexcused_limit"], "absence_rule": f"بلا عذر حتى {limits['unexcused_limit']:g}% · الإجمالي حتى {limits['total_limit']:g}% من ساعات المحاضرات المنفَّذة",
         "courses_stats": courses_stats,
         "semester": {
             "name": settings.get("current_semester"),
