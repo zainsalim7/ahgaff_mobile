@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 105 — Phase 2 (student absence excuses) tested across backend + admin web UI. Backend reference flow /app/backend/tests/test_student_excuses_flow.py passed 100% (ALL PASSED) covering: meta, missing-attachment 400, routing (medical→registration regardless of days, family 2d→dean, official 3d→board, exam 1d→board), overlap 400, admin-on-behalf via student_db_id, /my for student, 403 for student on list, admin list with can_decide & pending_by_route, decide RBAC (Salim/dean rejected on registration route), needs_info without note→400, needs_info→student attachment→back-to-pending, approve applies excused to past completed lectures (updated=1, created=1 for lecture without record), auto-excused on attendance/session for scheduled lecture inside period, late→present for teacher-forbidden statuses, board without session_no→400, student cancel of pending, attachment download via JWT in query, student search for dept head. Also validated POST /api/admin/lectures/repair-group-duplicates?include_past=true&dry_run=true → 200 {restored:0,kept_real_duplicates:0,items:[]}. Admin web UI /student-excuses: se-page, se-route-{registration,dean,board}, se-filter-{pending,needs_info,approved,rejected,all}, se-new-btn opens se-form; se-form-search '1001' shows se-form-result-1001, se-form-from/to/type default sick→route preview = 'التسجيل · 3 يوم', file upload via se-form-files, se-form-submit creates request (alert accepted) appears in list as se-row-*; se-open-* opens se-detail with se-detail-route='التسجيل'; se-decision-approved + se-decide-submit → request disappears from pending. Sidebar text 'أعذار غياب الطلاب 📄' present. /repair-group-lectures loads repair-group-lectures-screen; repair-preview-btn shows repair-preview block. Student web UI not tested (403 by design per request).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_student_excuses_flow.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/student_excuses.route_for correctly implements: medical→registration (any duration); exam→board; else days<=2→dean, days>2→board. Verified by UI preview + backend tests.",
+    "apply_excuse updates existing absent attendance records and inserts new excused records for completed lectures within the period that have no prior record — matches spec; auto-excuse during /attendance/session is enforced via _excused_students_for_lecture.",
+    "Teacher-forbidden statuses: late→present and excused→absent are enforced server-side (prevents client bypass).",
+    "Board decisions require board_session_no and board_session_date — enforced with 400.",
+    "Attachment download via ?token=JWT works for both Emergent Object Storage and Mongo fallback.",
+    "Overlap detection with pending/approved excuses on same student+course scope returns 400 as expected."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (reference script ALL PASSED, 29 assertions)", "frontend": "100% for admin UI flows tested"},
+  "test_credentials": "admin/admin123 OK; 1001/test1234 (student API) OK; Salim/test1234 (dean) OK; student web login intentionally 403 per request.",
+  "seed_data_creation": "Reference script seeds/cleans its own temp lectures+attendance+student_excuses+notifications via Mongo. UI test also submitted 1 excuse via /student-excuses; cleaned up afterwards (deleted 1 excuse + 5 student_excuse notifications).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To re-run backend regression: `cd /app/backend && python3 tests/test_student_excuses_flow.py` — expects 'ALL PASSED' and 'cleaned'. UI testIDs are stable on /student-excuses and /repair-group-lectures. Login placeholder: 'اسم المستخدم / رقم القيد / الرقم المرجعي' + 'كلمة المرور' + text button 'تسجيل الدخول'. Note: default excuse_type in se-form is 'sick' (not 'medical' — label is 'مرضي'); options use Arabic labels but values are keys (sick/family/official/exam).",
+  "rca of the issue": "N/A — no bugs found."
+}
