@@ -14,9 +14,17 @@ export default function AssistantSettingsScreen() {
   const [q, setQ] = useState(''); const [found, setFound] = useState<any[]>([]);
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
   const [diag, setDiag] = useState<string | null>(null);
+  const [kb, setKb] = useState<any>(null);
+  const [kbQ, setKbQ] = useState(''); const [kbRes, setKbRes] = useState<any[]>([]);
+  const [noteTitle, setNoteTitle] = useState(''); const [noteText, setNoteText] = useState('');
 
   const load = () => api.get('/assistant/settings').then((r) => setSt(r.data)).catch((e) => notify('خطأ', e?.response?.data?.detail || 'تعذر التحميل'));
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.get('/assistant/knowledge/stats').then((r) => setKb(r.data)).catch(() => {}); }, []);
+  useEffect(() => {
+    if (kbQ.trim().length < 2) { setKbRes([]); return; }
+    const t = setTimeout(() => api.get('/assistant/knowledge/search', { params: { q: kbQ.trim() } }).then((r) => setKbRes(r.data)).catch(() => {}), 350);
+    return () => clearTimeout(t);
+  }, [kbQ]);
   useEffect(() => {
     if (q.trim().length < 2) { setFound([]); return; }
     const t = setTimeout(() => api.get('/assistant/users/search', { params: { q: q.trim() } }).then((r) => setFound(r.data)).catch(() => {}), 300);
@@ -141,6 +149,29 @@ export default function AssistantSettingsScreen() {
             <TouchableOpacity key={u.id} onPress={() => { save({ allowed_user_ids: [...allowedIds, u.id] }); setQ(''); setFound([]); }} style={s.result} testID={`assistant-user-add-${u.id}`}><Text style={s.chipTxt}>＋ {u.full_name} · {u.username} · {u.role_label}</Text></TouchableOpacity>
           ))}
           <Text style={s.sub}>ملاحظة: الإذن هنا يتيح فتح المرشد فقط؛ ما يراه المستخدم من إرشادات محكوم بصلاحيات دوره.</Text>
+        </View>
+
+        <View style={s.card} testID="assistant-knowledge">
+          <Text style={s.cardTitle}>📚 قاعدة معرفة المرشد</Text>
+          <Text style={s.sub}>{kb ? `${kb.count} بطاقة شاشة مولّدة من كود النظام (${kb.model || '—'}) · آخر بناء: ${kb.built_at ? kb.built_at.slice(0, 16).replace('T', ' ') : '—'} · ملاحظات الإدارة: ${kb.notes_count}` : 'جاري التحميل…'}</Text>
+          <Text style={s.sub}>المرشد يختار تلقائياً البطاقات الأنسب لسؤال المستخدم (حسب صلاحياته) ويستند إليها. جرّب هنا ماذا سيسترجع:</Text>
+          <TextInput value={kbQ} onChangeText={setKbQ} placeholder="مثال: كيف أسجل إجازة لموظف؟" style={s.input} testID="assistant-kb-search" />
+          {kbRes.map((r: any) => (
+            <View key={r.id} style={s.result} testID={`assistant-kb-result-${r.id}`}>
+              <Text style={s.chipTxt}>{r.kind === 'note' ? '📝 ' : ''}{r.title} <Text style={s.modelSub}>· {r.path || 'ملاحظة'} · صلة {r.score}{r.kind === 'card' ? ` · ${r.elements} عنصر / ${r.tasks} مهمة` : ''}</Text></Text>
+              <Text style={s.modelSub} numberOfLines={2}>{r.purpose}</Text>
+            </View>
+          ))}
+          <Text style={s.lbl}>ملاحظات/تصحيحات معرفية من الإدارة (تُدمج مع البطاقات عند الصلة)</Text>
+          {(st.knowledge_notes || []).map((n: any, i: number) => (
+            <View key={i} style={[s.result, { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 8 }]} testID={`assistant-note-${i}`}>
+              <View style={{ flex: 1 }}><Text style={s.chipTxt}>{n.title || 'بلا عنوان'}</Text><Text style={s.modelSub}>{n.text}</Text></View>
+              <TouchableOpacity onPress={() => save({ knowledge_notes: st.knowledge_notes.filter((_: any, j: number) => j !== i) })} testID={`assistant-note-remove-${i}`}><Ionicons name="close-circle" size={18} color="#c62828" /></TouchableOpacity>
+            </View>
+          ))}
+          <TextInput value={noteTitle} onChangeText={setNoteTitle} placeholder="عنوان الملاحظة (مثال: سياسة تأخير الأساتذة)" style={s.input} testID="assistant-note-title" />
+          <TextInput value={noteText} onChangeText={setNoteText} multiline placeholder="نص الملاحظة الذي يجب أن يعرفه المرشد…" style={[s.input, { minHeight: 60, marginTop: 6 }]} testID="assistant-note-text" />
+          <TouchableOpacity onPress={() => { if (!noteText.trim()) return; save({ knowledge_notes: [...(st.knowledge_notes || []), { title: noteTitle.trim(), text: noteText.trim() }] }); setNoteTitle(''); setNoteText(''); }} disabled={saving || !noteText.trim()} style={[s.testBtn, { alignSelf: 'flex-end', marginTop: 6 }, !noteText.trim() && { opacity: 0.4 }]} testID="assistant-note-add"><Text style={s.testTxt}>＋ إضافة ملاحظة</Text></TouchableOpacity>
         </View>
 
         <View style={s.card}>

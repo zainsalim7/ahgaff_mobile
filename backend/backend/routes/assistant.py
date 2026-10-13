@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .deps import get_db, get_current_user, has_permission, log_activity
+from .assistant_knowledge import KB, render_cards
 from models.permissions import Permission, UserRole
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -37,7 +38,7 @@ PROVIDERS = [
 ]
 UNIVERSAL_PROVIDERS = {p["key"] for p in PROVIDERS if p["universal"]}
 DEFAULTS = {"enabled": True, "name": "مرشد الأحقاف", "provider": "openai", "model": "gpt-5.4", "daily_limit": 60,
-            "allowed_roles": [], "allowed_user_ids": [], "extra_instructions": "", "provider_keys": {}}
+            "allowed_roles": [], "allowed_user_ids": [], "extra_instructions": "", "provider_keys": {}, "knowledge_notes": []}
 
 
 def _fernet():
@@ -135,10 +136,28 @@ def visible_screens(user: dict) -> List[dict]:
     return out
 
 
-def system_prompt(user: dict, st: dict, route: Optional[str]) -> str:
+def allowed_card_ids(user: dict) -> set:
+    """بطاقات المعرفة المسموح للمستخدم رؤيتها: حسب شاشة القائمة المرتبطة بها (أو شاشتها الأم)؛ ما لا يرتبط بشاشة يُعرض للجميع"""
+    vis = {s["id"] for s in visible_screens(user)}
+    all_menu = {s["id"] for s in SCREENS}
+    out = set()
+    for cid, c in KB.cards.items():
+        anchor = c.get("menu_id") or c.get("parent_screen_id")
+        if user["role"] == UserRole.ADMIN or not anchor or anchor not in all_menu or anchor in vis:
+            out.add(cid)
+    return out
+
+
+def relevant_knowledge(user: dict, st: dict, message: str, route: Optional[str]) -> str:
+    items = KB.search(message, route=route, allowed_ids=allowed_card_ids(user), notes=st.get("knowledge_notes") or [], limit=5)
+    return render_cards(items) if items else ""
+
+
+def system_prompt(user: dict, st: dict, route: Optional[str], knowledge: str = "") -> str:
     screens = visible_screens(user)
     lines = [f"- {s['label']}: {s['path']}" + (f" — {SCREEN_TIPS[s['id']]}" if s["id"] in SCREEN_TIPS else "") for s in screens]
     perms = ", ".join(sorted(user.get("permissions") or [])[:60]) or "حسب الدور"
+    kb_block = f"\n\nبطاقات معرفة موثّقة من كود النظام ذات صلة بسؤال المستخدم (اعتمد عليها أولاً وبدقة؛ اذكر أسماء الأزرار والخطوات كما وردت):\n{knowledge}" if knowledge else ""
     return f"""أنت «{st['name']}»، مساعد إرشادي داخل نظام جامعة الأحقاف لإدارة الحضور والشؤون الأكاديمية والموارد البشرية.
 مهمتك: إرشاد المستخدم خطوة بخطوة لإنجاز مهامه داخل النظام بدقة وحرص، وشرح القواعد واللوائح، وتوجيهه إلى الشاشة الصحيحة.
 قيود صارمة:
@@ -156,7 +175,7 @@ def system_prompt(user: dict, st: dict, route: Optional[str]) -> str:
 {chr(10).join(lines)}
 شاشات فرعية شائعة: طلاب المقرر /course-students?courseId=…، محاضرات المقرر /course-lectures?courseId=…، صفحة المجموعة /course-group?courseId=…&group=…، تفاصيل الطالب /student-details?studentId=…، إعدادات المرشد /assistant-settings (للأدمن).
 
-{REGULATION}
+{REGULATION}{kb_block}
 {('تعليمات إضافية من الإدارة: ' + st['extra_instructions']) if st.get('extra_instructions') else ''}"""
 
 
@@ -176,6 +195,36 @@ class SettingsIn(BaseModel):
     allowed_roles: Optional[List[str]] = None
     allowed_user_ids: Optional[List[str]] = None
     extra_instructions: Optional[str] = None
+    knowledge_notes: Optional[List[dict]] = None
+
+
+@router.get("/knowledge/stats")
+async def knowledge_stats(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح")
+    st = await get_settings(get_db())
+    return {**KB.meta, "notes_count": len(st.get("knowledge_notes") or []), "screens_in_menu": len(SCREENS)}
+
+
+@router.get("/knowledge/search")
+async def knowledge_search(q: str, route: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+    """تجربة الاسترجاع: ماذا سيرى المرشد من بطاقات عند هذا السؤال (للأدمن)"""
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح")
+    st = await get_settings(get_db())
+    items = KB.search(q, route=route, notes=st.get("knowledge_notes") or [], limit=8)
+    return [{"id": i.get("id"), "kind": i.get("kind"), "title": i.get("title"), "path": i.get("path"), "score": i["score"], "purpose": (i.get("purpose") or i.get("text") or "")[:220],
+             "elements": len(i.get("elements") or []), "tasks": len(i.get("tasks") or [])} for i in items]
+
+
+@router.get("/knowledge/cards/{card_id}")
+async def knowledge_card(card_id: str, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح")
+    c = KB.cards.get(card_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="البطاقة غير موجودة")
+    return c
 
 
 @router.get("/meta")
@@ -220,6 +269,8 @@ async def write_settings(data: SettingsIn, current_user: dict = Depends(get_curr
         raise HTTPException(status_code=400, detail="النموذج غير مدعوم")
     if "model" in upd:
         upd["provider"] = next(m["provider"] for m in MODELS if m["model"] == upd["model"])
+    if "knowledge_notes" in upd:
+        upd["knowledge_notes"] = [{"title": str(n.get("title", ""))[:120].strip(), "text": str(n.get("text", ""))[:2000].strip()} for n in upd["knowledge_notes"] if str(n.get("text", "")).strip()][:50]
     db = get_db()
     await db.settings.update_one({"type": "assistant"}, {"$set": {**upd, "type": "assistant", "updated_at": _now().isoformat()}}, upsert=True)
     await log_activity(current_user, "assistant_settings_update", "settings", "assistant", "إعدادات المرشد", upd)
@@ -365,7 +416,8 @@ async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
     history = (sess or {}).get("messages", [])[-12:]
     transcript = "\n".join(f"{'المستخدم' if m['role'] == 'user' else 'المرشد'}: {m['content']}" for m in history)
     prompt = (f"سياق المحادثة السابقة:\n{transcript}\n\n" if transcript else "") + f"رسالة المستخدم الجديدة: {msg}"
-    system = system_prompt(current_user, st, data.current_route)
+    kb_text = relevant_knowledge(current_user, st, msg + " " + " ".join(m["content"] for m in history[-2:] if m["role"] == "user"), data.current_route)
+    system = system_prompt(current_user, st, data.current_route, kb_text)
     now = _now().isoformat()
     _m = _llm_module()
     UserMessage, TextDelta, StreamDone = _m.UserMessage, _m.TextDelta, _m.StreamDone
