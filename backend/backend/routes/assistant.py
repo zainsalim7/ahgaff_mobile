@@ -261,8 +261,17 @@ async def search_users(q: str, current_user: dict = Depends(get_current_user)):
     return [{"id": str(u["_id"]), "full_name": u.get("full_name"), "username": u.get("username"), "role": u.get("role"), "role_label": ROLE_AR.get(u.get("role"), u.get("role"))} for u in users]
 
 
+def _llm_module():
+    try:
+        from emergentintegrations.llm import chat as m
+        return m
+    except ImportError as e:
+        logging.error(f"assistant: emergentintegrations missing: {e}")
+        raise HTTPException(status_code=503, detail="مكتبة الذكاء الاصطناعي (emergentintegrations) غير مثبتة على هذا الخادم — أضفها إلى requirements.txt وأعد النشر")
+
+
 def _build_chat(st: dict, session_id: str, system: str, timeout: int = 90):
-    from emergentintegrations.llm.chat import LlmChat
+    LlmChat = _llm_module().LlmChat
     key, source = resolve_key(st, st["provider"])
     if not key:
         label = next((p["label"] for p in PROVIDERS if p["key"] == st["provider"]), st["provider"])
@@ -293,6 +302,12 @@ async def diagnose_provider(provider: str, current_user: dict = Depends(get_curr
     st = await get_settings(get_db())
     key, source = resolve_key(st, provider)
     out = {"provider": provider, "key_source": source, "key_last4": key[-4:] if key else None, "universal_env": bool(os.environ.get("EMERGENT_LLM_KEY")), "steps": []}
+    try:
+        import emergentintegrations  # noqa: F401
+        import litellm  # noqa: F401
+        out["steps"].append({"step": "مكتبة النماذج", "ok": True, "msg": "emergentintegrations + litellm مثبتتان"})
+    except ImportError as e:
+        out["steps"].append({"step": "مكتبة النماذج", "ok": False, "msg": f"غير مثبتة على الخادم ({str(e)[:80]}) — أضف emergentintegrations إلى requirements.txt وأعد النشر"})
     if not key:
         out["steps"].append({"step": "المفتاح", "ok": False, "msg": "لا يوجد مفتاح لهذا المزوّد"})
         return out
@@ -351,7 +366,8 @@ async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
     prompt = (f"سياق المحادثة السابقة:\n{transcript}\n\n" if transcript else "") + f"رسالة المستخدم الجديدة: {msg}"
     system = system_prompt(current_user, st, data.current_route)
     now = _now().isoformat()
-    from emergentintegrations.llm.chat import UserMessage, TextDelta, StreamDone
+    _m = _llm_module()
+    UserMessage, TextDelta, StreamDone = _m.UserMessage, _m.TextDelta, _m.StreamDone
 
     async def persist(answer: str):
         await db.assistant_sessions.update_one({"session_id": data.session_id, "user_id": current_user["id"]}, {
@@ -410,7 +426,7 @@ async def test_model(request: Request, current_user: dict = Depends(get_current_
     m = next((x for x in MODELS if x["model"] == model), None)
     if not m:
         raise HTTPException(status_code=400, detail="النموذج غير مدعوم")
-    from emergentintegrations.llm.chat import UserMessage
+    UserMessage = _llm_module().UserMessage
     st = await get_settings(get_db())
     llm = _build_chat({**st, **m}, f"test-{current_user['id']}", "أجب بكلمة واحدة فقط.", timeout=40)
     source_ar = "مفتاحك الخاص" if llm.key_source == "own" else "المفتاح الشامل"
