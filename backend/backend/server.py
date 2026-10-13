@@ -7451,11 +7451,14 @@ async def update_course(course_id: str, data: CourseUpdate, current_user: dict =
     new_teacher_id = update_data.get("teacher_id") if teacher_id_in_update else old_teacher_id
     if teacher_id_in_update and new_teacher_id != old_teacher_id:
         # 🔄 مزامنة خلايا الجدول الأسبوعي مع الإسناد الجديد (بقاؤها قديمة يسبب تعارضات وهمية في الاستيراد)
+        # 👥 خلايا المجموعات التي لها قائد خاص تبقى على قائدها
+        _own_groups = [g.get("key") for g in (course.get("groups") or []) if g.get("teacher_id")]
+        _ws_q = {"course_id": course_id, "group": {"$nin": _own_groups}}
         try:
             if new_teacher_id:
-                await db.weekly_schedule.update_many({"course_id": course_id}, {"$set": {"teacher_id": new_teacher_id}})
+                await db.weekly_schedule.update_many(_ws_q, {"$set": {"teacher_id": new_teacher_id}})
             else:
-                await db.weekly_schedule.update_many({"course_id": course_id}, {"$unset": {"teacher_id": ""}})
+                await db.weekly_schedule.update_many(_ws_q, {"$unset": {"teacher_id": ""}})
         except DuplicateKeyError:
             pass
         # 🧾 حفظ سجل التنفيذ: المحاضرات الماضية/المكتملة تبقى محسوبة للمعلم القديم

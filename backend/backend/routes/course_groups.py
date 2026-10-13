@@ -1,4 +1,5 @@
 """👥 المجموعات الدراسية داخل المقرر — توزيع طلاب المقرر إلى مجموعات (عملي/مختبر) بمدرّس اختياري لكل مجموعة"""
+import logging
 import random
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -129,10 +130,24 @@ async def put_course_groups(course_id: str, data: GroupsPut, current_user: dict 
     if removed:
         await db.enrollments.update_many({"course_id": course_id, "group": {"$in": removed}}, {"$unset": {"group": ""}})
     await db.courses.update_one({"_id": course["_id"]}, {"$set": {"groups": groups}})
+    # 🔄 مزامنة خلايا الجدول الأسبوعي لكل مجموعة مع قائدها الجديد (أو مدرّس المقرر إن لم يكن لها قائد)
+    sync_warnings = []
+    for g in groups:
+        _tid = g["teacher_id"] or course.get("teacher_id")
+        if not _tid:
+            continue
+        async for cell in db.weekly_schedule.find({"course_id": course_id, "group": g["key"], "teacher_id": {"$ne": _tid}}, {"day": 1, "slot_number": 1}):
+            try:
+                await db.weekly_schedule.update_one({"_id": cell["_id"]}, {"$set": {"teacher_id": _tid}})
+            except Exception as e:
+                logging.warning(f"group schedule sync failed: {e}")
+                sync_warnings.append(f"{g['name']}: خلية {cell.get('day')} فترة {cell.get('slot_number')} لم تُحدَّث — الأستاذ مشغول في نفس الفترة (عالجها من الجدول الأسبوعي)")
     await log_activity(current_user, "update_course_groups", "course", course_id, course.get("name", ""),
                        {"summary": f"تحديث مجموعات المقرر «{course.get('name', '')}» ({len(groups)} مجموعة)", "removed": removed})
     course["groups"] = groups
-    return await _view(db, course)
+    out = await _view(db, course)
+    out["schedule_sync_warnings"] = sync_warnings
+    return out
 
 
 @router.post("/courses/{course_id}/groups/assign")

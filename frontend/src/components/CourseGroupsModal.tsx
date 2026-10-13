@@ -107,6 +107,7 @@ export const CourseGroupsModal: React.FC<Props> = ({ visible, courseId, onClose,
     try {
       const r = await courseGroupsAPI.save(courseId, next.map(g => ({ key: g.key.trim(), name: g.name.trim(), teacher_id: g.teacher_id || null })));
       setData(r.data);
+      if (r.data.schedule_sync_warnings?.length) notify('تنبيه الجدول الأسبوعي', r.data.schedule_sync_warnings.join('\n'));
       setDraft((r.data.groups || []).map((g: CourseGroup) => ({ key: g.key, name: g.name, teacher_id: g.teacher_id || '' })));
       onChanged?.();
     } catch (e: any) { notify('خطأ', e?.response?.data?.detail || 'فشل الحفظ'); }

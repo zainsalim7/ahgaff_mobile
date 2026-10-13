@@ -22,6 +22,16 @@ ISSUE_LABELS = {
 }
 
 
+def expected_slot_teacher(course: dict, slot: dict) -> str:
+    """👥 الأستاذ المتوقع للخلية: قائد المجموعة إن كانت الخلية لمجموعة لها أستاذ، وإلا مدرّس المقرر الأساسي"""
+    g = slot.get("group") or ""
+    if g:
+        gd = next((x for x in (course.get("groups") or []) if x.get("key") == g), None)
+        if gd and gd.get("teacher_id"):
+            return gd["teacher_id"]
+    return course.get("teacher_id") or ""
+
+
 async def _scan(db, faculty_id: str, department_id: Optional[str]):
     if department_id:
         dept_filter = {"department_id": department_id}
@@ -31,7 +41,7 @@ async def _scan(db, faculty_id: str, department_id: Optional[str]):
     slots = await db.weekly_schedule.find(dept_filter).to_list(20000)
 
     dept_names = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}, {"name": 1}).to_list(2000)}
-    courses = {str(c["_id"]): c for c in await db.courses.find({}, {"name": 1, "teacher_id": 1, "level": 1, "section": 1, "is_active": 1}).to_list(50000)}
+    courses = {str(c["_id"]): c for c in await db.courses.find({}, {"name": 1, "teacher_id": 1, "level": 1, "section": 1, "is_active": 1, "groups": 1}).to_list(50000)}
     teachers = {str(t["_id"]): t.get("full_name", "") for t in await db.teachers.find({}, {"full_name": 1}).to_list(5000)}
     rooms = {str(r["_id"]): r for r in await db.rooms.find({}, {"name": 1, "is_active": 1}).to_list(2000)}
 
@@ -72,14 +82,15 @@ async def _scan(db, faculty_id: str, department_id: Optional[str]):
             issues.append({"slot_id": sid, "type": "inactive_course", "fixable": False,
                            "desc": f"{loc}: المقرر '{cname}' غير نشط — فعّل المقرر أو احذف الخلية يدوياً"})
 
-        c_tid = course.get("teacher_id") or ""
+        c_tid = expected_slot_teacher(course, s)
         s_tid = s.get("teacher_id") or ""
         if c_tid != s_tid:
             new_name = teachers.get(c_tid, "بدون أستاذ") if c_tid else "بدون أستاذ"
             old_name = teachers.get(s_tid, "أستاذ محذوف") if s_tid else "بدون أستاذ"
+            grp = f" [{s.get('group_name') or 'مجموعة ' + str(s.get('group'))}]" if s.get("group") else ""
             issues.append({"slot_id": sid, "type": "teacher_mismatch", "fixable": True, "fix_action": "sync_teacher",
                            "new_teacher_id": c_tid,
-                           "desc": f"{loc}: '{cname}' — أستاذ الخلية ({old_name}) ≠ الإسناد الحالي ({new_name}) — ستُحدَّث الخلية"})
+                           "desc": f"{loc}: '{cname}'{grp} — أستاذ الخلية ({old_name}) ≠ الإسناد الحالي ({new_name}) — ستُحدَّث الخلية"})
 
         c_level = course.get("level") or 1
         c_sec = course.get("section") or ""
@@ -160,10 +171,12 @@ async def integrity_fix(
             if it["fix_action"] == "delete_slot":
                 await db.weekly_schedule.delete_one({"_id": oid})
             elif it["fix_action"] == "relink_course":
-                new_course = await db.courses.find_one({"_id": ObjectId(it["new_course_id"])}, {"teacher_id": 1})
+                new_course = await db.courses.find_one({"_id": ObjectId(it["new_course_id"])}, {"teacher_id": 1, "groups": 1})
+                slot_doc = await db.weekly_schedule.find_one({"_id": oid}, {"group": 1}) or {}
                 upd = {"course_id": it["new_course_id"]}
-                if new_course and new_course.get("teacher_id"):
-                    upd["teacher_id"] = new_course["teacher_id"]
+                _tid = expected_slot_teacher(new_course or {}, slot_doc)
+                if _tid:
+                    upd["teacher_id"] = _tid
                 await db.weekly_schedule.update_one({"_id": oid}, {"$set": upd})
             elif it["fix_action"] == "sync_teacher":
                 if it["new_teacher_id"]:

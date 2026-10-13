@@ -715,7 +715,7 @@ async def import_master_schedule(
 
     # ===== 4) فحص التعارضات (داخل الملف + مع الجدول القائم عبر كل الأقسام) =====
     # الخلايا المستبدلة تُستثنى، والإسنادات الجديدة تسري على المحاضرات القائمة لنفس المقرر (تحديث متسلسل)
-    all_slots = await db.weekly_schedule.find({}, {"teacher_id": 1, "room_id": 1, "day": 1, "slot_number": 1, "department_id": 1, "level": 1, "section": 1, "course_id": 1, "merge_group_id": 1}).to_list(20000)
+    all_slots = await db.weekly_schedule.find({}, {"teacher_id": 1, "room_id": 1, "day": 1, "slot_number": 1, "department_id": 1, "level": 1, "section": 1, "course_id": 1, "merge_group_id": 1, "group": 1}).to_list(20000)
     all_slots = [s for s in all_slots if str(s["_id"]) not in replaced_ids and str(s["_id"]) not in removal_ids]
     reassign_new = {cid: info["new_id"] for cid, info in reassign_map.items()}
 
@@ -723,15 +723,17 @@ async def import_master_schedule(
     prefs_map = {p["teacher_id"]: p for p in await db.teacher_preferences.find({"teacher_id": {"$in": pref_tids}}).to_list(500)} if pref_tids else {}
 
     # 🔧 اعتماد الإسناد الحالي للمقرر (لا معرف المعلم القديم المخزن في الخلية) لمنع تعارضات وهمية من بيانات قديمة
-    all_courses_docs = await db.courses.find({}, {"teacher_id": 1, "name": 1, "level": 1, "section": 1, "department_id": 1}).to_list(50000)
+    # 👥 خلايا المجموعات: الإسناد الحالي هو قائد المجموعة (courses.groups[].teacher_id)
+    from .schedule_integrity import expected_slot_teacher
+    all_courses_docs = await db.courses.find({}, {"teacher_id": 1, "name": 1, "level": 1, "section": 1, "department_id": 1, "groups": 1}).to_list(50000)
     course_info = {str(c["_id"]): c for c in all_courses_docs}
     dept_names = {str(d["_id"]): d.get("name", "") for d in await db.departments.find({}, {"name": 1}).to_list(2000)}
 
     def _eff_tid(s):
         cid = s.get("course_id", "")
-        if cid in reassign_new:
+        if cid in reassign_new and not s.get("group"):
             return reassign_new[cid]
-        ct = (course_info.get(cid) or {}).get("teacher_id") or ""
+        ct = expected_slot_teacher(course_info.get(cid) or {}, s)
         return ct or s.get("teacher_id")
 
     def _slot_desc(s):
@@ -964,7 +966,9 @@ async def import_master_schedule(
 
     for cid, info in reassign_map.items():
         try:
-            await db.weekly_schedule.update_many({"course_id": cid}, {"$set": {"teacher_id": info["new_id"]}})
+            # 👥 خلايا المجموعات التي لها قائد خاص تبقى على قائدها
+            _own_groups = [g.get("key") for g in ((course_info.get(cid) or {}).get("groups") or []) if g.get("teacher_id")]
+            await db.weekly_schedule.update_many({"course_id": cid, "group": {"$nin": _own_groups}}, {"$set": {"teacher_id": info["new_id"]}})
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail=f"تعذر تغيير إسناد '{info['course_name']}': تصادم في جدول الأستاذ '{info['new_name']}' — أعد المعاينة")
         await db.courses.update_one({"_id": ObjectId(cid)}, {"$set": {"teacher_id": info["new_id"]}})
