@@ -20,6 +20,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api, { coursesAPI, studentsAPI, enrollmentAPI, lecturesAPI, attendanceAPI, courseGroupsAPI, API_URL } from '../src/services/api';
 import { CourseGroupsModal, groupColor } from '../src/components/CourseGroupsModal';
+import { TargetCourseFilters } from '../src/components/TargetCourseFilters';
 import { CourseTabBar } from '../src/components/CourseTabBar';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { AddStudentForm, emptyStudentForm, type StudentFormValues } from '../src/components/AddStudentForm';
@@ -153,6 +154,7 @@ export default function CourseStudentsScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [selectedTargetCourses, setSelectedTargetCourses] = useState<string[]>([]);
   const [courseSearchQuery, setCourseSearchQuery] = useState('');
+  const [filteredTargets, setFilteredTargets] = useState<any[]>([]);
   
   // تعديل حالة الحضور
   const [editingRecord, setEditingRecord] = useState<{recordId: string; studentName: string; currentStatus: string} | null>(null);
@@ -1417,6 +1419,10 @@ export default function CourseStudentsScreen() {
                 </Text>
               )}
               
+              {/* 🎯 فلاتر الكلية/القسم/المستوى/الشعبة */}
+              {(showActionModal === 'copy' || showActionModal === 'move') && (
+                <TargetCourseFilters courses={allCourses} current={course} onFiltered={setFilteredTargets} />
+              )}
               {/* شريط البحث */}
               <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f5f5f5', borderRadius: 10, paddingHorizontal: 12, marginBottom: 10 }}>
                 <Ionicons name="search" size={18} color="#999" />
@@ -1438,7 +1444,7 @@ export default function CourseStudentsScreen() {
                 <ActivityIndicator size="large" color="#1565c0" style={{ marginVertical: 30 }} />
               ) : (
                 <FlatList
-                  data={allCourses.filter(c => {
+                  data={filteredTargets.filter(c => {
                     if (!courseSearchQuery.trim()) return true;
                     const q = courseSearchQuery.trim().toLowerCase();
                     return (c.name || '').toLowerCase().includes(q) || (c.code || '').toLowerCase().includes(q) || (c.section || '').toLowerCase().includes(q);
@@ -1469,7 +1475,7 @@ export default function CourseStudentsScreen() {
                           <Text style={{ fontSize: 14, fontWeight: '600', color: '#333' }}>
                             {item.name}{item.section ? ` (${item.section})` : ''}
                           </Text>
-                          <Text style={{ fontSize: 12, color: '#999' }}>{item.code || ''}</Text>
+                          <Text style={{ fontSize: 12, color: '#999' }}>{item.code || ''}{item.department_name ? ` · ${item.department_name}` : ''}{item.level ? ` · م${item.level}` : ''}</Text>
                         </View>
                         {showActionModal === 'move' && (
                           <Ionicons name="chevron-back" size={18} color="#ccc" />
