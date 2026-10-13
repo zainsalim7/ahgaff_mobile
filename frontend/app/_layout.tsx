@@ -6,6 +6,7 @@ import { useOfflineSyncStore } from '../src/store/offlineSyncStore';
 import { View, StyleSheet, I18nManager, TouchableOpacity, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthProvider } from '../src/contexts/AuthContext';
+import { AssistantWidget } from '../src/components/assistant/AssistantWidget';
 import { SideMenu } from '../src/components/SideMenu';
 import GlobalSearch from '../src/components/GlobalSearch';
 import { injectResponsiveStyles } from '../src/utils/responsiveStyles';
@@ -222,6 +223,7 @@ export default function RootLayout() {
           <Stack.Screen name="backfill-lecture-semesters" options={{ title: 'إصلاح فصول المحاضرات' }} />
           <Stack.Screen name="repair-group-lectures" options={{ title: 'استعادة محاضرات المجموعات' }} />
           <Stack.Screen name="course-group" options={{ title: 'المجموعة الدراسية' }} />
+          <Stack.Screen name="assistant-settings" options={{ title: 'إعدادات مرشد الأحقاف' }} />
           <Stack.Screen name="student-references" options={{ title: 'الأرقام المرجعية للطلاب' }} />
           <Stack.Screen name="student-autofill" options={{ title: 'ملء بيانات الطلاب' }} />
           <Stack.Screen name="notifications" options={{ title: 'الإشعارات' }} />
@@ -247,6 +249,9 @@ export default function RootLayout() {
             </TouchableOpacity>
           </View>
         )}
+
+        {/* 🤖 مرشد الأحقاف */}
+        {isAuthenticated && <AssistantWidget />}
 
         {/* القائمة الجانبية */}
         <SideMenu

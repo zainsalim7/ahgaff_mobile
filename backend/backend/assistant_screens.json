@@ -1,0 +1,611 @@
+[
+ {
+  "id": "home",
+  "label": "الرئيسية",
+  "path": "/(tabs)",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "admin",
+  "label": "الإعدادات الأساسية",
+  "path": "/(tabs)/admin",
+  "permissions": [
+   "manage_users",
+   "manage_departments",
+   "manage_courses",
+   "manage_students",
+   "manage_teachers",
+   "manage_curriculum",
+   "manage_settings",
+   "manage_roles",
+   "send_notifications",
+   "manage_notifications",
+   "manage_attendance",
+   "manage_schedule",
+   "view_reports",
+   "report_course",
+   "report_absent_students",
+   "report_daily",
+   "report_lesson_completion"
+  ],
+  "roles": []
+ },
+ {
+  "id": "my-lectures",
+  "label": "محاضراتي",
+  "path": "/(tabs)/my-lectures",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "manage-attendance",
+  "label": "إدارة الحضور",
+  "path": "/manage-attendance",
+  "permissions": [
+   "manage_attendance",
+   "record_attendance",
+   "take_attendance",
+   "edit_attendance",
+   "view_attendance"
+  ],
+  "roles": []
+ },
+ {
+  "id": "courses",
+  "label": "المقررات",
+  "path": "/(tabs)/courses",
+  "permissions": [
+   "manage_courses",
+   "view_courses",
+   "add_course",
+   "edit_course",
+   "delete_course"
+  ],
+  "roles": []
+ },
+ {
+  "id": "migrate-courses",
+  "label": "ترحيل المقررات",
+  "path": "/migrate-courses",
+  "permissions": [
+   "migrate_courses"
+  ],
+  "roles": []
+ },
+ {
+  "id": "curriculum",
+  "label": "الخطة الدراسية",
+  "path": "/curriculum",
+  "permissions": [
+   "manage_curriculum",
+   "view_curriculum"
+  ],
+  "roles": []
+ },
+ {
+  "id": "schedule",
+  "label": "الجدول الدراسي",
+  "path": "/schedule",
+  "permissions": [
+   "view_schedule",
+   "manage_schedule"
+  ],
+  "roles": []
+ },
+ {
+  "id": "weekly-schedule",
+  "label": "الجدول الأسبوعي",
+  "path": "/weekly-schedule",
+  "permissions": [
+   "view_schedule",
+   "manage_schedule"
+  ],
+  "roles": []
+ },
+ {
+  "id": "students",
+  "label": "إدارة الطلاب",
+  "path": "/students",
+  "permissions": [
+   "manage_students",
+   "view_students",
+   "add_student",
+   "edit_student",
+   "delete_student"
+  ],
+  "roles": []
+ },
+ {
+  "id": "alumni",
+  "label": "الخريجون",
+  "path": "/alumni",
+  "permissions": [
+   "manage_students",
+   "view_students"
+  ],
+  "roles": []
+ },
+ {
+  "id": "enrollments",
+  "label": "إدارة التسجيلات",
+  "path": "/manage-enrollments",
+  "permissions": [
+   "manage_enrollments",
+   "view_enrollments",
+   "add_enrollment",
+   "delete_enrollment"
+  ],
+  "roles": []
+ },
+ {
+  "id": "teachers",
+  "label": "إدارة المعلمين",
+  "path": "/manage-teachers",
+  "permissions": [
+   "manage_teachers",
+   "view_teachers",
+   "add_teacher",
+   "edit_teacher",
+   "delete_teacher"
+  ],
+  "roles": []
+ },
+ {
+  "id": "teaching-load",
+  "label": "جدول العبء التدريسي",
+  "path": "/teaching-load",
+  "permissions": [
+   "manage_teaching_load",
+   "view_teaching_load"
+  ],
+  "roles": []
+ },
+ {
+  "id": "teaching-load-report",
+  "label": "تقارير العبء",
+  "path": "/teaching-load-report",
+  "permissions": [
+   "manage_teaching_load",
+   "view_teaching_load"
+  ],
+  "roles": []
+ },
+ {
+  "id": "departments",
+  "label": "إدارة الأقسام",
+  "path": "/add-department",
+  "permissions": [
+   "manage_departments",
+   "view_departments",
+   "add_department",
+   "edit_department",
+   "delete_department"
+  ],
+  "roles": []
+ },
+ {
+  "id": "users",
+  "label": "إدارة المستخدمين",
+  "path": "/manage-users",
+  "permissions": [
+   "manage_users",
+   "view_users",
+   "add_user",
+   "edit_user",
+   "delete_user"
+  ],
+  "roles": []
+ },
+ {
+  "id": "absence-justifications",
+  "label": "تبرير غياب الأساتذة",
+  "path": "/absence-justifications",
+  "permissions": [],
+  "roles": [
+   "admin",
+   "dean",
+   "department_head"
+  ]
+ },
+ {
+  "id": "student-excuses",
+  "label": "أعذار غياب الطلاب",
+  "path": "/student-excuses",
+  "permissions": [],
+  "roles": [
+   "admin",
+   "dean",
+   "department_head",
+   "registrar",
+   "registration_manager"
+  ]
+ },
+ {
+  "id": "attendance-locations",
+  "label": "مواقع تحضير المحاضرات",
+  "path": "/attendance-locations",
+  "permissions": [],
+  "roles": [
+   "admin",
+   "dean",
+   "department_head"
+  ]
+ },
+ {
+  "id": "reports",
+  "label": "جميع التقارير",
+  "path": "/reports",
+  "permissions": [
+   "view_reports",
+   "export_reports"
+  ],
+  "roles": []
+ },
+ {
+  "id": "report-attendance",
+  "label": "تقرير الحضور",
+  "path": "/report-attendance-overview",
+  "permissions": [
+   "report_attendance_overview"
+  ],
+  "roles": []
+ },
+ {
+  "id": "report-student",
+  "label": "تقرير الطالب",
+  "path": "/report-student",
+  "permissions": [
+   "report_student"
+  ],
+  "roles": []
+ },
+ {
+  "id": "report-workload",
+  "label": "نصاب التدريس",
+  "path": "/report-teacher-workload",
+  "permissions": [
+   "report_teacher_workload"
+  ],
+  "roles": []
+ },
+ {
+  "id": "overtime-letters",
+  "label": "سجل خطابات الساعات الإضافية",
+  "path": "/overtime-letters",
+  "permissions": [
+   "report_teacher_workload"
+  ],
+  "roles": []
+ },
+ {
+  "id": "report-warnings",
+  "label": "الإنذارات",
+  "path": "/report-warnings",
+  "permissions": [
+   "report_warnings"
+  ],
+  "roles": []
+ },
+ {
+  "id": "report-teacher-delays",
+  "label": "تأخر المعلمين",
+  "path": "/report-teacher-delays",
+  "permissions": [
+   "report_teacher_delays",
+   "view_reports"
+  ],
+  "roles": []
+ },
+ {
+  "id": "notifications",
+  "label": "إدارة الإشعارات",
+  "path": "/manage-notifications",
+  "permissions": [
+   "send_notifications",
+   "manage_notifications"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-employees",
+  "label": "سجل الموظفين",
+  "path": "/hr-employees",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_employees"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-org-units",
+  "label": "الهيكل التنظيمي",
+  "path": "/hr-org-units",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_org"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-leaves",
+  "label": "إدارة الإجازات",
+  "path": "/hr-leaves",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_leaves"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-attendance",
+  "label": "الحضور الإداري",
+  "path": "/hr-attendance",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_attendance"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-work-settings",
+  "label": "إعدادات الدوام والفترات",
+  "path": "/hr-work-settings",
+  "permissions": [
+   "hr_manage_work_settings"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-leave-settings",
+  "label": "إعدادات الإجازات",
+  "path": "/hr-leave-settings",
+  "permissions": [
+   "hr_manage_leave_settings"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-locations",
+  "label": "مواقع العمل (Geofencing)",
+  "path": "/hr-locations",
+  "permissions": [
+   "hr_manage_attendance"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-presence-checks",
+  "label": "تأكيد التواجد العشوائي",
+  "path": "/hr-presence-checks",
+  "permissions": [
+   "hr_manage_attendance"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-correspondence",
+  "label": "المراسلات والتعاميم",
+  "path": "/hr-correspondence",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_correspondence"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-annual-report",
+  "label": "التقرير السنوي HR",
+  "path": "/hr-annual-report",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_employees"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-letters",
+  "label": "الخطابات الرسمية",
+  "path": "/hr-letters",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "hr-profile-requests",
+  "label": "طلبات تعديل البيانات",
+  "path": "/hr-profile-requests",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_employees"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-photo-approvals",
+  "label": "اعتماد صور البطاقات",
+  "path": "/hr-photo-approvals",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_employees",
+   "hr_approve_photos"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-card-print",
+  "label": "طباعة بطاقات الموظفين",
+  "path": "/hr-card-print",
+  "permissions": [
+   "hr_view_employees",
+   "hr_manage_employees",
+   "hr_print_cards"
+  ],
+  "roles": []
+ },
+ {
+  "id": "hr-tasks",
+  "label": "المهام",
+  "path": "/hr-tasks",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "hr-appraisals",
+  "label": "التقييم السنوي",
+  "path": "/hr-appraisals",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "hr-my-profile",
+  "label": "ملفي الإداري",
+  "path": "/hr-my-profile",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "hr-my-leaves",
+  "label": "إجازاتي",
+  "path": "/hr-my-leaves",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "letter-new",
+  "label": "رسالة جديدة",
+  "path": "/letter-new",
+  "permissions": [
+   "issue_letters",
+   "hr_manage_correspondence",
+   "hr_manage_employees"
+  ],
+  "roles": []
+ },
+ {
+  "id": "letters",
+  "label": "الخطابات الرسمية",
+  "path": "/letters",
+  "permissions": [
+   "issue_letters",
+   "hr_manage_correspondence",
+   "hr_manage_employees"
+  ],
+  "roles": []
+ },
+ {
+  "id": "corr-quick",
+  "label": "خطاب سريع",
+  "path": "/corr-quick",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "corr-dashboard",
+  "label": "لوحة المراسلات",
+  "path": "/corr-dashboard",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "corr-list",
+  "label": "سجل المراسلات",
+  "path": "/corr-list",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "corr-templates",
+  "label": "قوالب وترويسات الخطابات",
+  "path": "/corr-templates",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "corr-positions",
+  "label": "المناصب والأسماء",
+  "path": "/corr-positions",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "corr-admin",
+  "label": "إعدادات المراسلات",
+  "path": "/corr-roles",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "university-calendar",
+  "label": "التقويم الجامعي والعطل",
+  "path": "/university-calendar",
+  "permissions": [
+   "manage_calendar"
+  ],
+  "roles": []
+ },
+ {
+  "id": "general-settings",
+  "label": "الإعدادات العامة",
+  "path": "/general-settings",
+  "permissions": [
+   "manage_settings",
+   "manage_semesters",
+   "manage_academic_years",
+   "manage_institution"
+  ],
+  "roles": []
+ },
+ {
+  "id": "app-versions",
+  "label": "إعدادات تحديث التطبيقات",
+  "path": "/app-versions",
+  "permissions": [],
+  "roles": []
+ },
+ {
+  "id": "roles",
+  "label": "الأدوار والصلاحيات",
+  "path": "/manage-roles",
+  "permissions": [
+   "manage_roles"
+  ],
+  "roles": []
+ },
+ {
+  "id": "activity-logs",
+  "label": "سجلات النشاط",
+  "path": "/activity-logs",
+  "permissions": [
+   "view_activity_logs"
+  ],
+  "roles": []
+ },
+ {
+  "id": "archives",
+  "label": "الفصول المؤرشفة",
+  "path": "/archives",
+  "permissions": [
+   "view_archive"
+  ],
+  "roles": []
+ },
+ {
+  "id": "archive-search",
+  "label": "البحث في الأرشيف",
+  "path": "/archive-search",
+  "permissions": [
+   "search_archive"
+  ],
+  "roles": []
+ },
+ {
+  "id": "trash",
+  "label": "سلة المحذوفات",
+  "path": "/trash",
+  "permissions": [
+   "manage_trash",
+   "purge_trash"
+  ],
+  "roles": []
+ }
+]

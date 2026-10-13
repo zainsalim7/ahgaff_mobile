@@ -97,6 +97,7 @@ export const PERMISSIONS = {
   ISSUE_LETTERS: 'issue_letters',
   MANAGE_LETTER_SETTINGS: 'manage_letter_settings',
   MANAGE_STUDENT_EXCUSES: 'manage_student_excuses',
+  USE_ASSISTANT: 'use_assistant',
   // صلاحيات أخرى
   CROSS_UNIVERSITY_ASSIGNMENT: 'cross_university_assignment',
   MANAGE_SETTINGS: 'manage_settings',

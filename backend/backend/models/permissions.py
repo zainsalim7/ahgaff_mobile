@@ -158,7 +158,8 @@ class Permission:
     # ✉️ الخطابات الرسمية
     ISSUE_LETTERS = "issue_letters"                    # إصدار الخطابات الرسمية (السجل حسب النطاق)
     MANAGE_LETTER_SETTINGS = "manage_letter_settings"  # كليشة وقوالب الخطابات
-    MANAGE_STUDENT_EXCUSES = "manage_student_excuses"  # 📄 مراجعة أعذار غياب الطلاب والبت فيها (حسب مسار التوجيه)
+    MANAGE_STUDENT_EXCUSES = "manage_student_excuses"
+    USE_ASSISTANT = "use_assistant"  # 🤖 استخدام مرشد الأحقاف (المساعد الإرشادي)  # 📄 مراجعة أعذار غياب الطلاب والبت فيها (حسب مسار التوجيه)
 
     # ====== 🧩 صلاحيات إدارية مفصّلة (كل مهمة إدارية لها صلاحية مستقلة قابلة للإسناد الفردي) ======
     # 🏛️ الهيكل الأكاديمي
@@ -409,6 +410,7 @@ ALL_PERMISSIONS = [
     {"key": Permission.HR_MANAGE_APPRAISALS, "label": "اعتماد التقييم السنوي وإدارته لكل الموظفين", "category": "شؤون الموظفين"},
     {"key": Permission.ISSUE_LETTERS, "label": "إصدار الخطابات الرسمية (يرى في السجل ما أصدره وما يخص كلياته/نطاقه الإداري)", "category": "الخطابات الرسمية"},
     {"key": Permission.MANAGE_LETTER_SETTINGS, "label": "إدارة كليشة الخطابات وقوالبها", "category": "الخطابات الرسمية"},
+    {"key": Permission.USE_ASSISTANT, "label": "استخدام مرشد الأحقاف (المساعد الإرشادي الذكي)", "category": "عام"},
     {"key": Permission.MANAGE_STUDENT_EXCUSES, "label": "مراجعة أعذار غياب الطلاب والبت فيها (التسجيل/العميد/مجلس الكلية حسب التوجيه)", "category": "الحضور"},
     {"key": Permission.MANAGE_ENROLLMENTS, "label": "إدارة كاملة للتسجيل", "category": "التسجيل"},
     {"key": Permission.VIEW_ENROLLMENTS, "label": "عرض التسجيلات", "category": "التسجيل"},

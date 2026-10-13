@@ -1,0 +1,272 @@
+"""🤖 مرشد الأحقاف — مساعد إرشادي داخل النظام (المرحلة أ: إرشاد فقط، لا يلمس البيانات)"""
+import json
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import List, Optional
+
+from bson import ObjectId
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from .deps import get_db, get_current_user, has_permission, log_activity
+from models.permissions import Permission, UserRole
+
+router = APIRouter(prefix="/assistant", tags=["assistant"])
+YEMEN_TZ = timezone(timedelta(hours=3))
+SCREENS = json.loads((Path(__file__).resolve().parent.parent / "assistant_screens.json").read_text(encoding="utf-8"))
+
+MODELS = [
+    {"provider": "openai", "model": "gpt-5.4", "label": "OpenAI GPT-5.4 (افتراضي — متوازن)"},
+    {"provider": "openai", "model": "gpt-5.4-mini", "label": "OpenAI GPT-5.4 mini (سريع واقتصادي)"},
+    {"provider": "openai", "model": "gpt-5.6-terra", "label": "OpenAI GPT-5.6 Terra (الأقوى)"},
+    {"provider": "anthropic", "model": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5 (دقيق بالعربية)"},
+    {"provider": "anthropic", "model": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5 (سريع واقتصادي)"},
+    {"provider": "gemini", "model": "gemini-3-flash-preview", "label": "Gemini 3 Flash (سريع واقتصادي)"},
+    {"provider": "gemini", "model": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro (تحليل أعمق)"},
+]
+DEFAULTS = {"enabled": True, "name": "مرشد الأحقاف", "provider": "openai", "model": "gpt-5.4", "daily_limit": 60,
+            "allowed_roles": [], "allowed_user_ids": [], "extra_instructions": ""}
+
+ROLE_AR = {"admin": "مدير النظام", "dean": "عميد كلية", "department_head": "رئيس قسم", "registrar": "موظف تسجيل", "registration_manager": "مدير التسجيل",
+           "teacher": "أستاذ", "student": "طالب", "employee": "موظف", "hr_manager": "مدير الموارد البشرية"}
+
+REGULATION = """قواعد لائحة الغياب المعتمدة في النظام (المصدر: اللائحة الجامعية كما طُبّقت):
+- نسبة الغياب تُحسب بالساعات من المحاضرات المنفَّذة فعلاً (لا المجدولة).
+- حد الغياب بلا عذر: أكبر من 10% → ترشيح للحرمان. حد الغياب الكلي (بعذر + بلا عذر): أكبر من 25% → ترشيح للحرمان. قرار الحرمان النهائي لمجلس الكلية نهاية الفصل. الحدود قابلة للتعديل من إعدادات الكلية.
+- حالة «متأخر» ملغاة (تُعامل حضوراً). الأستاذ لا يسجّل «بعذر»؛ العذر يُقدَّم بطلب موثّق (شاشة أعذار غياب الطلاب): مرضي → التسجيل، غير مرضي حتى يومين → العميد، أكثر من يومين أو عذر عن اختبار → مجلس الكلية (برقم جلسة). الاعتماد يحوّل غياب الفترة إلى «بعذر» تلقائياً.
+- الإجازة التحضيرية (آخر 3 أيام من الفصل) تُحتسب حضوراً للجميع (قيد التنفيذ).
+المجموعات الدراسية: المقرر قد يُقسَّم لمجموعات لكل منها قائد (أستاذ)؛ كل قائد يرى مجموعته فقط (حتى لو كان مدرّس المقرر المسجّل). مدرّس مقرر لا يقود مجموعة يرى الكل. صفحة المجموعة: /course-group، التوزيع والاستيراد/التصدير من نافذة المجموعات في طلاب المقرر.
+فحص تكامل الجدول الأسبوعي: يرصد خلايا بمقررات محذوفة أو أستاذ مختلف عن الإسناد (مع مراعاة قائد المجموعة) ويقترح إصلاحاً — راجع قبل «الإصلاح التلقائي».
+أداة «استعادة محاضرات المجموعات» في تبويب الإدارة تعيد محاضرات أُلغيت خطأً كمكررة."""
+
+SCREEN_TIPS = {
+    "student-excuses": "طوابير حسب المسار (التسجيل/العميد/المجلس)، تبويبات الحالة، زر «تقديم عذر نيابةً عن طالب» بالبحث برقم القيد ثم الفترة والنوع والمستند الإلزامي.",
+    "absence-justifications": "تبرير غياب الأساتذة عن المحاضرات (مهلة 72 ساعة، مرفق إلزامي، يراجعه رئيس القسم/العميد).",
+    "courses": "قائمة المقررات؛ من بطاقة المقرر: الطلاب، المحاضرات، المجموعات (رقائق بنفسجية)، الإحصائيات. نسخ/نقل الطلاب من شاشة طلاب المقرر مع فلاتر الكلية/القسم/المستوى.",
+    "weekly-schedule": "الجدول الأسبوعي: الخلايا بالأيام والفترات، توليد المحاضرات منه، فحص التكامل، استيراد Excel.",
+    "students": "قائمة الطلاب: بحث، تحديد جماعي، نقل جماعي (الشعبة اختيارية)، شارات المجموعات 👥 تحت المستوى.",
+    "report-warnings": "تقرير الإنذارات والحرمان حسب لائحة الغياب (ساعات منفَّذة، 10%/25%).",
+    "general-settings": "الإعدادات العامة: الفصول والسنوات، حدود الغياب لكل كلية، بيانات المؤسسة.",
+    "roles": "الأدوار والصلاحيات: إنشاء أدوار مخصصة ومنح صلاحيات مثل مراجعة الأعذار أو استخدام المرشد.",
+    "repair": "أداة استعادة محاضرات المجموعات: /repair-group-lectures (معاينة ثم تنفيذ).",
+}
+
+
+def _now():
+    return datetime.now(YEMEN_TZ)
+
+
+async def get_settings(db) -> dict:
+    doc = await db.settings.find_one({"type": "assistant"}) or {}
+    return {**DEFAULTS, **{k: v for k, v in doc.items() if k in DEFAULTS}}
+
+
+def can_use(user: dict, st: dict) -> bool:
+    if user["role"] == UserRole.ADMIN:
+        return True
+    if not st.get("enabled"):
+        return False
+    return has_permission(user, Permission.USE_ASSISTANT) or user["role"] in (st.get("allowed_roles") or []) or user["id"] in (st.get("allowed_user_ids") or [])
+
+
+def visible_screens(user: dict) -> List[dict]:
+    out = []
+    for sc in SCREENS:
+        if sc["roles"] and user["role"] not in sc["roles"] and user["role"] != UserRole.ADMIN:
+            continue
+        if sc["permissions"] and user["role"] != UserRole.ADMIN and not any(has_permission(user, p) for p in sc["permissions"]):
+            continue
+        out.append(sc)
+    return out
+
+
+def system_prompt(user: dict, st: dict, route: Optional[str]) -> str:
+    screens = visible_screens(user)
+    lines = [f"- {s['label']}: {s['path']}" + (f" — {SCREEN_TIPS[s['id']]}" if s["id"] in SCREEN_TIPS else "") for s in screens]
+    perms = ", ".join(sorted(user.get("permissions") or [])[:60]) or "حسب الدور"
+    return f"""أنت «{st['name']}»، مساعد إرشادي داخل نظام جامعة الأحقاف لإدارة الحضور والشؤون الأكاديمية والموارد البشرية.
+مهمتك: إرشاد المستخدم خطوة بخطوة لإنجاز مهامه داخل النظام بدقة وحرص، وشرح القواعد واللوائح، وتوجيهه إلى الشاشة الصحيحة.
+قيود صارمة:
+1) أنت لا تنفّذ أي عملية ولا تعدّل بيانات ولا تطّلع على بيانات الطلاب/الموظفين — فقط ترشد. إن طُلب تنفيذ شيء: اشرح كيف يفعله المستخدم بنفسه.
+2) أرشد فقط إلى الشاشات المتاحة لدور المستخدم المذكورة أدناه. إن سأل عن شيء خارج صلاحياته فأخبره بلطف أن ذلك من اختصاص دور آخر (اذكر الدور) دون شرح تفاصيله.
+3) لا تخترع ميزات أو أزراراً غير مذكورة؛ إن لم تكن متأكداً قل «لست متأكداً — راجع إدارة النظام».
+4) أجب بالعربية الفصحى المبسطة، بإيجاز وبنقاط مرقّمة عند الخطوات.
+5) عندما ترشد إلى شاشة أضف في نهاية الرد سطراً لكل شاشة بالصيغة الحرفية: [[nav:المسار|اسم الشاشة]] (حتى 3 أسطر).
+6) حذّر من العمليات ذات الأثر الواسع (الإصلاح التلقائي، النقل الجماعي، الحذف) واطلب المعاينة أولاً.
+
+المستخدم الحالي: {user.get('full_name') or user.get('username')} — الدور: {ROLE_AR.get(user['role'], user['role'])}. الصلاحيات: {perms}.
+الشاشة الحالية: {route or 'غير معروفة'}.
+
+الشاشات المتاحة لهذا المستخدم:
+{chr(10).join(lines)}
+شاشات فرعية شائعة: طلاب المقرر /course-students?courseId=…، محاضرات المقرر /course-lectures?courseId=…، صفحة المجموعة /course-group?courseId=…&group=…، تفاصيل الطالب /student-details?studentId=…، إعدادات المرشد /assistant-settings (للأدمن).
+
+{REGULATION}
+{('تعليمات إضافية من الإدارة: ' + st['extra_instructions']) if st.get('extra_instructions') else ''}"""
+
+
+class ChatIn(BaseModel):
+    session_id: str
+    message: str
+    current_route: Optional[str] = None
+    stream: bool = True
+
+
+class SettingsIn(BaseModel):
+    enabled: Optional[bool] = None
+    name: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    daily_limit: Optional[int] = None
+    allowed_roles: Optional[List[str]] = None
+    allowed_user_ids: Optional[List[str]] = None
+    extra_instructions: Optional[str] = None
+
+
+@router.get("/meta")
+async def meta(current_user: dict = Depends(get_current_user)):
+    st = await get_settings(get_db())
+    return {"can_use": can_use(current_user, st), "enabled": st["enabled"], "name": st["name"], "model": st["model"], "provider": st["provider"],
+            "is_admin": current_user["role"] == UserRole.ADMIN}
+
+
+@router.get("/settings")
+async def read_settings(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="إعدادات المرشد للأدمن فقط")
+    db = get_db()
+    st = await get_settings(db)
+    users = await db.users.find({"_id": {"$in": [ObjectId(i) for i in st["allowed_user_ids"] if ObjectId.is_valid(i)]}}, {"full_name": 1, "username": 1, "role": 1}).to_list(200)
+    today = _now().strftime("%Y-%m-%d")
+    usage_today = await db.assistant_usage.aggregate([{"$match": {"date": today}}, {"$group": {"_id": None, "n": {"$sum": "$count"}}}]).to_list(1)
+    return {**st, "models": MODELS, "roles": [{"key": k, "label": v} for k, v in ROLE_AR.items() if k != "admin"],
+            "allowed_users": [{"id": str(u["_id"]), "full_name": u.get("full_name"), "username": u.get("username"), "role": u.get("role")} for u in users],
+            "usage_today": (usage_today[0]["n"] if usage_today else 0), "key_configured": bool(os.environ.get("EMERGENT_LLM_KEY"))}
+
+
+@router.put("/settings")
+async def write_settings(data: SettingsIn, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="إعدادات المرشد للأدمن فقط")
+    upd = {k: v for k, v in data.model_dump().items() if v is not None}
+    if "model" in upd and not any(m["model"] == upd["model"] for m in MODELS):
+        raise HTTPException(status_code=400, detail="النموذج غير مدعوم")
+    if "model" in upd:
+        upd["provider"] = next(m["provider"] for m in MODELS if m["model"] == upd["model"])
+    db = get_db()
+    await db.settings.update_one({"type": "assistant"}, {"$set": {**upd, "type": "assistant", "updated_at": _now().isoformat()}}, upsert=True)
+    await log_activity(current_user, "assistant_settings_update", "settings", "assistant", "إعدادات المرشد", upd)
+    return await get_settings(db)
+
+
+@router.get("/users/search")
+async def search_users(q: str, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح")
+    users = await get_db().users.find({"is_active": {"$ne": False}, "role": {"$ne": "student"}, "$or": [{"full_name": {"$regex": q, "$options": "i"}}, {"username": {"$regex": q, "$options": "i"}}]},
+                                      {"full_name": 1, "username": 1, "role": 1}).limit(15).to_list(15)
+    return [{"id": str(u["_id"]), "full_name": u.get("full_name"), "username": u.get("username"), "role": u.get("role"), "role_label": ROLE_AR.get(u.get("role"), u.get("role"))} for u in users]
+
+
+def _build_chat(st: dict, session_id: str, system: str):
+    from emergentintegrations.llm.chat import LlmChat
+    key = os.environ.get("EMERGENT_LLM_KEY")
+    if not key:
+        raise HTTPException(status_code=503, detail="مفتاح الذكاء الاصطناعي غير مهيأ (EMERGENT_LLM_KEY)")
+    return LlmChat(api_key=key, session_id=session_id, system_message=system).with_model(st["provider"], st["model"])
+
+
+async def _check_quota(db, user: dict, st: dict):
+    if user["role"] == UserRole.ADMIN:
+        return
+    today = _now().strftime("%Y-%m-%d")
+    doc = await db.assistant_usage.find_one({"user_id": user["id"], "date": today})
+    if doc and doc.get("count", 0) >= st["daily_limit"]:
+        raise HTTPException(status_code=429, detail=f"بلغت الحد اليومي ({st['daily_limit']} رسالة). حاول غداً.")
+
+
+@router.post("/chat")
+async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
+    db = get_db()
+    st = await get_settings(db)
+    if not can_use(current_user, st):
+        raise HTTPException(status_code=403, detail="المرشد غير متاح لحسابك")
+    msg = (data.message or "").strip()
+    if not msg or len(msg) > 2000:
+        raise HTTPException(status_code=400, detail="الرسالة فارغة أو طويلة جداً")
+    await _check_quota(db, current_user, st)
+    sess = await db.assistant_sessions.find_one({"session_id": data.session_id, "user_id": current_user["id"]})
+    history = (sess or {}).get("messages", [])[-12:]
+    transcript = "\n".join(f"{'المستخدم' if m['role'] == 'user' else 'المرشد'}: {m['content']}" for m in history)
+    prompt = (f"سياق المحادثة السابقة:\n{transcript}\n\n" if transcript else "") + f"رسالة المستخدم الجديدة: {msg}"
+    system = system_prompt(current_user, st, data.current_route)
+    now = _now().isoformat()
+    from emergentintegrations.llm.chat import UserMessage, TextDelta, StreamDone
+
+    async def persist(answer: str):
+        await db.assistant_sessions.update_one({"session_id": data.session_id, "user_id": current_user["id"]}, {
+            "$push": {"messages": {"$each": [{"role": "user", "content": msg, "at": now}, {"role": "assistant", "content": answer, "at": _now().isoformat()}]}},
+            "$set": {"updated_at": _now().isoformat(), "model": st["model"], "route": data.current_route}, "$setOnInsert": {"created_at": now, "title": msg[:60]}}, upsert=True)
+        await db.assistant_usage.update_one({"user_id": current_user["id"], "date": _now().strftime("%Y-%m-%d")}, {"$inc": {"count": 1}}, upsert=True)
+
+    llm = _build_chat(st, data.session_id, system)
+    if not data.stream:
+        try:
+            answer = await llm.send_message(UserMessage(text=prompt))
+        except Exception as e:
+            logging.error(f"assistant error: {e}")
+            raise HTTPException(status_code=502, detail="تعذر الاتصال بنموذج الذكاء الاصطناعي")
+        await persist(answer)
+        return {"reply": answer, "model": st["model"]}
+
+    async def gen():
+        buf = []
+        try:
+            async for ev in llm.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    buf.append(ev.content)
+                    yield f"data: {json.dumps({'delta': ev.content}, ensure_ascii=False)}\n\n"
+                elif isinstance(ev, StreamDone):
+                    break
+        except Exception as e:
+            logging.error(f"assistant stream error: {e}")
+            yield f"data: {json.dumps({'error': 'تعذر الاتصال بنموذج الذكاء الاصطناعي'}, ensure_ascii=False)}\n\n"
+            return
+        await persist("".join(buf))
+        yield f"data: {json.dumps({'done': True, 'model': st['model']})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/sessions")
+async def my_sessions(current_user: dict = Depends(get_current_user)):
+    docs = await get_db().assistant_sessions.find({"user_id": current_user["id"]}, {"session_id": 1, "title": 1, "updated_at": 1}).sort("updated_at", -1).limit(20).to_list(20)
+    return [{"session_id": d["session_id"], "title": d.get("title", ""), "updated_at": d.get("updated_at")} for d in docs]
+
+
+@router.get("/sessions/{session_id}")
+async def get_session(session_id: str, current_user: dict = Depends(get_current_user)):
+    d = await get_db().assistant_sessions.find_one({"session_id": session_id, "user_id": current_user["id"]})
+    return {"messages": (d or {}).get("messages", [])}
+
+
+@router.post("/test")
+async def test_model(request: Request, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح")
+    body = await request.json()
+    model = body.get("model")
+    m = next((x for x in MODELS if x["model"] == model), None)
+    if not m:
+        raise HTTPException(status_code=400, detail="النموذج غير مدعوم")
+    from emergentintegrations.llm.chat import UserMessage
+    llm = _build_chat({**m}, f"test-{current_user['id']}", "أجب بكلمة واحدة فقط.")
+    t0 = _now()
+    try:
+        reply = await llm.send_message(UserMessage(text="قل: جاهز"))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"فشل الاختبار: {str(e)[:120]}")
+    return {"ok": True, "reply": str(reply)[:80], "ms": int((_now() - t0).total_seconds() * 1000)}
