@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Platfo
 import { Ionicons } from '@expo/vector-icons';
 import { router, usePathname } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../../services/api';
+import api, { API_URL } from '../../services/api';
 
 type Msg = { role: 'user' | 'assistant'; content: string; streaming?: boolean };
 const NAV_RE = /\[\[nav:([^\]|]+)\|([^\]]+)\]\]/g;
@@ -39,7 +39,7 @@ export const AssistantWidget: React.FC = () => {
     const patch = (fn: (prev: string) => string, done = false) => setMsgs((m) => { const c = [...m]; const last = c[c.length - 1]; c[c.length - 1] = { ...last, content: fn(last.content), streaming: !done }; return c; });
     try {
       const token = await AsyncStorage.getItem('token');
-      const base = (process.env.EXPO_PUBLIC_BACKEND_URL || process.env.REACT_APP_BACKEND_URL || '') + '/api';
+      const base = `${API_URL}/api`;
       const body = JSON.stringify({ session_id: sessionId, message: text, current_route: pathname, stream: Platform.OS === 'web' });
       if (Platform.OS !== 'web') {
         const r = await api.post('/assistant/chat', { session_id: sessionId, message: text, current_route: pathname, stream: false });
@@ -70,7 +70,8 @@ export const AssistantWidget: React.FC = () => {
       patch((prev) => prev, true);
     } catch (e: any) {
       const st = e?.response?.status;
-      patch(() => e?.response?.data?.detail || `تعذر الاتصال بالمرشد${st ? ` (HTTP ${st})` : ' — تحقق من الاتصال بالإنترنت'}`, true);
+      const net = !st ? ` — ${e?.message || 'Failed to fetch'} (الخادم: ${API_URL})` : ` (HTTP ${st})`;
+      patch(() => e?.response?.data?.detail || `تعذر الاتصال بالمرشد${net}`, true);
     } finally { setBusy(false); }
   };
 
