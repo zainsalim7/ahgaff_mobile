@@ -533,21 +533,58 @@ export default function WeeklySchedulePage() {
   const [exportTeacherId, setExportTeacherId] = useState('');
   const [exportTeacherSearch, setExportTeacherSearch] = useState('');
   const [exportRoomId, setExportRoomId] = useState('');
+  // 🎯 نطاق التصدير يُختار داخل النافذة (لا يعتمد على فلاتر الصفحة فقط)
+  const [exportDept, setExportDept] = useState('');
+  const [exportLevel, setExportLevel] = useState('');
+  const [exportSection, setExportSection] = useState('');
+  const [exportSectionOptions, setExportSectionOptions] = useState<string[]>([]);
+  useEffect(() => {
+    if (!showExportModal) return;
+    setExportDept(selectedDept || '');
+    setExportLevel(selectedLevel || '');
+    setExportSection(selectedSection || '');
+    if (viewMode === 'teacher' && selectedTeacher) { setExportTeacherId(selectedTeacher); setExportScope('teacher'); }
+  }, [showExportModal]);
+  useEffect(() => {
+    if (!showExportModal || !exportDept) { setExportSectionOptions([]); return; }
+    (async () => {
+      try {
+        const params: any = { department_id: exportDept };
+        if (exportLevel) params.level = parseInt(exportLevel);
+        const r = await api.get('/weekly-schedule/sections', { params });
+        const secs: string[] = r.data.sections || [];
+        setExportSectionOptions(secs);
+        setExportSection(prev => (secs.includes(prev) ? prev : ''));
+      } catch { setExportSectionOptions([]); }
+    })();
+  }, [showExportModal, exportDept, exportLevel]);
+  const exportDeptOptions = departments.filter((d: any) => !selectedFaculty || String(d.faculty_id) === String(selectedFaculty));
+  const exportReady =
+    exportScope === 'all' ? true :
+    exportScope === 'department' ? !!exportDept :
+    exportScope === 'section' ? !!exportDept && !!exportLevel :
+    exportScope === 'teacher' ? !!exportTeacherId :
+    exportScope === 'room' ? !!exportRoomId : true;
 
   const handleExport = async () => {
+    if (!exportReady) { if (Platform.OS === 'web') window.alert('اختر نطاق التصدير أولاً (القسم/المستوى/الأستاذ/القاعة)'); return; }
     const params: any = {};
     if (selectedFaculty) params.faculty_id = selectedFaculty;
-    if (selectedDept) params.department_id = selectedDept;
-
-    if (exportScope === 'teacher' && exportTeacherId) {
+    if (exportScope === 'all') {
+      if (selectedDept) params.department_id = selectedDept;
+    } else if (exportScope === 'teacher' && exportTeacherId) {
       params.teacher_id = exportTeacherId;
     } else if (exportScope === 'all_teachers') {
       params.per_teacher = true;
+      if (exportDept) params.department_id = exportDept;
     } else if (exportScope === 'room' && exportRoomId) {
       params.room_id = exportRoomId;
+    } else if (exportScope === 'department') {
+      params.department_id = exportDept;
     } else if (exportScope === 'section') {
-      if (selectedLevel) params.level = selectedLevel;
-      if (selectedSection) params.section = selectedSection;
+      params.department_id = exportDept;
+      if (exportLevel) params.level = parseInt(exportLevel);
+      if (exportSection) params.section = exportSection;
     }
 
     try {
@@ -2225,20 +2262,51 @@ export default function WeeklySchedulePage() {
               </div>
             )}
 
-            <div style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 10, marginBottom: 14, fontSize: 11, color: '#555' }}>
-              💡 {exportScope === 'all' ? 'تصدير كامل الفلاتر الحالية' :
-                  exportScope === 'department' ? 'سيتم التصدير حسب القسم المحدد في الفلتر' :
-                  exportScope === 'section' ? `سيتم التصدير لـ م${selectedLevel || '?'} شعبة ${selectedSection || '?'}` :
-                  exportScope === 'teacher' ? 'تصدير الجدول الأسبوعي لمعلم محدد فقط' :
-                  exportScope === 'all_teachers' ? (selectedDept ? 'جدول مستقل لكل أستاذ في القسم المحدد (صفحة/ورقة لكل أستاذ)' : 'جدول مستقل لكل أستاذ في الكلية (صفحة/ورقة لكل أستاذ) — اختر قسماً من الفلتر لتضييق النطاق') :
-                  'تصدير الجدول الأسبوعي لقاعة محددة فقط'}
+            {(exportScope === 'department' || exportScope === 'section' || exportScope === 'all_teachers') && (
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: '#444' }}>القسم {exportScope === 'all_teachers' ? '(اختياري — فارغ = كل الكلية)' : ''}</label>
+                <select value={exportDept} onChange={(e: any) => { setExportDept(e.target.value); setExportSection(''); }} data-testid="export-dept-select"
+                  style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid #ddd', fontSize: 13, marginTop: 4, direction: 'rtl' }}>
+                  <option value="">-- اختر القسم --</option>
+                  {exportDeptOptions.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            )}
+            {exportScope === 'section' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#444' }}>المستوى</label>
+                  <select value={exportLevel} onChange={(e: any) => setExportLevel(e.target.value)} data-testid="export-level-select"
+                    style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid #ddd', fontSize: 13, marginTop: 4, direction: 'rtl' }}>
+                    <option value="">-- اختر المستوى --</option>
+                    {[1, 2, 3, 4, 5, 6].map(l => <option key={l} value={String(l)}>المستوى {l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: '#444' }}>الشعبة (اختياري — فارغ = كل شعب المستوى)</label>
+                  <select value={exportSection} onChange={(e: any) => setExportSection(e.target.value)} data-testid="export-section-select"
+                    style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid #ddd', fontSize: 13, marginTop: 4, direction: 'rtl' }}>
+                    <option value="">كل الشعب</option>
+                    {exportSectionOptions.map(s => <option key={s} value={s}>شعبة {s}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <div style={{ backgroundColor: '#f5f5f5', borderRadius: 8, padding: 10, marginBottom: 14, fontSize: 11, color: '#555' }} data-testid="export-scope-hint">
+              💡 {exportScope === 'all' ? (selectedDept ? `تصدير كامل جدول القسم المحدد في الفلتر` : 'تصدير كامل جدول الكلية بكل أقسامها') :
+                  exportScope === 'department' ? (exportDept ? `سيتم تصدير جدول قسم: ${exportDeptOptions.find((d: any) => d.id === exportDept)?.name || ''}` : 'اختر القسم المطلوب تصديره') :
+                  exportScope === 'section' ? (exportDept && exportLevel ? `سيتم التصدير لـ المستوى ${exportLevel}${exportSection ? ` شعبة ${exportSection}` : ' (كل الشعب)'} — قسم ${exportDeptOptions.find((d: any) => d.id === exportDept)?.name || ''}` : 'اختر القسم والمستوى (والشعبة اختيارياً)') :
+                  exportScope === 'teacher' ? (exportTeacherId ? `تصدير جدول الأستاذ: ${allTeachers.find((t: any) => t.id === exportTeacherId)?.full_name || ''}` : 'اختر الأستاذ') :
+                  exportScope === 'all_teachers' ? (exportDept ? 'جدول مستقل لكل أستاذ في القسم المختار (صفحة/ورقة لكل أستاذ)' : 'جدول مستقل لكل أستاذ في الكلية (صفحة/ورقة لكل أستاذ) — اختر قسماً لتضييق النطاق') :
+                  (exportRoomId ? `تصدير جدول القاعة: ${rooms.find((r: any) => r.id === exportRoomId)?.name || ''}` : 'اختر القاعة')}
             </div>
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowExportModal(false)}
                 style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', backgroundColor: '#f5f5f5', cursor: 'pointer', fontWeight: 700 }}>إلغاء</button>
-              <button onClick={handleExport} data-testid="confirm-export-btn"
-                style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', backgroundColor: '#00838f', color: '#fff', cursor: 'pointer', fontWeight: 800 }}>
+              <button onClick={handleExport} data-testid="confirm-export-btn" disabled={!exportReady}
+                style={{ flex: 2, padding: 10, borderRadius: 8, border: 'none', backgroundColor: exportReady ? '#00838f' : '#9fb3b6', color: '#fff', cursor: exportReady ? 'pointer' : 'not-allowed', fontWeight: 800 }}>
                 ⬇️ تصدير الآن
               </button>
             </div>
