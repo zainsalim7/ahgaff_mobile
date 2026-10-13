@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, Modal, ActivityIndicator, Platform, Alert, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { courseGroupsAPI, teachersAPI } from '../services/api';
+import { GroupsExcelBar } from './groups/GroupsExcelBar';
 
 export interface CourseGroup {
   key: string;
@@ -48,6 +50,7 @@ export const CourseGroupsModal: React.FC<Props> = ({ visible, courseId, onClose,
   const [onlyUnassigned, setOnlyUnassigned] = useState(true);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [teacherPickFor, setTeacherPickFor] = useState<string | null>(null);
+  const courseMeta = (data as any)?.course_meta;
   const [teacherQuery, setTeacherQuery] = useState('');
   const [templates, setTemplates] = useState<any[]>([]);
   const [tplName, setTplName] = useState('');
@@ -192,6 +195,12 @@ export const CourseGroupsModal: React.FC<Props> = ({ visible, courseId, onClose,
                 </TouchableOpacity>
               </View>
 
+              {/* 📤📥 تصدير / استيراد */}
+              <View style={st.box} testID="groups-excel-box">
+                <Text style={st.boxTitle}>📤 تصدير / 📥 استيراد التوزيع (Excel)</Text>
+                <GroupsExcelBar courseId={courseId} compact course={courseMeta} onImported={() => { load(); onChanged?.(); }} />
+              </View>
+
               {/* تعريف المجموعات */}
               <View style={st.box}>
                 <View style={st.rowR}>
@@ -284,7 +293,10 @@ export const CourseGroupsModal: React.FC<Props> = ({ visible, courseId, onClose,
                 if (!g) return null;
                 return (
                   <View style={st.box} testID={`group-students-${g.key}`}>
-                    <Text style={st.boxTitle}>{g.name} — {g.count} طالب</Text>
+                    <View style={st.rowR}>
+                      <TouchableOpacity onPress={() => { onClose(); router.push({ pathname: '/course-group', params: { courseId, group: g.key } }); }} style={st.ghostBtn} testID={`group-open-page-${g.key}`}><Ionicons name="open-outline" size={15} color="#1565c0" /><Text style={st.ghostTxt}>فتح صفحة المجموعة</Text></TouchableOpacity>
+                      <Text style={st.boxTitle}>{g.name} — {g.count} طالب</Text>
+                    </View>
                     {g.students.map(s => (
                       <View key={s.student_id} style={st.stuRow}>
                         <View style={{ flexDirection: 'row', gap: 4 }}>

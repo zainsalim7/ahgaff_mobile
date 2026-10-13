@@ -883,6 +883,14 @@ export const courseGroupsAPI = {
     api.post(`/courses/${courseId}/groups/apply-template`, { template_id: templateId, include_teachers: true, only_unassigned: false, ...(opts || {}) }),
   deleteTemplate: (templateId: string) => api.delete(`/group-templates/${templateId}`),
   attendance: (courseId: string) => api.get(`/courses/${courseId}/groups/attendance`),
+  detail: (courseId: string, key: string) => api.get(`/courses/${courseId}/groups/${encodeURIComponent(key)}/detail`),
+  export: (courseId: string, group?: string) => api.get(`/courses/${courseId}/groups/export`, { params: group ? { group } : {}, responseType: 'blob' }),
+  exportLevel: (params: { department_id: string; level: number; section?: string }) => api.get('/groups/export-level', { params, responseType: 'blob' }),
+  importTemplate: (courseId: string) => api.get(`/courses/${courseId}/groups/import-template`, { responseType: 'blob' }),
+  importPreview: (courseId: string, fd: FormData) => api.post(`/courses/${courseId}/groups/import-preview`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  importApply: (courseId: string, fd: FormData, createMissing: boolean) =>
+    api.post(`/courses/${courseId}/groups/import-apply`, fd, { params: { create_missing_groups: createMissing }, headers: { 'Content-Type': 'multipart/form-data' } }),
+  studentsMap: (studentIds: string[]) => api.post('/students/groups-map', { student_ids: studentIds }),
 };
 
 export const lecturesAPI = {

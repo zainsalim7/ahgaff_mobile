@@ -21,6 +21,7 @@ import api, {
   attendanceAPI,
   reportsAPI,
   notificationsAPI,
+  courseGroupsAPI,
 } from '../src/services/api';
 import { LoadingScreen } from '../src/components/LoadingScreen';
 import { useAuth, PERMISSIONS } from '../src/contexts/AuthContext';
@@ -123,6 +124,7 @@ export default function StudentDetailsScreen() {
   const [student, setStudent] = useState<any>(null);
   const [departmentName, setDepartmentName] = useState<string>('');
   const [courses, setCourses] = useState<StudentCourse[]>([]);
+  const [studentGroups, setStudentGroups] = useState<Array<{ course_id: string; course_name: string; group: string; group_name: string }>>([]);
   const [coursesInferred, setCoursesInferred] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -278,6 +280,7 @@ export default function StudentDetailsScreen() {
       ]);
       const sData = studentRes.data;
       setStudent(sData);
+      courseGroupsAPI.ofStudent(String(studentId)).then((r: any) => setStudentGroups(r.data || [])).catch(() => {});
       const cData = coursesRes.data as CoursesResponse;
       const courseList = cData.courses || [];
       setCourses(courseList);
@@ -1309,6 +1312,11 @@ export default function StudentDetailsScreen() {
                         </Text>
                         <Text style={styles.courseCode}>{course.code || '—'}</Text>
                       </View>
+                      {studentGroups.filter(g => g.course_id === course.id).map(g => (
+                        <TouchableOpacity key={g.course_id} onPress={() => router.push({ pathname: '/course-group', params: { courseId: g.course_id, group: g.group } })} style={{ alignSelf: 'flex-start', backgroundColor: '#ede7f6', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, marginTop: 4 }} testID={`student-course-group-${g.course_id}`}>
+                          <Text style={{ fontSize: 11, color: '#4527a0', fontWeight: '800' }}>👥 {g.group_name} — فتح المجموعة ↗</Text>
+                        </TouchableOpacity>
+                      ))}
                       <View style={styles.metaRow}>
                         {course.teacher_name ? (
                           <View style={styles.metaItem}>

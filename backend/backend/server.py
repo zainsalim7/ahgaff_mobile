@@ -226,6 +226,7 @@ from routes.hr_attendance import router as hr_attendance_router, auto_checkout_l
 from routes.hr_correspondence import router as hr_corr_router
 from routes.hr_tasks import router as hr_tasks_router
 from routes.course_groups import router as course_groups_router
+from routes.course_groups_tools import router as course_groups_tools_router
 from routes.hr_appraisals import router as hr_appraisals_router, public_router as hr_verify_router
 from routes.hr_cards import router as hr_cards_router, public_router as hr_cards_public_router
 from routes.hr_card_print import router as hr_card_print_router
@@ -18320,6 +18321,7 @@ app.include_router(hr_leaves_router, prefix="/api")
 app.include_router(hr_attendance_router, prefix="/api")
 app.include_router(hr_corr_router, prefix="/api")
 app.include_router(hr_tasks_router, prefix="/api")
+app.include_router(course_groups_tools_router, prefix="/api")
 app.include_router(course_groups_router, prefix="/api")
 app.include_router(student_excuses_router, prefix="/api")
 app.include_router(hr_appraisals_router, prefix="/api")

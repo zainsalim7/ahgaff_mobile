@@ -885,7 +885,7 @@ export default function AddCourseScreen() {
               {((item as any).groups as any[]).map((g, gi) => (
                 <TouchableOpacity
                   key={g.key}
-                  onPress={() => router.push({ pathname: '/course-lectures', params: { courseId: item.id, group: g.key } })}
+                  onPress={() => router.push({ pathname: '/course-group', params: { courseId: item.id, group: g.key } })}
                   style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 3, backgroundColor: ['#e3f2fd', '#e8f5e9', '#fce4ec', '#fff3e0', '#ede7f6', '#e0f2f1'][gi % 6], borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}
                   testID={`course-group-chip-${item.id}-${g.key}`}
                 >

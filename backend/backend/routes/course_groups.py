@@ -94,6 +94,7 @@ async def _view(db, course: dict) -> dict:
         "course_id": cid,
         "course_name": course.get("name", ""),
         "course_teacher_id": course.get("teacher_id"),
+        "course_meta": {"department_id": course.get("department_id"), "level": course.get("level"), "section": course.get("section") or "", "name": course.get("name", "")},
         "groups": [{
             "key": g["key"], "name": g.get("name") or f"مجموعة {g['key']}",
             "teacher_id": g.get("teacher_id"), "teacher_name": tnames.get(g.get("teacher_id") or "", ""),

@@ -20,7 +20,7 @@ import { AddStudentForm, emptyStudentForm } from '../src/components/AddStudentFo
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Picker } from '@react-native-picker/picker';
-import { departmentsAPI, studentsAPI, attendanceAPI, notificationsAPI, exportAPI } from '../src/services/api';
+import { departmentsAPI, studentsAPI, attendanceAPI, notificationsAPI, exportAPI, courseGroupsAPI } from '../src/services/api';
 import api from '../src/services/api';
 import { SortableHeader } from '../src/components/SortableHeader';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -150,6 +150,7 @@ export default function StudentsScreen() {
 
   // 🆕 عدد الإشعارات غير المقروءة لكل طالب
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [groupsMap, setGroupsMap] = useState<Record<string, Array<{ course_id: string; course_name: string; group: string; group_name: string }>>>({});
   const [renewalStatuses, setRenewalStatuses] = useState<Record<string, string>>({});
 
   // حذف آمن
@@ -299,6 +300,8 @@ export default function StudentsScreen() {
     try {
       const studentsRes = await studentsAPI.getAll();
       setStudents(studentsRes.data);
+      // 👥 خريطة مجموعات الطلاب (شارة لمن هو موزّع في مجموعة)
+      courseGroupsAPI.studentsMap((studentsRes.data || []).map((s: any) => s.id)).then(r => setGroupsMap(r.data || {})).catch(() => {});
       // 💰 حالة تجديد القيد للشارة (لا توقف الصفحة عند الفشل)
       try {
         const ids = (studentsRes.data || []).map((s: any) => s.id);
@@ -1306,6 +1309,16 @@ export default function StudentsScreen() {
         {/* العمود 5: المستوى */}
         <View style={[styles.colLevel, styles.cellPad]}>
           <Text style={styles.levelCell}>{item.level}{item.section ? ` · ${item.section}` : ''}</Text>
+          {(groupsMap[item.id] || []).length > 0 && (
+            <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 3, marginTop: 2 }} testID={`student-groups-${item.id}`}>
+              {(groupsMap[item.id] || []).slice(0, 3).map(g => (
+                <TouchableOpacity key={g.course_id} onPress={() => router.push({ pathname: '/course-group', params: { courseId: g.course_id, group: g.group } })} style={{ backgroundColor: '#ede7f6', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }} testID={`student-group-chip-${item.id}-${g.course_id}`}>
+                  <Text style={{ fontSize: 9, color: '#4527a0', fontWeight: '800' }} numberOfLines={1}>👥 {g.group_name} · {g.course_name}</Text>
+                </TouchableOpacity>
+              ))}
+              {(groupsMap[item.id] || []).length > 3 && <Text style={{ fontSize: 9, color: '#5b6678' }}>+{(groupsMap[item.id] || []).length - 3}</Text>}
+            </View>
+          )}
         </View>
 
         {/* العمود 6: الحالة */}
@@ -1333,7 +1346,7 @@ export default function StudentsScreen() {
         </View>
       </View>
     );
-  }, [selectedIds, selectionMode, canManageStudents, getDepartmentName, openMenuId, formatRegDate, unreadCounts, renewalStatuses]);
+  }, [selectedIds, selectionMode, canManageStudents, getDepartmentName, openMenuId, formatRegDate, unreadCounts, renewalStatuses, groupsMap]);
 
   // الطالب الحالي للقائمة المنبثقة
   const menuStudent = useMemo(() => students.find(s => s.id === openMenuId) || null, [students, openMenuId]);

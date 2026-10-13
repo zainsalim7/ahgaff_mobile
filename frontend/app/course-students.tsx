@@ -1069,8 +1069,11 @@ export default function CourseStudentsScreen() {
                 const n = enrolledStudents.filter(s => s.group === g.key).length;
                 const on = groupFilter === g.key;
                 return (
-                  <TouchableOpacity key={g.key} onPress={() => setGroupFilter(on ? '' : g.key)} style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, backgroundColor: on ? groupColor(g.key, groupDefs) : '#eceff1' }} testID={`group-filter-${g.key}`}>
+                  <TouchableOpacity key={g.key} onPress={() => setGroupFilter(on ? '' : g.key)} onLongPress={() => router.push({ pathname: '/course-group', params: { courseId: courseId!, group: g.key } })} style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, backgroundColor: on ? groupColor(g.key, groupDefs) : '#eceff1' }} testID={`group-filter-${g.key}`}>
                     <Text style={{ fontSize: 11, fontWeight: '700', color: on ? '#fff' : '#334155' }}>{g.name} ({n})</Text>
+                    <TouchableOpacity onPress={() => router.push({ pathname: '/course-group', params: { courseId: courseId!, group: g.key } })} hitSlop={6} testID={`group-open-${g.key}`}>
+                      <Ionicons name="open-outline" size={13} color={on ? '#fff' : '#1565c0'} />
+                    </TouchableOpacity>
                   </TouchableOpacity>
                 );
               })}
