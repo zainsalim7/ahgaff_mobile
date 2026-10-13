@@ -26,6 +26,13 @@ export const AssistantWidget: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [toolNote, setToolNote] = useState('');
   const scrollRef = useRef<ScrollView>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    try { const saved = window.localStorage.getItem('assistant_pos'); if (saved) setPos(JSON.parse(saved)); } catch {}
+  }, []);
 
   useEffect(() => { api.get('/assistant/meta', { params: { route: pathname } }).then((r) => setMeta(r.data)).catch(() => setMeta(null)); }, [pathname]);
   useEffect(() => { scrollRef.current?.scrollToEnd({ animated: true }); }, [msgs]);
@@ -79,6 +86,22 @@ export const AssistantWidget: React.FC = () => {
 
   const reset = () => { setSessionId(newId()); setMsgs([]); };
 
+  // 🖱️ سحب النافذة (ويب) + وضع ملء الشاشة
+  const clamp = (p: { x: number; y: number }) => ({ x: Math.max(0, Math.min(p.x, window.innerWidth - 120)), y: Math.max(0, Math.min(p.y, window.innerHeight - 60)) });
+  const onDragStart = (e: any) => {
+    if (Platform.OS !== 'web' || expanded) return;
+    const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    const move = (ev: MouseEvent) => { if (!dragRef.current) return; setPos(clamp({ x: ev.clientX - dragRef.current.dx, y: ev.clientY - dragRef.current.dy })); };
+    const up = () => { dragRef.current = null; window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); setPos((p) => { if (p) try { window.localStorage.setItem('assistant_pos', JSON.stringify(p)); } catch {} return p; }); };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+    e.preventDefault();
+  };
+  const panelStyle = [s.panel, expanded && s.panelExpanded, !expanded && pos && Platform.OS === 'web' && { left: pos.x, top: pos.y, bottom: undefined }];
+  const dragProps: any = Platform.OS === 'web' ? { onMouseDown: onDragStart } : {};
+  const headerStyle = [s.header, Platform.OS === 'web' && ({ cursor: expanded ? 'default' : 'move', userSelect: 'none' } as any)];
+
   return (
     <>
       {!open && (
@@ -87,9 +110,12 @@ export const AssistantWidget: React.FC = () => {
         </TouchableOpacity>
       )}
       {open && (
-        <View style={s.panel} testID="assistant-panel">
-          <View style={s.header}>
-            <TouchableOpacity onPress={() => setOpen(false)} testID="assistant-close"><Ionicons name="close" size={20} color="#fff" /></TouchableOpacity>
+        <View style={panelStyle} testID="assistant-panel">
+          <View style={headerStyle} {...dragProps} testID="assistant-header">
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <TouchableOpacity onPress={() => setOpen(false)} testID="assistant-close"><Ionicons name="close" size={20} color="#fff" /></TouchableOpacity>
+              <TouchableOpacity onPress={() => setExpanded((v) => !v)} testID="assistant-expand" accessibilityLabel={expanded ? 'تصغير' : 'ملء الشاشة'}><Ionicons name={expanded ? 'contract-outline' : 'expand-outline'} size={18} color="#fff" /></TouchableOpacity>
+            </View>
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
               <Ionicons name="sparkles" size={16} color="#ffd54f" />
               <Text style={s.headerTitle}>{meta.name}</Text>
@@ -97,7 +123,7 @@ export const AssistantWidget: React.FC = () => {
             </View>
             <TouchableOpacity onPress={reset} testID="assistant-new-chat"><Ionicons name="refresh" size={18} color="#fff" /></TouchableOpacity>
           </View>
-          <ScrollView ref={scrollRef} style={s.body} contentContainerStyle={{ padding: 10, gap: 8 }} testID="assistant-messages">
+          <ScrollView ref={scrollRef} style={s.body} contentContainerStyle={[{ padding: 10, gap: 8 }, expanded && { maxWidth: 900, width: '100%', alignSelf: 'center' }]} testID="assistant-messages">
             {msgs.length === 0 && (
               <View style={s.hint} testID="assistant-hint">
                 <Text style={s.hintTxt}>مرحباً! اسألني كيف تنجز أي مهمة في النظام{(meta.tools || []).length ? '، أو عن أرقام فعلية ضمن صلاحياتك' : ''}، مثل:</Text>
@@ -135,7 +161,8 @@ export const AssistantWidget: React.FC = () => {
 
 const s = StyleSheet.create({
   fab: { position: 'absolute', bottom: 24, left: 20, width: 52, height: 52, borderRadius: 26, backgroundColor: '#6a1b9a', alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, zIndex: 999 },
-  panel: { position: 'absolute', bottom: 20, left: 16, width: Platform.OS === 'web' ? 400 : '92%', maxWidth: 420, height: 560, maxHeight: '85%', backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', elevation: 10, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, zIndex: 1000, borderWidth: 1, borderColor: '#e2e8f0' },
+  panel: { position: Platform.OS === 'web' ? ('fixed' as any) : 'absolute', bottom: 20, left: 16, width: Platform.OS === 'web' ? 400 : '92%', maxWidth: 420, height: 560, maxHeight: '85%', backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', elevation: 10, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, zIndex: 1000, borderWidth: 1, borderColor: '#e2e8f0' },
+  panelExpanded: { top: 0, left: 0, right: 0, bottom: 0, width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderRadius: 0 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1a2540', paddingHorizontal: 12, paddingVertical: 10 },
   headerTitle: { color: '#fff', fontWeight: '800', fontSize: 14 },
   headerSub: { color: 'rgba(255,255,255,0.65)', fontSize: 10.5 },

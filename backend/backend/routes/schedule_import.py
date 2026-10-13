@@ -12,7 +12,7 @@ from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 
 from .deps import get_db, get_current_user, log_activity, export_stamp
-from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures, _resolve_day_times, _sync_course_shared_links, _master_course_color, _master_text_color
+from .weekly_schedule import can_manage_schedule, _is_period_unavailable, _build_master_data, _sync_future_lectures, _resolve_day_times, _sync_course_shared_links, _master_course_color, _master_text_color, _grouped_cells_overlap
 
 router = APIRouter(tags=["استيراد الجدول الأسبوعي"])
 
@@ -98,6 +98,53 @@ def _extract_practical(course_txt: str):
         if base:
             return base, True
     return s, False
+
+
+# 👥 ===== خلايا متعددة المجموعات: «مكتبة (A)» + «اللغة الإنجليزية (B)» في الخلية نفسها (سطر لكل مقرر) =====
+_GROUP_MARK_RE = re.compile(r"^(.*?)\s*[\(（]\s*([^\(\)（）]{1,6}?)\s*[\)）]\s*$")
+_GROUP_LETTER_MAP = {"أ": "a", "ا": "a", "إ": "a", "آ": "a", "ب": "b", "ج": "c", "د": "d", "هـ": "e", "ه": "e", "و": "f", "ز": "g",
+                     "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6"}
+_GROUP_ORDINAL = {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5}
+
+
+def _norm_group_token(tok: str) -> str:
+    t = re.sub(r"^(مجموعة|مج|group|grp|g)\s*", "", (tok or "").strip().lower())
+    return _GROUP_LETTER_MAP.get(t, t)
+
+
+def _split_cell_lines(txt: str):
+    return [l.strip() for l in re.split(r"[\r\n]+|\s*\|\s*|\s*؛\s*|\s*;\s*", txt or "") if l and l.strip()]
+
+
+def _extract_group_marker(course_txt: str):
+    """«اللغة الإنجليزية (A)» → («اللغة الإنجليزية», «A»). لا يُعدّ وسماً إن كان القوس مدة/عملي/أرقاماً طويلة."""
+    s = (course_txt or "").strip()
+    m = _GROUP_MARK_RE.match(s)
+    if not m or not m.group(1).strip():
+        return s, None
+    tok = m.group(2).strip()
+    if re.search(r"\d\s*د$|عملي|نظري", tok) or (tok.isdigit() and len(tok) >= 2):
+        return s, None
+    return m.group(1).strip(), tok
+
+
+def _match_group(groups: list, marker: str):
+    """يطابق وسم المجموعة من الملف (A/B/أ/ب/1/2/اسم) مع مجموعات المقرر — بالمفتاح أو الاسم أو الترتيب"""
+    if not groups or not marker:
+        return None
+    nm = _norm_group_token(marker)
+    for g in groups:
+        if _norm_group_token(g.get("key", "")) == nm or _norm_group_token(g.get("name", "")) == nm or _norm(g.get("name", "")) == _norm(marker):
+            return g
+    for g in groups:  # «مجموعة أ» / «المجموعة A» ضمن الاسم
+        nname = _norm_group_token(re.sub(r"^(ال)?مجموعة\s*", "", (g.get("name") or "").strip()))
+        if nname == nm:
+            return g
+    idx = _GROUP_ORDINAL.get(nm)
+    if idx is not None and idx < len(groups):
+        ordered = sorted(groups, key=lambda g: (_GROUP_ORDINAL.get(_norm_group_token(g.get("key", "")), 99), str(g.get("key", ""))))
+        return ordered[idx]
+    return None
 
 
 def _row_kind(b_label: str):
@@ -377,7 +424,11 @@ async def import_master_schedule(
     rooms_by_id = {str(r["_id"]): r.get("name", "") for r in rooms}
 
     existing_slots = await db.weekly_schedule.find({"department_id": department_id}).to_list(5000)
-    existing_cells = {(s.get("level"), s.get("section", "") or "", s.get("day"), s.get("slot_number")): s for s in existing_slots}
+    existing_cells = {(s.get("level"), s.get("section", "") or "", s.get("day"), s.get("slot_number")): s for s in existing_slots if not s.get("group")}
+    existing_group_cells = {(s.get("level"), s.get("section", "") or "", s.get("day"), s.get("slot_number"), s.get("group")): s for s in existing_slots if s.get("group")}
+    group_removal_ids = set()  # 👥 خلايا مجموعات قائمة ستُزال لأن الملف وضع محاضرة لكل الشعبة مكانها
+    replaced_msgs_extra = []
+    grouped_msgs = []  # 👥 ملخص خلايا المجموعات في الملف
 
     # ===== 3) المرور على كتل المجموعات (3 صفوف لكل مجموعة) =====
     to_create = []
@@ -414,13 +465,27 @@ async def import_master_schedule(
             r += 3
             continue
 
+        # 👥 توسيع الخلايا متعددة الأسطر: كل سطر «مقرر (مجموعة)» ← خلية فرعية بمجموعتها، وصفّا القاعة/الأستاذ يُقرآن سطراً بسطر
+        expanded_cells = []
         for c, (day, order) in col_day.items():
-            course_txt = str(ws.cell(row=block_rows["course"], column=c).value or "").strip()
-            room_txt = str(ws.cell(row=block_rows["room"], column=c).value or "").strip()
-            teacher_txt = str(ws.cell(row=block_rows["teacher"], column=c).value or "").strip()
+            raw_course = str(ws.cell(row=block_rows["course"], column=c).value or "").strip()
+            raw_room = str(ws.cell(row=block_rows["room"], column=c).value or "").strip()
+            raw_teacher = str(ws.cell(row=block_rows["teacher"], column=c).value or "").strip()
+            c_lines = _split_cell_lines(raw_course)
+            if len(c_lines) <= 1:
+                expanded_cells.append((c, day, order, raw_course, raw_room, raw_teacher, None, False))
+                continue
+            r_lines, t_lines = _split_cell_lines(raw_room), _split_cell_lines(raw_teacher)
+            for i, line in enumerate(c_lines):
+                name_i, marker_i = _extract_group_marker(line)
+                room_i = r_lines[i] if len(r_lines) > i else (r_lines[0] if len(r_lines) == 1 else "")
+                teacher_i = t_lines[i] if len(t_lines) > i else (t_lines[0] if len(t_lines) == 1 and len(c_lines) == 1 else "")
+                expanded_cells.append((c, day, order, name_i, room_i, teacher_i, marker_i, True))
+
+        for c, day, order, course_txt, room_txt, teacher_txt, grp_marker, multi_cell in expanded_cells:
             if not course_txt and not room_txt and not teacher_txt:
                 continue
-            loc = f"[المستوى {level}{' شعبة ' + section if section else ''} — {day} فترة {order}]"
+            loc = f"[المستوى {level}{' شعبة ' + section if section else ''} — {day} فترة {order}{(' — ' + course_txt) if multi_cell else ''}]"
             if day not in working_set:
                 errors.append(f"{loc} اليوم '{day}' ليس من أيام عمل الكلية — تُخُطيت الخلية")
                 continue
@@ -512,11 +577,44 @@ async def import_master_schedule(
             assigned = teachers_map.get(course.get("teacher_id", "") or "", {})
             assigned_norm = _norm(assigned.get("full_name", ""))
 
+            # 👥 خلية مجموعة: «مقرر (A)» أو سطر ضمن خلية متعددة → يجب أن تطابق مجموعة معرّفة في المقرر
+            slot_group, slot_group_name, group_leader_tid = None, None, None
+            if grp_marker or multi_cell:
+                if course.get("_is_new"):
+                    errors.append(f"{loc} المقرر '{course_txt}' غير موجود ولا يمكن إنشاؤه مع مجموعة ({grp_marker or '؟'}) — أنشئ المقرر وعرّف مجموعاته من شاشة المجموعات أولاً — تُخُطيت")
+                    continue
+                if not grp_marker:
+                    errors.append(f"{loc} خلية متعددة الأسطر: السطر '{course_txt}' بلا وسم مجموعة مثل «{course_txt} (A)» — تُخُطيت")
+                    continue
+                gd = _match_group(course.get("groups") or [], grp_marker)
+                if not gd:
+                    have = "، ".join(f"{g.get('key')}" + (f" ({g.get('name')})" if g.get("name") else "") for g in (course.get("groups") or [])[:6]) or "لا مجموعات"
+                    errors.append(f"{loc} المقرر '{course.get('name', '')}' لا يملك مجموعة تطابق «{grp_marker}» (المعرّف: {have}) — عرّف المجموعات من شاشة المجموعات ثم أعد الاستيراد — تُخُطيت")
+                    continue
+                slot_group, slot_group_name = gd.get("key"), gd.get("name") or f"مجموعة {gd.get('key')}"
+                group_leader_tid = gd.get("teacher_id") or None
+
             # 🧑‍🏫 الإكسل هو الأساس في الإسناد أيضاً:
             # - مقرر بلا إسناد + اسم أستاذ في الملف → يُسند إليه
             # - اسم أستاذ مختلف عن المسند → يُستبدل الإسناد بما في الملف
             cell_tid = None  # 🧑‍🏫 أستاذ الخلية نفسها (يدعم تعدد الأساتذة للمقرر الواحد)
-            if teacher_txt and _norm(teacher_txt) != assigned_norm:
+            if slot_group:
+                # 👥 أستاذ خلية المجموعة = قائد المجموعة (أو الاسم المكتوب في الملف) — لا يغيّر إسناد المقرر الرسمي
+                if teacher_txt:
+                    cands = teachers_by_name.get(_norm(teacher_txt), [])
+                    if not cands:
+                        errors.append(f"{loc} الأستاذ '{teacher_txt}' غير موجود في النظام — تُخُطيت الخلية")
+                        continue
+                    if len(cands) > 1:
+                        errors.append(f"{loc} يوجد أكثر من معلم بالاسم '{teacher_txt}' في النظام — تُخُطيت الخلية")
+                        continue
+                    cell_tid = str(cands[0]["_id"])
+                else:
+                    cell_tid = group_leader_tid or course.get("teacher_id") or ""
+                    if not cell_tid:
+                        errors.append(f"{loc} المجموعة «{slot_group_name}» بلا قائد والمقرر بلا أستاذ مسند ولا اسم أستاذ في الملف — تُخُطيت")
+                        continue
+            elif teacher_txt and _norm(teacher_txt) != assigned_norm:
                 cands = teachers_by_name.get(_norm(teacher_txt), [])
                 if not cands:
                     errors.append(f"{loc} الأستاذ '{teacher_txt}' غير موجود في النظام — تُخُطيت الخلية")
@@ -539,7 +637,7 @@ async def import_master_schedule(
 
             effective_tid = cell_tid or (reassign_map[cid_str]["new_id"] if cid_str in reassign_map else course["teacher_id"])
             teacher = teachers_map.get(effective_tid, {})
-            if teacher_txt:
+            if teacher_txt and not slot_group:
                 file_teachers.setdefault(cid_str, {})[_norm(teacher_txt)] = teacher_txt
             if not room_txt:
                 errors.append(f"{loc} القاعة مطلوبة — تُخُطيت الخلية")
@@ -554,7 +652,29 @@ async def import_master_schedule(
             replace_desc = ""
             replace_teacher = ""
             replace_course = ""
-            ex = existing_cells.get((level, section_val, day, slot_number))
+            if slot_group:
+                # 👥 خلية مجموعة: تُقارن بخلية المجموعة نفسها فقط (مجموعات أخرى في الفترة نفسها تبقى)
+                ex = existing_group_cells.get((level, section_val, day, slot_number, slot_group))
+                if ex:
+                    same = (ex.get("course_id") == cid_str and (ex.get("room_id") or "") == str(room["_id"]) and (ex.get("teacher_id") or "") == effective_tid
+                            and (ex.get("duration_minutes") or None) == duration_minutes and (ex.get("slot_type") or "theory") == ("practical" if cell_practical else "theory"))
+                    if same:
+                        skipped_existing.append(f"{loc} مجموعة «{slot_group_name}» مطابقة تماماً للموجود — لا تغيير")
+                        continue
+                    replace_id, replace_teacher, replace_course = str(ex["_id"]), ex.get("teacher_id", "") or "", ex.get("course_id", "") or ""
+                    replace_desc = f"{loc} سيُستبدل '{courses_by_id.get(ex.get('course_id', ''), 'مقرر آخر')}' (مجموعة {slot_group}) ← بـ'{course.get('name', '')}' ({room.get('name', '')})"
+                ex_whole = existing_cells.get((level, section_val, day, slot_number))
+                if ex_whole and not ex_whole.get("group"):
+                    conflicts.append(f"{loc} الخلية مشغولة بمحاضرة لكل الشعبة '{courses_by_id.get(ex_whole.get('course_id', ''), '')}' — لا يمكن إضافة مجموعة فوقها؛ احذفها أو اجعلها بالمجموعات في الملف")
+                    continue
+                ex = None
+            else:
+                ex = existing_cells.get((level, section_val, day, slot_number))
+                if not ex:
+                    _exg = [s for (lv, sc, d, sn, g), s in existing_group_cells.items() if (lv, sc, d, sn) == (level, section_val, day, slot_number)]
+                    if _exg:
+                        group_removal_ids.update(str(s["_id"]) for s in _exg)
+                        replaced_msgs_extra.append(f"{loc} ستُزال {len(_exg)} خلية مجموعات قائمة ({'، '.join(str(s.get('group')) for s in _exg)}) لأن الملف يضع محاضرة لكل الشعبة هنا")
             if ex:
                 # 🔗 خلية عضو في محاضرة مشتركة قائمة ومقررها من قسم آخر: مطابقة بالاسم + القاعة → ربط بدل الإنشاء
                 if course.get("_is_new"):
@@ -598,6 +718,7 @@ async def import_master_schedule(
                 "_slot_minutes": _slot_minutes(ts),
                 **({"duration_minutes": duration_minutes} if duration_minutes else {}),
                 **({"_new_course_key": course["_nk"]} if course.get("_is_new") else {}),
+                **({"group": slot_group, "group_name": slot_group_name} if slot_group else {}),
                 "_loc": loc,
                 "_course_name": course.get("name", ""),
                 "_teacher_name": teacher.get("full_name", ""),
@@ -611,8 +732,8 @@ async def import_master_schedule(
             })
         r += 3
 
-    replaced_msgs = [it["_replace_desc"] for it in to_create if it["_replace_id"]]
-    replaced_ids = {it["_replace_id"] for it in to_create if it["_replace_id"]}
+    replaced_msgs = [it["_replace_desc"] for it in to_create if it["_replace_id"]] + replaced_msgs_extra
+    replaced_ids = {it["_replace_id"] for it in to_create if it["_replace_id"]} | group_removal_ids
 
     # 🧭 الملف هو الأساس حرفياً: خلايا المقررات المذكورة في الملف بمواضع غير مذكورة فيه → تُزال (إعادة تموضع)
     removal_ids = set()
@@ -662,6 +783,8 @@ async def import_master_schedule(
     merge_msgs = []
     _file_groups = {}
     for it in to_create:
+        if it.get("group"):
+            continue  # 👥 خلايا المجموعات لا تُدمج كمحاضرات مشتركة
         k = (it["day"], it["slot_number"], it["teacher_id"], it["room_id"], _base_cname(it["_course_name"], it.get("section") or ""))
         _file_groups.setdefault(k, []).append(it)
     for _k, _items in _file_groups.items():
@@ -790,6 +913,7 @@ async def import_master_schedule(
                 conflicts.append(f"الإسناد الجديد: '{tname}' سيتجاوز الحد اليومي ({max_daily}) يوم {d} بالمحاضرات القائمة")
 
     seen_teacher, seen_room, seen_cell = {}, {}, set()
+    cell_items: dict = {}  # 👥 (level, section, day, slot) -> عناصر الملف في الخلية نفسها
     counted_groups = set()
     existing_merge_joins = {}  # 🔗 محاضرات قائمة ستتحول لمشتركة بانضمام خلايا الملف إليها
 
@@ -805,9 +929,10 @@ async def import_master_schedule(
         loc = item["_loc"]
         tk = (item["teacher_id"], item["day"], item["slot_number"])
         rk = (item["room_id"], item["day"], item["slot_number"])
-        ck = (item["level"], item["section"], item["day"], item["slot_number"])
+        ck = (item["level"], item["section"], item["day"], item["slot_number"], item.get("group") or "")
         if ck in seen_cell:
-            conflicts.append(f"{loc} خلية مكررة داخل الملف لنفس الشعبة")
+            conflicts.append(f"{loc} خلية مكررة داخل الملف لنفس الشعبة{(' والمجموعة ' + str(item.get('group'))) if item.get('group') else ''}")
+        cell_items.setdefault(ck[:4], []).append(item)
         gid_i = item.get("merge_group_id", "")
         # 🔗 خلية بمقرر من مستوى آخر: تُقبل فقط إذا كانت جزءاً من محاضرة مشتركة (ملف أو نظام)
         if item.get("_cross_level") and not gid_i:
@@ -879,11 +1004,36 @@ async def import_master_schedule(
         seen_room[rk] = gid_i
         seen_cell.add(ck)
 
+    # 👥 فحص خلايا المجموعات: لا تجتمع محاضرة لكل الشعبة مع مجموعة، ومجموعتان لمقررين مختلفين تُقبلان فقط بلا طلاب مشتركين
+    for _ck, _items in cell_items.items():
+        if len(_items) < 2:
+            continue
+        _whole = [x for x in _items if not x.get("group")]
+        _grouped = [x for x in _items if x.get("group")]
+        if _whole and _grouped:
+            conflicts.append(f"{_items[0]['_loc']} الخلية تجمع محاضرة لكل الشعبة ('{_whole[0]['_course_name']}') مع مجموعات — إما الكل بالمجموعات أو بدونها")
+            continue
+        for i in range(len(_grouped)):
+            for j in range(i + 1, len(_grouped)):
+                a, b = _grouped[i], _grouped[j]
+                if a["course_id"] == b["course_id"]:
+                    continue
+                _ov = await _grouped_cells_overlap(db, a["course_id"], a["group"], {"course_id": b["course_id"], "group": b["group"]})
+                if _ov:
+                    conflicts.append(f"{a['_loc']} + '{b['_course_name']}' (مجموعة {b['group']}): {_ov} — وحّد توزيع المجموعات بين المقررين من شاشة المجموعات")
+        if _grouped and not _whole:
+            grouped_msgs.append(f"👥 {_grouped[0]['day']} الفترة {_grouped[0]['slot_number']} (م{_grouped[0]['level']}{'/' + _grouped[0]['section'] if _grouped[0].get('section') else ''}): "
+                                + " + ".join(f"'{x['_course_name']}' مج {x['group']} ← {x['_teacher_name'] or 'قائد المجموعة'}" for x in _grouped))
+    for _ck, _items in cell_items.items():
+        if len(_items) == 1 and _items[0].get("group"):
+            x = _items[0]
+            grouped_msgs.append(f"👥 {x['day']} الفترة {x['slot_number']} (م{x['level']}{'/' + x['section'] if x.get('section') else ''}): '{x['_course_name']}' مجموعة {x['group']} فقط ← {x['_teacher_name'] or 'قائد المجموعة'}")
+
     # إسقاط الخلايا المرفوضة (مستوى آخر بدون دمج) وإعادة حساب الاستبدالات
     if any(x.get("_dropped") for x in to_create):
         to_create = [x for x in to_create if not x.get("_dropped")]
-        replaced_msgs = [it["_replace_desc"] for it in to_create if it["_replace_id"]]
-        replaced_ids = {it["_replace_id"] for it in to_create if it["_replace_id"]}
+        replaced_msgs = [it["_replace_desc"] for it in to_create if it["_replace_id"]] + replaced_msgs_extra
+        replaced_ids = {it["_replace_id"] for it in to_create if it["_replace_id"]} | group_removal_ids
 
     new_count = sum(1 for it in to_create if not it["_replace_id"])
     reassign_msgs = [
@@ -914,6 +1064,8 @@ async def import_master_schedule(
         "repositioned": reposition_msgs,
         "to_merge": len(merge_msgs),
         "merged": merge_msgs,
+        "to_group": len(grouped_msgs),
+        "grouped": grouped_msgs,
         "multi_teacher": multi_teacher_msgs,
         "adopted_from_plan": list(adopted_plan_ids.values()),
         "created": 0,

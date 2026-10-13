@@ -1741,7 +1741,7 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
           }} data-testid="master-import-modal">
             <div style={{ fontSize: 15, fontWeight: 800, color: '#1a2540', marginBottom: 4, textAlign: 'right' }}>📥 استيراد الجدول الأسبوعي من Excel</div>
             <div style={{ fontSize: 11.5, color: '#5b6678', marginBottom: 12, textAlign: 'right', lineHeight: 1.7 }}>
-              السياسة: <b style={{ color: '#6a1b9a' }}>الإكسل هو الأساس حرفياً</b> — الخلايا المعبأة في الملف <b>تستبدل</b> ما يقابلها، و<b>المقرر المذكور في الملف تصبح مواضعه مطابقة للملف بالضبط</b> (أي خلية له غير مذكورة في الملف تُزال — إعادة تموضع)، و<b>الإسناد يتبع اسم الأستاذ في الملف</b> • الخلايا الفارغة لا تمس مقررات غير مذكورة • أخطاء الأسماء تُتخطى مع تقرير • <b style={{ color: '#00695c' }}>🔗 محاضرة مشتركة: اكتب نفس المحاضرة (نفس المقرر والمدرس والقاعة) في نفس اليوم/الفترة لأكثر من مستوى/شعبة وسيدمجها النظام تلقائياً</b> • <b style={{ color: '#c62828' }}>أي تعارض جدولة يوقف الاستيراد كاملاً</b>
+              السياسة: <b style={{ color: '#6a1b9a' }}>الإكسل هو الأساس حرفياً</b> — الخلايا المعبأة في الملف <b>تستبدل</b> ما يقابلها، و<b>المقرر المذكور في الملف تصبح مواضعه مطابقة للملف بالضبط</b> (أي خلية له غير مذكورة في الملف تُزال — إعادة تموضع)، و<b>الإسناد يتبع اسم الأستاذ في الملف</b> • الخلايا الفارغة لا تمس مقررات غير مذكورة • أخطاء الأسماء تُتخطى مع تقرير • <b style={{ color: '#00695c' }}>🔗 محاضرة مشتركة: اكتب نفس المحاضرة (نفس المقرر والمدرس والقاعة) في نفس اليوم/الفترة لأكثر من مستوى/شعبة وسيدمجها النظام تلقائياً</b> • <b style={{ color: '#4527a0' }} data-testid="import-groups-hint">👥 مجموعات في خلية واحدة: اكتب كل مقرر في سطر مستقل مع وسم مجموعته مثل «مكتبة (A)» ثم «اللغة الإنجليزية (B)» (يُقبل A/B أو أ/ب أو 1/2 أو اسم المجموعة)، وصفّا القاعة والأستاذ سطراً بسطر بالتناظر؛ إن تُرك الأستاذ فارغاً يُسند لقائد المجموعة — يُشترط أن تكون المجموعات معرّفة في المقرر وألا يشترك طالب بين مجموعتي المقررين</b> • <b style={{ color: '#c62828' }}>أي تعارض جدولة يوقف الاستيراد كاملاً</b>
             </div>
 
             <div style={{ fontSize: 12, fontWeight: 700, color: '#333', marginBottom: 6, textAlign: 'right' }}>1) اختر القسم:</div>
@@ -1822,6 +1822,16 @@ export const MasterScheduleView = ({ facultyId, departmentId }: Props) => {
                     <div style={{ maxHeight: 130, overflowY: 'auto', border: '1px solid #80cbc4', borderRadius: 8, padding: 8, backgroundColor: '#f0faf8' }} data-testid="import-merged-list">
                       {importReport.merged.map((c: string, i: number) => (
                         <div key={i} style={{ fontSize: 11, color: '#004d40', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #b2dfdb' }}>{c}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {importReport.grouped?.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#4527a0', textAlign: 'right', marginBottom: 4 }}>👥 خلايا بالمجموعات ({importReport.grouped.length}):</div>
+                    <div style={{ maxHeight: 130, overflowY: 'auto', border: '1px solid #b39ddb', borderRadius: 8, padding: 8, backgroundColor: '#f6f2fb' }} data-testid="import-grouped-list">
+                      {importReport.grouped.map((c: string, i: number) => (
+                        <div key={i} style={{ fontSize: 11, color: '#311b92', textAlign: 'right', padding: '3px 0', borderBottom: '1px dashed #d1c4e9' }}>{c}</div>
                       ))}
                     </div>
                   </div>
