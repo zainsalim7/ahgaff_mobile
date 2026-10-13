@@ -26,9 +26,47 @@ MODELS = [
     {"provider": "anthropic", "model": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5 (سريع واقتصادي)"},
     {"provider": "gemini", "model": "gemini-3-flash-preview", "label": "Gemini 3 Flash (سريع واقتصادي)"},
     {"provider": "gemini", "model": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro (تحليل أعمق)"},
+    {"provider": "deepseek", "model": "deepseek-chat", "label": "DeepSeek V3 Chat (اقتصادي جداً)"},
+    {"provider": "deepseek", "model": "deepseek-reasoner", "label": "DeepSeek R1 Reasoner (تفكير متسلسل)"},
 ]
+PROVIDERS = [
+    {"key": "openai", "label": "OpenAI", "universal": True, "hint": "platform.openai.com/api-keys", "prefix": "sk-"},
+    {"key": "anthropic", "label": "Anthropic (Claude)", "universal": True, "hint": "console.anthropic.com", "prefix": "sk-ant-"},
+    {"key": "gemini", "label": "Google Gemini", "universal": True, "hint": "aistudio.google.com/apikey", "prefix": "AIza"},
+    {"key": "deepseek", "label": "DeepSeek", "universal": False, "hint": "platform.deepseek.com/api_keys", "prefix": "sk-"},
+]
+UNIVERSAL_PROVIDERS = {p["key"] for p in PROVIDERS if p["universal"]}
 DEFAULTS = {"enabled": True, "name": "مرشد الأحقاف", "provider": "openai", "model": "gpt-5.4", "daily_limit": 60,
-            "allowed_roles": [], "allowed_user_ids": [], "extra_instructions": ""}
+            "allowed_roles": [], "allowed_user_ids": [], "extra_instructions": "", "provider_keys": {}}
+
+
+def _fernet():
+    import base64, hashlib
+    from cryptography.fernet import Fernet
+    from config import SECRET_KEY
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(SECRET_KEY.encode()).digest()))
+
+
+def encrypt_key(raw: str) -> str:
+    return _fernet().encrypt(raw.encode()).decode()
+
+
+def decrypt_key(token: str) -> str:
+    return _fernet().decrypt(token.encode()).decode()
+
+
+def resolve_key(st: dict, provider: str):
+    """يعيد (المفتاح، المصدر): مفتاح المزوّد الخاص أولاً ثم المفتاح الشامل إن كان المزوّد مشمولاً به"""
+    enc = (st.get("provider_keys") or {}).get(provider)
+    if enc:
+        try:
+            return decrypt_key(enc), "own"
+        except Exception:
+            logging.error(f"assistant: failed to decrypt key for {provider}")
+    uni = os.environ.get("EMERGENT_LLM_KEY")
+    if uni and provider in UNIVERSAL_PROVIDERS:
+        return uni, "universal"
+    return None, None
 
 ROLE_AR = {"admin": "مدير النظام", "dean": "عميد كلية", "department_head": "رئيس قسم", "registrar": "موظف تسجيل", "registration_manager": "مدير التسجيل",
            "teacher": "أستاذ", "student": "طالب", "employee": "موظف", "hr_manager": "مدير الموارد البشرية"}
@@ -142,9 +180,21 @@ async def read_settings(current_user: dict = Depends(get_current_user)):
     users = await db.users.find({"_id": {"$in": [ObjectId(i) for i in st["allowed_user_ids"] if ObjectId.is_valid(i)]}}, {"full_name": 1, "username": 1, "role": 1}).to_list(200)
     today = _now().strftime("%Y-%m-%d")
     usage_today = await db.assistant_usage.aggregate([{"$match": {"date": today}}, {"$group": {"_id": None, "n": {"$sum": "$count"}}}]).to_list(1)
-    return {**st, "models": MODELS, "roles": [{"key": k, "label": v} for k, v in ROLE_AR.items() if k != "admin"],
+    uni = bool(os.environ.get("EMERGENT_LLM_KEY"))
+    keys = st.pop("provider_keys", {}) or {}
+    providers = []
+    for p in PROVIDERS:
+        own = p["key"] in keys
+        last4 = ""
+        if own:
+            try:
+                last4 = decrypt_key(keys[p["key"]])[-4:]
+            except Exception:
+                last4 = "????"
+        providers.append({**p, "has_own_key": own, "last4": last4, "source": "own" if own else ("universal" if uni and p["universal"] else None)})
+    return {**st, "models": MODELS, "providers": providers, "roles": [{"key": k, "label": v} for k, v in ROLE_AR.items() if k != "admin"],
             "allowed_users": [{"id": str(u["_id"]), "full_name": u.get("full_name"), "username": u.get("username"), "role": u.get("role")} for u in users],
-            "usage_today": (usage_today[0]["n"] if usage_today else 0), "key_configured": bool(os.environ.get("EMERGENT_LLM_KEY"))}
+            "usage_today": (usage_today[0]["n"] if usage_today else 0), "key_configured": uni}
 
 
 @router.put("/settings")
@@ -162,6 +212,33 @@ async def write_settings(data: SettingsIn, current_user: dict = Depends(get_curr
     return await get_settings(db)
 
 
+class ProviderKeyIn(BaseModel):
+    api_key: str
+
+
+@router.put("/provider-keys/{provider}")
+async def set_provider_key(provider: str, data: ProviderKeyIn, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="إعدادات المرشد للأدمن فقط")
+    if provider not in {p["key"] for p in PROVIDERS}:
+        raise HTTPException(status_code=400, detail="مزوّد غير معروف")
+    raw = data.api_key.strip()
+    if len(raw) < 16 or any(c.isspace() for c in raw):
+        raise HTTPException(status_code=400, detail="المفتاح غير صالح (قصير جداً أو يحتوي مسافات)")
+    await get_db().settings.update_one({"type": "assistant"}, {"$set": {f"provider_keys.{provider}": encrypt_key(raw), "type": "assistant", "updated_at": _now().isoformat()}}, upsert=True)
+    await log_activity(current_user, "assistant_provider_key_set", "settings", "assistant", f"مفتاح {provider}", {"provider": provider, "last4": raw[-4:]})
+    return {"ok": True, "provider": provider, "last4": raw[-4:]}
+
+
+@router.delete("/provider-keys/{provider}")
+async def delete_provider_key(provider: str, current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="إعدادات المرشد للأدمن فقط")
+    await get_db().settings.update_one({"type": "assistant"}, {"$unset": {f"provider_keys.{provider}": ""}, "$set": {"updated_at": _now().isoformat()}})
+    await log_activity(current_user, "assistant_provider_key_delete", "settings", "assistant", f"مفتاح {provider}", {"provider": provider})
+    return {"ok": True, "provider": provider}
+
+
 @router.get("/users/search")
 async def search_users(q: str, current_user: dict = Depends(get_current_user)):
     if current_user["role"] != UserRole.ADMIN:
@@ -173,10 +250,15 @@ async def search_users(q: str, current_user: dict = Depends(get_current_user)):
 
 def _build_chat(st: dict, session_id: str, system: str):
     from emergentintegrations.llm.chat import LlmChat
-    key = os.environ.get("EMERGENT_LLM_KEY")
+    key, source = resolve_key(st, st["provider"])
     if not key:
-        raise HTTPException(status_code=503, detail="مفتاح الذكاء الاصطناعي غير مهيأ (EMERGENT_LLM_KEY)")
-    return LlmChat(api_key=key, session_id=session_id, system_message=system).with_model(st["provider"], st["model"])
+        label = next((p["label"] for p in PROVIDERS if p["key"] == st["provider"]), st["provider"])
+        if st["provider"] in UNIVERSAL_PROVIDERS:
+            raise HTTPException(status_code=503, detail=f"لا يوجد مفتاح لمزوّد {label}: أدخل مفتاحك الخاص من إعدادات المرشد أو هيّئ المفتاح الشامل (EMERGENT_LLM_KEY)")
+        raise HTTPException(status_code=503, detail=f"مزوّد {label} غير مشمول بالمفتاح الشامل — أدخل مفتاحك الخاص من إعدادات المرشد")
+    llm = LlmChat(api_key=key, session_id=session_id, system_message=system).with_model(st["provider"], st["model"])
+    llm.key_source = source
+    return llm
 
 
 async def _check_quota(db, user: dict, st: dict):
@@ -218,7 +300,7 @@ async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
             answer = await llm.send_message(UserMessage(text=prompt))
         except Exception as e:
             logging.error(f"assistant error: {e}")
-            raise HTTPException(status_code=502, detail="تعذر الاتصال بنموذج الذكاء الاصطناعي")
+            raise HTTPException(status_code=424, detail="تعذر الاتصال بنموذج الذكاء الاصطناعي")
         await persist(answer)
         return {"reply": answer, "model": st["model"]}
 
@@ -263,10 +345,23 @@ async def test_model(request: Request, current_user: dict = Depends(get_current_
     if not m:
         raise HTTPException(status_code=400, detail="النموذج غير مدعوم")
     from emergentintegrations.llm.chat import UserMessage
-    llm = _build_chat({**m}, f"test-{current_user['id']}", "أجب بكلمة واحدة فقط.")
+    st = await get_settings(get_db())
+    llm = _build_chat({**st, **m}, f"test-{current_user['id']}", "أجب بكلمة واحدة فقط.")
+    source_ar = "مفتاحك الخاص" if llm.key_source == "own" else "المفتاح الشامل"
     t0 = _now()
     try:
         reply = await llm.send_message(UserMessage(text="قل: جاهز"))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"فشل الاختبار: {str(e)[:120]}")
-    return {"ok": True, "reply": str(reply)[:80], "ms": int((_now() - t0).total_seconds() * 1000)}
+        err = str(e)
+        low = err.lower()
+        if "401" in low or "authentication" in low or "invalid api key" in low or "incorrect api key" in low:
+            hint = "المفتاح مرفوض من المزوّد (غير صحيح أو منتهي)"
+        elif "402" in low or "insufficient" in low or "balance" in low or "quota" in low or "429" in low:
+            hint = "الرصيد أو الحصة غير كافية لدى المزوّد"
+        elif "404" in low or "not found" in low or "model" in low and "not" in low:
+            hint = "النموذج غير متاح لهذا المفتاح/المزوّد"
+        else:
+            hint = "تعذر الاتصال بالمزوّد"
+        logging.error(f"assistant test failed [{m['provider']}/{m['model']} via {llm.key_source}]: {err[:300]}")
+        raise HTTPException(status_code=424, detail=f"فشل الاختبار ({source_ar}): {hint}\n{err[:160]}")
+    return {"ok": True, "reply": str(reply)[:80], "ms": int((_now() - t0).total_seconds() * 1000), "key_source": llm.key_source, "key_source_label": source_ar}

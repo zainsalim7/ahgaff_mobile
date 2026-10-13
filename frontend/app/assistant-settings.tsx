@@ -12,6 +12,7 @@ export default function AssistantSettingsScreen() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [q, setQ] = useState(''); const [found, setFound] = useState<any[]>([]);
+  const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
 
   const load = () => api.get('/assistant/settings').then((r) => setSt(r.data)).catch((e) => notify('خطأ', e?.response?.data?.detail || 'تعذر التحميل'));
   useEffect(() => { load(); }, []);
@@ -27,18 +28,52 @@ export default function AssistantSettingsScreen() {
   };
   const test = async (model: string) => {
     setTesting(model);
-    try { const r = await api.post('/assistant/test', { model }); notify('نجح الاختبار ✅', `الرد: ${r.data.reply} (${r.data.ms} ms)`); }
-    catch (e: any) { notify('فشل الاختبار', e?.response?.data?.detail || 'خطأ'); } finally { setTesting(null); }
+    try { const r = await api.post('/assistant/test', { model }); notify('نجح الاختبار ✅', `الرد: ${r.data.reply} (${r.data.ms} ms)\nالمفتاح المستخدم: ${r.data.key_source_label}`); }
+    catch (e: any) { notify('فشل الاختبار', e?.response?.data?.detail || (e?.message ? `خطأ في الاتصال: ${e.message}` : 'خطأ غير معروف')); } finally { setTesting(null); }
+  };
+
+  const saveKey = async (provider: string) => {
+    const raw = (keyDraft[provider] || '').trim();
+    if (!raw) return;
+    setSaving(true);
+    try { await api.put(`/assistant/provider-keys/${provider}`, { api_key: raw }); setKeyDraft({ ...keyDraft, [provider]: '' }); await load(); notify('تم الحفظ ✅', 'حُفظ المفتاح مشفّراً. اضغط «اختبار» على أحد نماذج هذا المزوّد للتأكد.'); }
+    catch (e: any) { notify('خطأ', e?.response?.data?.detail || 'فشل حفظ المفتاح'); } finally { setSaving(false); }
+  };
+  const removeKey = async (provider: string) => {
+    if (Platform.OS === 'web' && !window.confirm('حذف المفتاح الخاص لهذا المزوّد؟')) return;
+    setSaving(true);
+    try { await api.delete(`/assistant/provider-keys/${provider}`); await load(); } catch (e: any) { notify('خطأ', e?.response?.data?.detail || 'فشل الحذف'); } finally { setSaving(false); }
   };
 
   if (!st) return <View style={s.center}><ActivityIndicator color="#1a2540" size="large" /></View>;
   const allowedIds: string[] = st.allowed_user_ids || [];
+  const providerOf = (key: string) => (st.providers || []).find((p: any) => p.key === key) || {};
 
   return (
     <SafeAreaView style={s.container} edges={['bottom']}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} testID="assistant-settings-screen">
         <View style={s.info}><Ionicons name="shield-checkmark" size={18} color="#1e3a8a" /><Text style={s.infoTxt}>المرشد في مرحلة «الإرشاد فقط»: يشرح الخطوات ويوجّه للشاشات حسب صلاحيات كل مستخدم، ولا ينفّذ عمليات ولا يطّلع على بيانات الطلاب أو الموظفين. مدير النظام يستخدمه دائماً؛ غيره يحتاج إذناً هنا أو صلاحية «استخدام مرشد الأحقاف» من الأدوار.</Text></View>
-        {!st.key_configured && <View style={[s.info, { backgroundColor: '#fee2e2' }]}><Text style={[s.infoTxt, { color: '#b91c1c' }]}>⚠️ مفتاح الذكاء الاصطناعي (EMERGENT_LLM_KEY) غير مهيأ على هذا الخادم.</Text></View>}
+        {!st.key_configured && <View style={[s.info, { backgroundColor: '#fee2e2' }]} testID="assistant-universal-key-missing"><Text style={[s.infoTxt, { color: '#b91c1c' }]}>⚠️ المفتاح الشامل (EMERGENT_LLM_KEY) غير مهيأ على هذا الخادم — أدخل مفتاحك الخاص لكل مزوّد في قسم «مفاتيح المزوّدين» أدناه.</Text></View>}
+
+        <View style={s.card} testID="assistant-provider-keys">
+          <Text style={s.cardTitle}>🔐 مفاتيح المزوّدين (API Keys)</Text>
+          <Text style={s.sub}>أدخل مفتاحك الخاص لأي مزوّد؛ يُحفظ مشفّراً ولا يُعرض كاملاً مرة أخرى. بدون مفتاح خاص يُستخدم المفتاح الشامل تلقائياً للمزوّدين المشمولين به (OpenAI/Anthropic/Gemini). DeepSeek يتطلب مفتاحاً خاصاً.</Text>
+          {(st.providers || []).map((p: any) => (
+            <View key={p.key} style={s.provRow} testID={`assistant-provider-${p.key}`}>
+              <View style={s.rowBetween}>
+                <View style={[s.badge, p.source === 'own' ? s.badgeOwn : p.source === 'universal' ? s.badgeUni : s.badgeNone]} testID={`assistant-provider-source-${p.key}`}>
+                  <Text style={s.badgeTxt}>{p.source === 'own' ? `مفتاح خاص ••••${p.last4}` : p.source === 'universal' ? 'المفتاح الشامل' : 'لا يوجد مفتاح'}</Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}><Text style={s.modelLbl}>{p.label}</Text><Text style={s.modelSub}>الحصول على المفتاح: {p.hint}</Text></View>
+              </View>
+              <View style={{ flexDirection: 'row-reverse', gap: 6, alignItems: 'center', marginTop: 6 }}>
+                <TextInput value={keyDraft[p.key] || ''} onChangeText={(v) => setKeyDraft({ ...keyDraft, [p.key]: v })} placeholder={p.has_own_key ? 'استبدال المفتاح الحالي…' : `الصق مفتاح ${p.label} هنا (${p.prefix}…)`} secureTextEntry autoCapitalize="none" autoCorrect={false} style={[s.input, { flex: 1 }]} testID={`assistant-provider-key-input-${p.key}`} />
+                <TouchableOpacity onPress={() => saveKey(p.key)} disabled={saving || !(keyDraft[p.key] || '').trim()} style={[s.testBtn, !(keyDraft[p.key] || '').trim() && { opacity: 0.4 }]} testID={`assistant-provider-key-save-${p.key}`}><Text style={s.testTxt}>حفظ</Text></TouchableOpacity>
+                {p.has_own_key && <TouchableOpacity onPress={() => removeKey(p.key)} disabled={saving} style={[s.testBtn, { borderColor: '#c62828' }]} testID={`assistant-provider-key-delete-${p.key}`}><Text style={[s.testTxt, { color: '#c62828' }]}>حذف</Text></TouchableOpacity>}
+              </View>
+            </View>
+          ))}
+        </View>
 
         <View style={s.card}>
           <View style={s.rowBetween}>
@@ -57,12 +92,18 @@ export default function AssistantSettingsScreen() {
           <Text style={s.sub}>بدّل بين النماذج حسب الحاجة (السرعة/التكلفة/الدقة). «اختبار» يرسل رسالة قصيرة للتأكد من عمل النموذج.</Text>
           {st.models.map((m: any) => {
             const on = m.model === st.model;
+            const prov = providerOf(m.provider);
+            const noKey = !prov.source;
             return (
               <View key={m.model} style={[s.modelRow, on && s.modelOn]}>
                 <TouchableOpacity onPress={() => test(m.model)} disabled={!!testing} style={s.testBtn} testID={`assistant-test-${m.model}`}>{testing === m.model ? <ActivityIndicator size="small" color="#1565c0" /> : <Text style={s.testTxt}>اختبار</Text>}</TouchableOpacity>
                 <TouchableOpacity onPress={() => save({ model: m.model })} style={{ flex: 1, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }} testID={`assistant-model-${m.model}`}>
                   <Ionicons name={on ? 'radio-button-on' : 'radio-button-off'} size={18} color={on ? '#6a1b9a' : '#94a3b8'} />
-                  <View style={{ flex: 1 }}><Text style={s.modelLbl}>{m.label}</Text><Text style={s.modelSub}>{m.provider} · {m.model}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.modelLbl}>{m.label}</Text>
+                    <Text style={s.modelSub}>{m.provider} · {m.model}{prov.source === 'own' ? ' · 🔑 مفتاح خاص' : prov.source === 'universal' ? ' · المفتاح الشامل' : ''}</Text>
+                    {noKey && <Text style={[s.modelSub, { color: '#b91c1c' }]} testID={`assistant-model-nokey-${m.model}`}>⚠️ {prov.universal === false ? `${prov.label} غير مشمول بالمفتاح الشامل — أدخل مفتاحك الخاص أعلاه` : 'لا يوجد مفتاح لهذا المزوّد — أدخل مفتاحاً خاصاً أعلاه'}</Text>}
+                  </View>
                 </TouchableOpacity>
               </View>
             );
@@ -114,4 +155,7 @@ const s = StyleSheet.create({
   chip: { borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: '#f8fafc' }, chipOn: { backgroundColor: '#6a1b9a', borderColor: '#6a1b9a' },
   chipTxt: { fontSize: 12, fontWeight: '700', color: '#1a2540' },
   result: { padding: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  provRow: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9' },
+  badge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }, badgeTxt: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  badgeOwn: { backgroundColor: '#2e7d32' }, badgeUni: { backgroundColor: '#1565c0' }, badgeNone: { backgroundColor: '#9e9e9e' },
 });
