@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .deps import get_db, get_current_user, has_permission, log_activity
 from .assistant_knowledge import KB, render_cards
+from .assistant_tools import tools_for, run_tool, TOOL_LABELS, TOOLS
 from models.permissions import Permission, UserRole
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -38,7 +39,7 @@ PROVIDERS = [
 ]
 UNIVERSAL_PROVIDERS = {p["key"] for p in PROVIDERS if p["universal"]}
 DEFAULTS = {"enabled": True, "name": "مرشد الأحقاف", "provider": "openai", "model": "gpt-5.4", "daily_limit": 60,
-            "allowed_roles": [], "allowed_user_ids": [], "extra_instructions": "", "provider_keys": {}, "knowledge_notes": []}
+            "allowed_roles": [], "allowed_user_ids": [], "extra_instructions": "", "provider_keys": {}, "knowledge_notes": [], "tools_enabled": True}
 
 
 def _fernet():
@@ -161,7 +162,8 @@ def system_prompt(user: dict, st: dict, route: Optional[str], knowledge: str = "
     return f"""أنت «{st['name']}»، مساعد إرشادي داخل نظام جامعة الأحقاف لإدارة الحضور والشؤون الأكاديمية والموارد البشرية.
 مهمتك: إرشاد المستخدم خطوة بخطوة لإنجاز مهامه داخل النظام بدقة وحرص، وشرح القواعد واللوائح، وتوجيهه إلى الشاشة الصحيحة.
 قيود صارمة:
-1) أنت لا تنفّذ أي عملية ولا تعدّل بيانات ولا تطّلع على بيانات الطلاب/الموظفين — فقط ترشد. إن طُلب تنفيذ شيء: اشرح كيف يفعله المستخدم بنفسه.
+1) أنت لا تنفّذ أي عملية ولا تعدّل بيانات — فقط ترشد. يمكنك قراءة أرقام وإحصائيات محدودة عبر الأدوات المتاحة لك (وهي مقيدة تلقائياً بصلاحيات هذا المستخدم). إن طُلب تنفيذ شيء: اشرح كيف يفعله المستخدم بنفسه.
+7) عندما يسأل المستخدم عن أرقام أو نسب أو حالة فعلية (غياب طالب، إحصائيات مقرر، محاضرات اليوم، رصيد إجازة، أعذار معلّقة) استخدم الأدوات بدل التخمين؛ ابحث أولاً (search_courses/search_students) إن لم يكن لديك المعرّف؛ ثم اعرض الأرقام بوضوح مع ذكر أن المصدر «بيانات النظام الآن» وأن النسب من الساعات المنفَّذة. إن أعادت الأداة خطأ صلاحية فأخبره بلطف أن ذلك خارج نطاقه.
 2) أرشد فقط إلى الشاشات المتاحة لدور المستخدم المذكورة أدناه. إن سأل عن شيء خارج صلاحياته فأخبره بلطف أن ذلك من اختصاص دور آخر (اذكر الدور) دون شرح تفاصيله.
 3) لا تخترع ميزات أو أزراراً غير مذكورة؛ إن لم تكن متأكداً قل «لست متأكداً — راجع إدارة النظام».
 4) أجب بالعربية الفصحى المبسطة، بإيجاز وبنقاط مرقّمة عند الخطوات.
@@ -196,6 +198,7 @@ class SettingsIn(BaseModel):
     allowed_user_ids: Optional[List[str]] = None
     extra_instructions: Optional[str] = None
     knowledge_notes: Optional[List[dict]] = None
+    tools_enabled: Optional[bool] = None
 
 
 @router.get("/knowledge/stats")
@@ -227,11 +230,39 @@ async def knowledge_card(card_id: str, current_user: dict = Depends(get_current_
     return c
 
 
+ROLE_SUGGESTIONS = {
+    "admin": ["كم طالباً معرّضاً للحرمان في مقرر معيّن؟", "كم طلب عذر غياب ينتظر المراجعة؟", "كيف أنقل طلاباً جماعياً إلى مستوى آخر؟", "كيف أستورد الجدول الأسبوعي من Excel؟"],
+    "dean": ["كم طلب عذر غياب ينتظر قراري؟", "ما نسب غياب طالب برقم قيده؟", "كيف أعتمد تبرير غياب أستاذ؟", "ما حدود الغياب المعتمدة في كليتي؟"],
+    "department_head": ["ما إحصائيات غياب مقررات قسمي؟", "كيف أراجع تبريرات غياب الأساتذة؟", "ما محاضرات اليوم في قسمي؟", "كيف أوزّع طلاب مقرر على مجموعات؟"],
+    "registrar": ["كم عذر غياب مرضي ينتظر المراجعة؟", "كيف أقدّم عذراً نيابةً عن طالب؟", "ما نسب غياب الطالب رقم القيد …؟", "كيف أنقل طالباً بين الشعب؟"],
+    "registration_manager": ["كم طلب عذر غياب معلّق؟", "كيف أرحّل مقررات الفصل؟", "ما نسب غياب طالب معيّن؟", "كيف أنقل طلاباً جماعياً؟"],
+    "teacher": ["ما محاضراتي اليوم؟", "من الطلاب المعرّضون للحرمان في مقرري؟", "ما رصيد إجازاتي؟", "كيف أسجّل الحضور لمجموعتي فقط؟"],
+    "student": ["ما نسب غيابي وكم تبقّى لي قبل الإنذار؟", "ما محاضراتي اليوم؟", "كيف أقدّم عذر غياب مرضي؟", "ما حدود الغياب في اللائحة؟"],
+    "employee": ["ما رصيد إجازاتي؟", "كيف أقدّم طلب إجازة؟", "كيف أسجّل حضوري اليوم؟", "كيف أطلب تعديل بياناتي الوظيفية؟"],
+    "hr_manager": ["كيف أسجّل إجازة لموظف وأعتمدها؟", "كيف أطبع بطاقات الموظفين؟", "كيف أعدّ تقرير الحضور الإداري؟", "كيف أرسل تعميماً للموظفين؟"],
+}
+
+
+def suggestions_for(user: dict, route: Optional[str]) -> List[str]:
+    base = list(ROLE_SUGGESTIONS.get(user["role"], ["ما محاضرات اليوم؟", "كيف أنجز مهمة في الشاشة الحالية؟"]))
+    rid = (route or "").split("?")[0].strip("/").replace("(tabs)/", "tabs-").replace("(tabs)", "index")
+    card = KB.cards.get(rid)
+    if card and rid in allowed_card_ids(user):
+        base = [f"كيف {t['goal']}؟" if not t["goal"].strip().endswith("؟") else t["goal"] for t in card.get("tasks", [])[:2]] + base
+    seen, out = set(), []
+    for q in base:
+        if q not in seen:
+            seen.add(q)
+            out.append(q)
+    return out[:4]
+
+
 @router.get("/meta")
-async def meta(current_user: dict = Depends(get_current_user)):
+async def meta(route: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     st = await get_settings(get_db())
     return {"can_use": can_use(current_user, st), "enabled": st["enabled"], "name": st["name"], "model": st["model"], "provider": st["provider"],
-            "is_admin": current_user["role"] == UserRole.ADMIN}
+            "is_admin": current_user["role"] == UserRole.ADMIN, "suggestions": suggestions_for(current_user, route),
+            "tools": [TOOL_LABELS.get(t["function"]["name"], t["function"]["name"]) for t in tools_for(current_user)] if st.get("tools_enabled", True) else []}
 
 
 @router.get("/settings")
@@ -257,7 +288,8 @@ async def read_settings(current_user: dict = Depends(get_current_user)):
         providers.append({**p, "has_own_key": own, "last4": last4, "source": "own" if own else ("universal" if uni and p["universal"] else None)})
     return {**st, "models": MODELS, "providers": providers, "roles": [{"key": k, "label": v} for k, v in ROLE_AR.items() if k != "admin"],
             "allowed_users": [{"id": str(u["_id"]), "full_name": u.get("full_name"), "username": u.get("username"), "role": u.get("role")} for u in users],
-            "usage_today": (usage_today[0]["n"] if usage_today else 0), "key_configured": uni}
+            "usage_today": (usage_today[0]["n"] if usage_today else 0), "key_configured": uni,
+            "tools": [{"name": k, "label": TOOL_LABELS.get(k, k), "desc": v["desc"], "roles": sorted(v["roles"]) if v["roles"] else ["الجميع"]} for k, v in TOOLS.items()]}
 
 
 @router.put("/settings")
@@ -429,9 +461,29 @@ async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
         await db.assistant_usage.update_one({"user_id": current_user["id"], "date": _now().strftime("%Y-%m-%d")}, {"$inc": {"count": 1}}, upsert=True)
 
     llm = _build_chat(st, data.session_id, system)
+    tools = tools_for(current_user) if st.get("tools_enabled", True) else []
+    if tools:
+        llm.with_tools(tools, tool_choice="auto")
+    ToolCallReady = _m.ToolCallReady
+    MAX_ROUNDS = 4
+
+    async def run_calls(calls):
+        for tc in calls:
+            logging.info(f"assistant tool {tc.name} by {current_user.get('username')} args={tc.arguments}")
+            llm.add_tool_result(tc.id, await run_tool(db, current_user, tc.name, tc.arguments or {}))
+
     if not data.stream:
         try:
-            answer = await llm.send_message(UserMessage(text=prompt))
+            if tools:
+                resp = await llm.send_message_with_tools(UserMessage(text=prompt))
+                rounds = 0
+                while resp.tool_calls and rounds < MAX_ROUNDS:
+                    await run_calls(resp.tool_calls)
+                    resp = await llm.send_message_with_tools()
+                    rounds += 1
+                answer = resp.content or ""
+            else:
+                answer = await llm.send_message(UserMessage(text=prompt))
         except Exception as e:
             logging.error(f"assistant error [{st['provider']}/{st['model']} via {llm.key_source}]: {e}")
             raise HTTPException(status_code=424, detail=f"تعذر الاتصال بنموذج {st['model']}: {_classify(str(e))}")
@@ -441,12 +493,22 @@ async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
     async def gen():
         buf = []
         try:
-            async for ev in llm.stream_message(UserMessage(text=prompt)):
-                if isinstance(ev, TextDelta):
-                    buf.append(ev.content)
-                    yield f"data: {json.dumps({'delta': ev.content}, ensure_ascii=False)}\n\n"
-                elif isinstance(ev, StreamDone):
+            user_msg = UserMessage(text=prompt)
+            for _round in range(MAX_ROUNDS + 1):
+                pending = []
+                async for ev in llm.stream_message(user_msg):
+                    if isinstance(ev, TextDelta):
+                        buf.append(ev.content)
+                        yield f"data: {json.dumps({'delta': ev.content}, ensure_ascii=False)}\n\n"
+                    elif isinstance(ev, ToolCallReady):
+                        pending.append(ev.tool_call)
+                        yield f"data: {json.dumps({'tool': ev.tool_call.name, 'label': TOOL_LABELS.get(ev.tool_call.name, ev.tool_call.name)}, ensure_ascii=False)}\n\n"
+                    elif isinstance(ev, StreamDone):
+                        break
+                if not pending or _round == MAX_ROUNDS:
                     break
+                await run_calls(pending)
+                user_msg = None
         except Exception as e:
             logging.error(f"assistant stream error [{st['provider']}/{st['model']} via {llm.key_source}]: {e}")
             err_msg = f"تعذر الاتصال بنموذج {st['model']}: {_classify(str(e))}"

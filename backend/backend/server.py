@@ -153,6 +153,15 @@ from models.auth import ActivateStudentAccount, ChangePasswordRequest, ForceChan
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+import sys as _sys
+
+
+class _ServerRef:  # مرجع حي لدوال هذا الملف تستخدمه الراوترات (أدوات المرشد) أياً كان اسم تحميل الوحدة
+    def __getattr__(self, k):
+        return globals()[k]
+
+
+_sys.modules.setdefault("ahgaff_server", _ServerRef())
 
 # JWT Configuration
 SECRET_KEY = os.environ.get('SECRET_KEY')

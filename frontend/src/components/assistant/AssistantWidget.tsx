@@ -24,9 +24,10 @@ export const AssistantWidget: React.FC = () => {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [toolNote, setToolNote] = useState('');
   const scrollRef = useRef<ScrollView>(null);
 
-  useEffect(() => { api.get('/assistant/meta').then((r) => setMeta(r.data)).catch(() => setMeta(null)); }, []);
+  useEffect(() => { api.get('/assistant/meta', { params: { route: pathname } }).then((r) => setMeta(r.data)).catch(() => setMeta(null)); }, [pathname]);
   useEffect(() => { scrollRef.current?.scrollToEnd({ animated: true }); }, [msgs]);
   if (!meta?.can_use || pathname === '/login') return null;
 
@@ -63,6 +64,7 @@ export const AssistantWidget: React.FC = () => {
           if (!p.startsWith('data: ')) continue;
           const ev = JSON.parse(p.slice(6));
           if (ev.delta) patch((prev) => prev + ev.delta);
+          if (ev.tool) setToolNote(`🔎 ${ev.label}…`);
           if (ev.error) patch(() => ev.error, true);
           if (ev.done) patch((prev) => prev, true);
         }
@@ -72,7 +74,7 @@ export const AssistantWidget: React.FC = () => {
       const st = e?.response?.status;
       const net = !st ? ` — ${e?.message || 'Failed to fetch'} (الخادم: ${API_URL})` : ` (HTTP ${st})`;
       patch(() => e?.response?.data?.detail || `تعذر الاتصال بالمرشد${net}`, true);
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setToolNote(''); }
   };
 
   const reset = () => { setSessionId(newId()); setMsgs([]); };
@@ -91,25 +93,27 @@ export const AssistantWidget: React.FC = () => {
             <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
               <Ionicons name="sparkles" size={16} color="#ffd54f" />
               <Text style={s.headerTitle}>{meta.name}</Text>
-              <Text style={s.headerSub}>إرشاد فقط · لا يعدّل بيانات</Text>
+              <Text style={s.headerSub}>{(meta.tools || []).length ? 'يرشد ويقرأ بياناتك · لا يعدّل' : 'إرشاد فقط · لا يعدّل بيانات'}</Text>
             </View>
             <TouchableOpacity onPress={reset} testID="assistant-new-chat"><Ionicons name="refresh" size={18} color="#fff" /></TouchableOpacity>
           </View>
           <ScrollView ref={scrollRef} style={s.body} contentContainerStyle={{ padding: 10, gap: 8 }} testID="assistant-messages">
             {msgs.length === 0 && (
               <View style={s.hint} testID="assistant-hint">
-                <Text style={s.hintTxt}>مرحباً! اسألني كيف تنجز أي مهمة في النظام، مثل:</Text>
-                {['كيف أعتمد عذراً مرضياً لطالب؟', 'كيف أوزّع طلاب مقرر على مجموعات؟', 'ما حدود الغياب في اللائحة؟'].map((q) => (
+                <Text style={s.hintTxt}>مرحباً! اسألني كيف تنجز أي مهمة في النظام{(meta.tools || []).length ? '، أو عن أرقام فعلية ضمن صلاحياتك' : ''}، مثل:</Text>
+                {(meta.suggestions || ['كيف أنجز مهمة في هذه الشاشة؟']).map((q: string) => (
                   <TouchableOpacity key={q} onPress={() => setInput(q)} style={s.hintChip} testID="assistant-suggestion"><Text style={s.hintChipTxt}>{q}</Text></TouchableOpacity>
                 ))}
+                {(meta.tools || []).length > 0 && <Text style={[s.hintTxt, { fontSize: 10.5, color: '#64748b', marginTop: 4 }]} testID="assistant-tools-hint">يستطيع القراءة لك: {(meta.tools || []).join(' · ')}</Text>}
               </View>
             )}
             {msgs.map((m, i) => {
               const { clean, navs } = m.role === 'assistant' ? splitNav(m.content) : { clean: m.content, navs: [] };
               return (
                 <View key={i} style={[s.bubble, m.role === 'user' ? s.userBubble : s.botBubble]} testID={`assistant-msg-${m.role}`}>
-                  <Text style={[s.bubbleTxt, m.role === 'user' && { color: '#fff' }]}>{clean || (m.streaming ? '…' : '')}</Text>
+                  <Text style={[s.bubbleTxt, m.role === 'user' && { color: '#fff' }]}>{clean || (m.streaming ? (toolNote || '…') : '')}</Text>
                   {m.streaming && !clean && <ActivityIndicator size="small" color="#1a2540" />}
+                  {m.streaming && !!clean && !!toolNote && <Text style={[s.bubbleTxt, { fontSize: 11, color: '#6a1b9a', marginTop: 4 }]} testID="assistant-tool-note">{toolNote}</Text>}
                   {navs.length > 0 && !m.streaming && (
                     <View style={{ flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                       {navs.map((n) => <TouchableOpacity key={n.path} onPress={() => { setOpen(false); router.push(n.path as any); }} style={s.navBtn} testID="assistant-nav"><Ionicons name="arrow-back" size={12} color="#1565c0" /><Text style={s.navTxt}>{n.label}</Text></TouchableOpacity>)}

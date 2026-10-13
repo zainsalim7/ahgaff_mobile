@@ -111,6 +111,21 @@ export default function AssistantSettingsScreen() {
           <Text style={s.sub}>الاستخدام اليوم: {st.usage_today} رسالة</Text>
         </View>
 
+        <View style={s.card} testID="assistant-tools-card">
+          <View style={s.rowBetween}>
+            <Switch value={st.tools_enabled !== false} onValueChange={(v) => save({ tools_enabled: v })} testID="assistant-tools-switch" />
+            <Text style={s.cardTitle}>🔎 أدوات القراءة (إجابات بالأرقام)</Text>
+          </View>
+          <Text style={s.sub}>يستطيع المرشد قراءة بيانات فعلية للإجابة بأرقام — كل أداة مقيدة تلقائياً بنطاق صلاحيات المستخدم السائل (الأستاذ يرى مقرراته/مجموعاته فقط، الطالب يرى نفسه فقط). لا توجد أي أداة تعديل.</Text>
+          {(st.tools || []).map((t: any) => (
+            <View key={t.name} style={s.provRow} testID={`assistant-tool-${t.name}`}>
+              <Text style={s.modelLbl}>{t.label} <Text style={s.modelSub}>· {t.name}</Text></Text>
+              <Text style={s.modelSub}>{t.desc}</Text>
+              <Text style={[s.modelSub, { color: '#6a1b9a' }]}>متاحة لـ: {t.roles.join('، ')}</Text>
+            </View>
+          ))}
+        </View>
+
         <View style={s.card} testID="assistant-models">
           <Text style={s.cardTitle}>🧠 أداة الذكاء الاصطناعي المستخدمة</Text>
           <Text style={s.sub}>بدّل بين النماذج حسب الحاجة (السرعة/التكلفة/الدقة). «اختبار» يرسل رسالة قصيرة للتأكد من عمل النموذج.</Text>
