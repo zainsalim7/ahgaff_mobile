@@ -626,7 +626,6 @@ export default function StudentsScreen() {
     if (!bulkTrgDeptId) { showMessage('خطأ', 'اختر القسم الهدف'); return; }
     const lvl = parseInt(bulkTrgLevel);
     if (isNaN(lvl) || lvl < 1 || lvl > 10) { showMessage('خطأ', 'المستوى غير صالح'); return; }
-    if (!bulkTrgSection.trim()) { showMessage('خطأ', 'الشعبة مطلوبة'); return; }
     setBulkTransferring(true);
     try {
       const res = await api.post('/students/bulk-transfer', {
@@ -3093,11 +3092,11 @@ export default function StudentsScreen() {
                     </View>
                   </View>
                   <View style={[styles.btField, { flex: 1 }]}>
-                    <Text style={styles.btLabel}>الشعبة</Text>
+                    <Text style={styles.btLabel}>الشعبة <Text style={{ color: '#90a4ae', fontWeight: '400' }}>(اختيارية — اتركها فارغة إن لم توجد شعب)</Text></Text>
                     <TextInput
                       value={bulkTrgSection}
                       onChangeText={setBulkTrgSection}
-                      placeholder="مثال: أ"
+                      placeholder="بلا شعبة"
                       placeholderTextColor="#b0bec5"
                       style={styles.btInput}
                       testID="bulk-transfer-section-input"

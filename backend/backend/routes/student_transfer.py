@@ -261,7 +261,7 @@ async def _perform_transfer(db, student: dict, target: dict, target_level: int, 
         recipient_id = str(student_user["_id"]) if student_user else str(student["_id"])
         note_body = (
             f"تم نقلك إلى كلية: {snapshot_to['faculty_name']} • قسم: {snapshot_to['department_name']} • "
-            f"المستوى: {target_level} • الشعبة: {target_section}"
+            f"المستوى: {target_level}" + (f" • الشعبة: {target_section}" if target_section else "")
         )
         await db.notifications.insert_one({
             "user_id": recipient_id,
