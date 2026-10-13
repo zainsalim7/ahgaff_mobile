@@ -6399,11 +6399,12 @@ async def get_course(course_id: str, current_user: dict = Depends(get_current_us
     }
 
 async def _teacher_group_scope(course: dict, current_user: dict) -> tuple:
-    """👥 (is_owner, group_keys): هل المستخدم مدرّس المقرر الأساسي؟ وإلا مفاتيح المجموعات التي يقودها فيه"""
+    """👥 (is_owner, group_keys). مقرر مقسّم لمجموعات = كل قائد يرى مجموعته فقط (حتى لو كان مدرّس المقرر المسجّل)؛
+    مدرّس المقرر الذي لا يقود أي مجموعة (منسّق) يرى المقرر كاملاً"""
     user = await db.users.find_one({"_id": ObjectId(current_user["id"])}, {"teacher_record_id": 1})
     ids = {current_user["id"], str((user or {}).get("teacher_record_id") or "")} - {""}
-    is_owner = str(course.get("teacher_id")) in ids
     keys = [g.get("key") for g in (course.get("groups") or []) if g.get("teacher_id") in ids and g.get("key")]
+    is_owner = str(course.get("teacher_id")) in ids and not keys
     return is_owner, keys
 
 
@@ -6876,7 +6877,12 @@ async def get_course_enrollments(course_id: str, current_user: dict = Depends(ge
     if not course:
         raise HTTPException(status_code=404, detail="المقرر غير موجود")
     
-    enrollments = await db.enrollments.find({"course_id": course_id}).to_list(10000)
+    _enr_q: dict = {"course_id": course_id}
+    if current_user["role"] == UserRole.TEACHER:
+        _is_owner, _keys = await _teacher_group_scope(course, current_user)
+        if _keys:
+            _enr_q["group"] = {"$in": _keys}  # 👥 قائد المجموعة يرى طلاب مجموعته فقط
+    enrollments = await db.enrollments.find(_enr_q).to_list(10000)
     
     # Get student details
     student_ids = [ObjectId(e["student_id"]) for e in enrollments]

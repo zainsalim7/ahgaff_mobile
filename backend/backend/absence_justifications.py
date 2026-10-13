@@ -77,7 +77,8 @@ def build_router(db, get_current_user, send_push_many=None, user_from_token=None
         result = {}
         for c in courses:
             keys = [g.get("key") for g in (c.get("groups") or []) if g.get("teacher_id") in ids]
-            c["_group_keys"] = keys if c.get("teacher_id") not in ids else []
+            # مقرر مقسّم لمجموعات: كل قائد يرى مجموعته فقط حتى لو كان مدرّس المقرر المسجّل
+            c["_group_keys"] = keys
             result[str(c["_id"])] = c
         return result
 

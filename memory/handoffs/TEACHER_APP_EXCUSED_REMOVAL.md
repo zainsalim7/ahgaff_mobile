@@ -3,3 +3,7 @@
 - الباكند يحوّل تلقائياً أي `excused` يرسله الأستاذ إلى `absent` (إلا إن كان للطالب عذر معتمد يغطي التاريخ) وأي `late` إلى `present`.
 - عند التحضير يرجع `POST /api/attendance/session` حقل `auto_excused` (عدد الطلاب الذين سُجّلوا «بعذر» تلقائياً بموجب عذر معتمد) مع ذكر ذلك في `message`.
 - المطلوب في التطبيق: زر الحالة يتبدل بين حاضر/غائب فقط (تم في `/app/teacher-app/app/(tabs)/take-attendance.tsx` كمرجع)، ويُعرض عدّاد «بعذر معتمد» للقراءة فقط إن وُجد.
+
+## قاعدة الرؤية في المجموعات (2026-10-13)
+- كل قائد مجموعة يرى **مجموعته فقط** في: `/enrollments/{id}/students`، `/enrollments/{id}`، `/courses/{id}/lecture-stats`، `/courses/{id}/groups`، `/courses/{id}/groups/{key}/detail`، `/absence-justifications/absent-lectures` — حتى لو كان هو `course.teacher_id`. طلب مجموعة أخرى → 403.
+- مدرّس المقرر الذي لا يقود أي مجموعة (منسّق) يرى المقرر كاملاً.

@@ -21,6 +21,30 @@ HEAD_FILL = PatternFill("solid", fgColor="1A2540")
 HEAD_FONT = Font(bold=True, color="FFFFFF")
 
 
+async def teacher_group_keys(db, course: dict, user: dict) -> Optional[List[str]]:
+    """👥 None = يرى المقرر كاملاً (إدارة أو منسّق لا يقود مجموعة)؛ قائمة = مجموعاته فقط؛ 403 إن لم يكن له صلة بالمقرر"""
+    if user.get("role") != "teacher":
+        return None
+    u = await db.users.find_one({"_id": ObjectId(user["id"])}, {"teacher_record_id": 1})
+    ids = {user["id"], str((u or {}).get("teacher_record_id") or "")} - {""}
+    keys = [g.get("key") for g in (course.get("groups") or []) if g.get("teacher_id") in ids and g.get("key")]
+    if keys:
+        return keys
+    if str(course.get("teacher_id")) in ids:
+        return None
+    raise HTTPException(status_code=403, detail="هذا المقرر ليس ضمن مقرراتك")
+
+
+def restrict_view(view: dict, keys: Optional[List[str]]) -> dict:
+    if keys is None:
+        return view
+    view["groups"] = [g for g in view["groups"] if g["key"] in keys]
+    view["unassigned"] = []
+    view["total"] = sum(g["count"] for g in view["groups"])
+    view["restricted_to"] = keys
+    return view
+
+
 def _xlsx_response(wb, name: str) -> StreamingResponse:
     out = io.BytesIO()
     wb.save(out)
@@ -62,7 +86,10 @@ GROUP_HEADERS = ["رقم القيد", "اسم الطالب", "المجموعة",
 async def group_detail(course_id: str, key: str, current_user: dict = Depends(get_current_user)):
     db = get_db()
     course = await _course(db, course_id)
-    view = await _view(db, course)
+    keys = await teacher_group_keys(db, course, current_user)
+    if keys is not None and key not in keys:
+        raise HTTPException(status_code=403, detail="هذه المجموعة ليست ضمن مجموعاتك")
+    view = restrict_view(await _view(db, course), keys)
     g = next((x for x in view["groups"] if x["key"] == key), None)
     if not g:
         raise HTTPException(status_code=404, detail="المجموعة غير معرّفة في هذا المقرر")
@@ -99,7 +126,10 @@ async def group_detail(course_id: str, key: str, current_user: dict = Depends(ge
 async def export_course_groups(course_id: str, group: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     db = get_db()
     course = await _course(db, course_id)
-    view = await _view(db, course)
+    keys = await teacher_group_keys(db, course, current_user)
+    if keys is not None and group and group not in keys:
+        raise HTTPException(status_code=403, detail="هذه المجموعة ليست ضمن مجموعاتك")
+    view = restrict_view(await _view(db, course), keys)
     wb = openpyxl.Workbook()
     groups = [g for g in view["groups"] if not group or g["key"] == group]
     if not groups and group:
@@ -108,7 +138,7 @@ async def export_course_groups(course_id: str, group: Optional[str] = None, curr
     for g in groups:
         _sheet(wb, g["name"], GROUP_HEADERS, [[s["student_number"], s["full_name"], g["name"], g["key"], g.get("teacher_name") or ""] for s in g["students"]], first=first)
         first = False
-    if not group:
+    if not group and keys is None:
         _sheet(wb, "بلا مجموعة", GROUP_HEADERS, [[s["student_number"], s["full_name"], "", "", ""] for s in view["unassigned"]], first=first)
         first = False
         _sheet(wb, "الكل", GROUP_HEADERS, _group_rows(view))

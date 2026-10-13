@@ -108,7 +108,10 @@ async def _view(db, course: dict) -> dict:
 @router.get("/courses/{course_id}/groups")
 async def get_course_groups(course_id: str, current_user: dict = Depends(get_current_user)):
     db = get_db()
-    return await _view(db, await _course(db, course_id))
+    course = await _course(db, course_id)
+    # 👥 قائد المجموعة يرى مجموعته فقط
+    from .course_groups_tools import teacher_group_keys, restrict_view
+    return restrict_view(await _view(db, course), await teacher_group_keys(db, course, current_user))
 
 
 @router.put("/courses/{course_id}/groups")
@@ -358,10 +361,12 @@ async def delete_group_template(template_id: str, current_user: dict = Depends(g
 
 @router.get("/courses/{course_id}/groups/attendance")
 async def groups_attendance(course_id: str, current_user: dict = Depends(get_current_user)):
-    """📊 مقارنة الحضور بين مجموعات المقرر (حسب سجلات الحضور)"""
+    """📊 مقارنة الحضور بين مجموعات المقرر (حسب سجلات الحضور) — قائد المجموعة يرى مجموعته فقط"""
     db = get_db()
     course = await _course(db, course_id)
-    groups = course.get("groups") or []
+    from .course_groups_tools import teacher_group_keys
+    _keys = await teacher_group_keys(db, course, current_user)
+    groups = [g for g in (course.get("groups") or []) if _keys is None or g.get("key") in _keys]
     enr = {e["student_id"]: (e.get("group") or "") async for e in db.enrollments.find({"course_id": course_id}, {"student_id": 1, "group": 1})}
     stats = {g["key"]: {"present": 0, "late": 0, "absent": 0, "excused": 0, "students": 0} for g in groups}
     stats[""] = {"present": 0, "late": 0, "absent": 0, "excused": 0, "students": 0}
@@ -387,7 +392,7 @@ async def groups_attendance(course_id: str, current_user: dict = Depends(get_cur
                 "lectures_count": lec_counts.get("", 0) + (lec_counts.get(key, 0) if key else 0)}
 
     out = [_pack(g["key"], g.get("name") or f"مجموعة {g['key']}", i) for i, g in enumerate(groups)]
-    if stats[""]["students"]:
+    if stats[""]["students"] and _keys is None:
         out.append(_pack("", "بلا مجموعة", len(groups)))
     rates = [x["attendance_rate"] for x in out if x["total_records"]]
     return {"course_id": course_id, "course_name": course.get("name", ""), "groups": out,
