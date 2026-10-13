@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 106 — Course Groups tools (page+export+import+level export+groups-map+PUT warnings) fully tested backend+frontend. Backend: 14/14 pytest passed in /app/backend/tests/test_course_groups_tools.py. Verified: GET /api/courses/{id}/groups/{key}/detail returns course/group/all_groups/students (with pct_unexcused/pct_total/status_ar)/limits/schedule/lectures; 404 for unknown group. GET /api/courses/{id}/groups/export → multi-sheet xlsx (per group + 'بلا مجموعة' + 'الكل') with X-Filename; ?group=2 → single sheet; group=ZZ → 404. GET /api/groups/export-level?department_id=&level=3 → xlsx with first sheet 'ملخص' + per-course sheets; level=99 → 404. GET /api/courses/{id}/groups/import-template → xlsx with required Arabic headers. POST import-preview with mixed file (move 1→2, unchanged, unknown 999999, undefined group 'ج') returns correct changes/unchanged/unknown_students/undefined_groups; bad header → 400. POST import-apply without create_missing_groups + undefined group → 400; valid file applies change, verified via /detail; reverted via POST /api/courses/{id}/groups/assign. POST /api/students/groups-map returns map. PUT /api/courses/{id}/groups returns schedule_sync_warnings array (identical payload no changes). Frontend admin UI /course-group?courseId=698f0000d803b27aab0120af&group=1: all testIDs present (course-group-page/hero/switcher/switch-2/schedule, groups-excel-bar + 5 action buttons, course-group-search filters rows to 0 for 'xyz_zz', 24 course-group-row-* with 24 course-group-move-* buttons, course-group-lectures-btn). Switcher navigates to ?group=2. /course-students course-groups-btn opens course-groups-modal with groups-excel-box, group-toggle-1 expands to show group-open-page-1. /students search by '12346' shows student-groups-698ef706d803b27aab012066 badge + student-group-chip-*. /student-details?studentId=698ef706d803b27aab012066: student is enrolled in 2 courses (ENG-T1, LIB-T1) each showing student-course-group-* badge; however student-course-group-698f0000d803b27aab0120af is NOT present because this specific student is NOT enrolled in course 698f0000... in the enrolled-courses list — a bit inconsistent with /students chip (which shows 'مجموعة 1 معدلة · دراسات حج') suggesting a stale/orphan enrollment in students.groups-map but not surfaced in student-details enrolled courses. Not blocking but worth E1 review.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Student 698ef706d803b27aab012066 / Course 698f0000d803b27aab0120af", "issue": "/students page shows a student-group-chip for course 'دراسات حضرموت' (via /api/students/groups-map), but /student-details for the same student does NOT list that course in his enrolled courses, so no student-course-group-698f0000d803b27aab0120af badge appears. Likely a stale enrollment row with group but no active course enrollment, or a filtering mismatch between the two data sources.", "affected_selectors": ["student-course-group-698f0000d803b27aab0120af"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_course_groups_tools.py",
+    "/app/test_reports/pytest/iter106.xml"
+  ],
+  "action_items": [
+    "Review consistency between POST /api/students/groups-map and student-details enrolled-courses endpoint for student 698ef706d803b27aab012066 (shows group chip on /students but no course card on /student-details)."
+  ],
+  "critical_code_review_comments": [
+    "course_groups_tools._parse_import uses `col()` substring matching that correctly accepts 'رقم القيد' and 'المجموعة' columns while rejecting files with neither (400).",
+    "import-apply when create_missing_groups=True names 'مجموعة {key}' only if key length <=2 — otherwise uses the raw label as name, which is reasonable but could lead to very long names if users type full group names in the Excel.",
+    "export-level sorts courses by name and places 'ملخص' sheet first via wb.move_sheet(offset) — correct.",
+    "detail endpoint uses weekly_schedule.find with group={key} but current_user permission (_can) is not enforced on GET /detail — any authenticated user can view. Consider adding permission scope if sensitive."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (14/14 pytest)", "frontend": "~95% (all testIDs OK except one expected-missing case due to data inconsistency, not a UI bug)"},
+  "test_credentials": "admin/admin123 OK",
+  "seed_data_creation": "Backend test moves one student 1→2 then reverts via /groups/assign — no residual data changes. One PUT /groups with identical payload (no-op).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Re-run: cd /app/backend && REACT_APP_BACKEND_URL=https://schedule-hub-272.preview.emergentagent.com python3 -m pytest tests/test_course_groups_tools.py -v. Course 698f0000d803b27aab0120af has exactly 2 groups ('1','2') with 24 students each. Student 698ef706d803b27aab012066 (رقم القيد 12346) is used for groups-map tests. The /students page requires typing a search term before badges appear. The /courses page requires applying dept/level filters to render course rows with course-group-chip-*."
+}
