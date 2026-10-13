@@ -13,6 +13,7 @@ export default function AssistantSettingsScreen() {
   const [testing, setTesting] = useState<string | null>(null);
   const [q, setQ] = useState(''); const [found, setFound] = useState<any[]>([]);
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
+  const [diag, setDiag] = useState<string | null>(null);
 
   const load = () => api.get('/assistant/settings').then((r) => setSt(r.data)).catch((e) => notify('خطأ', e?.response?.data?.detail || 'تعذر التحميل'));
   useEffect(() => { load(); }, []);
@@ -28,8 +29,22 @@ export default function AssistantSettingsScreen() {
   };
   const test = async (model: string) => {
     setTesting(model);
-    try { const r = await api.post('/assistant/test', { model }); notify('نجح الاختبار ✅', `الرد: ${r.data.reply} (${r.data.ms} ms)\nالمفتاح المستخدم: ${r.data.key_source_label}`); }
-    catch (e: any) { notify('فشل الاختبار', e?.response?.data?.detail || (e?.message ? `خطأ في الاتصال: ${e.message}` : 'خطأ غير معروف')); } finally { setTesting(null); }
+    const t0 = Date.now();
+    try { const r = await api.post('/assistant/test', { model }, { timeout: 60000 }); notify('نجح الاختبار ✅', `الرد: ${r.data.reply} (${r.data.ms} ms)\nالمفتاح المستخدم: ${r.data.key_source_label}`); }
+    catch (e: any) {
+      const sec = Math.round((Date.now() - t0) / 1000);
+      const st = e?.response?.status;
+      const net = !e?.response ? `\n⚠️ لم يصل أي رد من الخادم بعد ${sec} ث (${e?.message || 'Network Error'}) — غالباً انتهت مهلة الوسيط (Cloudflare/Cloud Run) أو خطأ 500 غير معالج. اضغط «تشخيص» بجانب المزوّد لمعرفة السبب.` : '';
+      notify('فشل الاختبار', (e?.response?.data?.detail || `خطأ${st ? ` (HTTP ${st})` : ''}`) + net);
+    } finally { setTesting(null); }
+  };
+  const diagnose = async (provider: string) => {
+    setDiag(provider);
+    try {
+      const r = await api.get(`/assistant/diagnose/${provider}`, { timeout: 30000 });
+      const lines = (r.data.steps || []).map((s: any) => `${s.ok ? '✅' : '❌'} ${s.step}: ${s.msg}`).join('\n');
+      notify(r.data.ok === false ? 'نتيجة التشخيص ❌' : 'نتيجة التشخيص', lines + (r.data.universal_env ? '' : '\nℹ️ المفتاح الشامل (EMERGENT_LLM_KEY) غير مهيأ على هذا الخادم.'));
+    } catch (e: any) { notify('فشل التشخيص', e?.response?.data?.detail || e?.message || 'خطأ'); } finally { setDiag(null); }
   };
 
   const saveKey = async (provider: string) => {
@@ -70,6 +85,7 @@ export default function AssistantSettingsScreen() {
                 <TextInput value={keyDraft[p.key] || ''} onChangeText={(v) => setKeyDraft({ ...keyDraft, [p.key]: v })} placeholder={p.has_own_key ? 'استبدال المفتاح الحالي…' : `الصق مفتاح ${p.label} هنا (${p.prefix}…)`} secureTextEntry autoCapitalize="none" autoCorrect={false} style={[s.input, { flex: 1 }]} testID={`assistant-provider-key-input-${p.key}`} />
                 <TouchableOpacity onPress={() => saveKey(p.key)} disabled={saving || !(keyDraft[p.key] || '').trim()} style={[s.testBtn, !(keyDraft[p.key] || '').trim() && { opacity: 0.4 }]} testID={`assistant-provider-key-save-${p.key}`}><Text style={s.testTxt}>حفظ</Text></TouchableOpacity>
                 {p.has_own_key && <TouchableOpacity onPress={() => removeKey(p.key)} disabled={saving} style={[s.testBtn, { borderColor: '#c62828' }]} testID={`assistant-provider-key-delete-${p.key}`}><Text style={[s.testTxt, { color: '#c62828' }]}>حذف</Text></TouchableOpacity>}
+                {!!p.source && <TouchableOpacity onPress={() => diagnose(p.key)} disabled={!!diag} style={[s.testBtn, { borderColor: '#6a1b9a' }]} testID={`assistant-provider-diagnose-${p.key}`}>{diag === p.key ? <ActivityIndicator size="small" color="#6a1b9a" /> : <Text style={[s.testTxt, { color: '#6a1b9a' }]}>تشخيص</Text>}</TouchableOpacity>}
               </View>
             </View>
           ))}

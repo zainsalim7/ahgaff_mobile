@@ -55,6 +55,19 @@ def decrypt_key(token: str) -> str:
     return _fernet().decrypt(token.encode()).decode()
 
 
+def _classify(err: str) -> str:
+    low = err.lower()
+    if "401" in low or "authentication" in low or "invalid api key" in low or "incorrect api key" in low:
+        return "المفتاح مرفوض من المزوّد (غير صحيح أو منتهي)"
+    if "402" in low or "insufficient" in low or "balance" in low or "quota" in low or "429" in low:
+        return "الرصيد أو الحصة غير كافية لدى المزوّد"
+    if "404" in low or "not found" in low or ("model" in low and "not" in low):
+        return "النموذج غير متاح لهذا المفتاح/المزوّد"
+    if "timeout" in low or "timed out" in low:
+        return "انتهت مهلة الاتصال بالمزوّد"
+    return "تعذر الاتصال بالمزوّد"
+
+
 def resolve_key(st: dict, provider: str):
     """يعيد (المفتاح، المصدر): مفتاح المزوّد الخاص أولاً ثم المفتاح الشامل إن كان المزوّد مشمولاً به"""
     enc = (st.get("provider_keys") or {}).get(provider)
@@ -248,7 +261,7 @@ async def search_users(q: str, current_user: dict = Depends(get_current_user)):
     return [{"id": str(u["_id"]), "full_name": u.get("full_name"), "username": u.get("username"), "role": u.get("role"), "role_label": ROLE_AR.get(u.get("role"), u.get("role"))} for u in users]
 
 
-def _build_chat(st: dict, session_id: str, system: str):
+def _build_chat(st: dict, session_id: str, system: str, timeout: int = 90):
     from emergentintegrations.llm.chat import LlmChat
     key, source = resolve_key(st, st["provider"])
     if not key:
@@ -256,9 +269,61 @@ def _build_chat(st: dict, session_id: str, system: str):
         if st["provider"] in UNIVERSAL_PROVIDERS:
             raise HTTPException(status_code=503, detail=f"لا يوجد مفتاح لمزوّد {label}: أدخل مفتاحك الخاص من إعدادات المرشد أو هيّئ المفتاح الشامل (EMERGENT_LLM_KEY)")
         raise HTTPException(status_code=503, detail=f"مزوّد {label} غير مشمول بالمفتاح الشامل — أدخل مفتاحك الخاص من إعدادات المرشد")
-    llm = LlmChat(api_key=key, session_id=session_id, system_message=system).with_model(st["provider"], st["model"])
+    llm = LlmChat(api_key=key, session_id=session_id, system_message=system).with_model(st["provider"], st["model"]).with_params(timeout=timeout)
     llm.key_source = source
     return llm
+
+
+PROVIDER_PROBE = {
+    "openai": lambda k: ("https://api.openai.com/v1/models", {"Authorization": f"Bearer {k}"}),
+    "anthropic": lambda k: ("https://api.anthropic.com/v1/models", {"x-api-key": k, "anthropic-version": "2023-06-01"}),
+    "gemini": lambda k: (f"https://generativelanguage.googleapis.com/v1beta/models?key={k}", {}),
+    "deepseek": lambda k: ("https://api.deepseek.com/models", {"Authorization": f"Bearer {k}"}),
+}
+
+
+@router.get("/diagnose/{provider}")
+async def diagnose_provider(provider: str, current_user: dict = Depends(get_current_user)):
+    """تشخيص مباشر: هل يوجد مفتاح؟ هل يصل الخادم إلى المزوّد؟ هل يقبل المزوّد المفتاح؟ (بدون المرور عبر مكتبة النماذج)"""
+    import httpx
+    if current_user["role"] != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="غير مصرح")
+    if provider not in PROVIDER_PROBE:
+        raise HTTPException(status_code=400, detail="مزوّد غير معروف")
+    st = await get_settings(get_db())
+    key, source = resolve_key(st, provider)
+    out = {"provider": provider, "key_source": source, "key_last4": key[-4:] if key else None, "universal_env": bool(os.environ.get("EMERGENT_LLM_KEY")), "steps": []}
+    if not key:
+        out["steps"].append({"step": "المفتاح", "ok": False, "msg": "لا يوجد مفتاح لهذا المزوّد"})
+        return out
+    out["steps"].append({"step": "المفتاح", "ok": True, "msg": f"المصدر: {'مفتاح خاص' if source == 'own' else 'المفتاح الشامل'} (••••{key[-4:]})"})
+    if source == "universal":
+        out["steps"].append({"step": "الاتصال", "ok": True, "msg": "المفتاح الشامل يمر عبر وسيط Emergent؛ استخدم زر «اختبار» للتحقق الفعلي"})
+        return out
+    url, headers = PROVIDER_PROBE[provider](key)
+    t0 = _now()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=6.0)) as client:
+            r = await client.get(url, headers=headers)
+        ms = int((_now() - t0).total_seconds() * 1000)
+        host = url.split("/")[2]
+        out["steps"].append({"step": "الاتصال بالمزوّد", "ok": True, "msg": f"الخادم وصل إلى {host} خلال {ms} ms"})
+        if r.status_code == 200:
+            out["steps"].append({"step": "صحة المفتاح", "ok": True, "msg": "المزوّد قبل المفتاح ✅"})
+        elif r.status_code in (401, 403):
+            out["steps"].append({"step": "صحة المفتاح", "ok": False, "msg": f"المزوّد رفض المفتاح ({r.status_code}): {r.text[:160]}"})
+        elif r.status_code == 402 or r.status_code == 429:
+            out["steps"].append({"step": "الرصيد", "ok": False, "msg": f"رصيد/حصة غير كافية ({r.status_code}): {r.text[:160]}"})
+        else:
+            out["steps"].append({"step": "رد المزوّد", "ok": False, "msg": f"رد غير متوقع ({r.status_code}): {r.text[:160]}"})
+    except httpx.ConnectError as e:
+        out["steps"].append({"step": "الاتصال بالمزوّد", "ok": False, "msg": f"الخادم لا يستطيع الوصول إلى المزوّد (DNS/شبكة/حجب): {str(e)[:160]}"})
+    except httpx.TimeoutException:
+        out["steps"].append({"step": "الاتصال بالمزوّد", "ok": False, "msg": "انتهت المهلة (12 ث) — الاتصال من الخادم إلى المزوّد معلّق/محجوب"})
+    except Exception as e:
+        out["steps"].append({"step": "الاتصال بالمزوّد", "ok": False, "msg": f"{type(e).__name__}: {str(e)[:160]}"})
+    out["ok"] = all(s["ok"] for s in out["steps"])
+    return out
 
 
 async def _check_quota(db, user: dict, st: dict):
@@ -299,8 +364,8 @@ async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
         try:
             answer = await llm.send_message(UserMessage(text=prompt))
         except Exception as e:
-            logging.error(f"assistant error: {e}")
-            raise HTTPException(status_code=424, detail="تعذر الاتصال بنموذج الذكاء الاصطناعي")
+            logging.error(f"assistant error [{st['provider']}/{st['model']} via {llm.key_source}]: {e}")
+            raise HTTPException(status_code=424, detail=f"تعذر الاتصال بنموذج {st['model']}: {_classify(str(e))}")
         await persist(answer)
         return {"reply": answer, "model": st["model"]}
 
@@ -314,8 +379,9 @@ async def chat(data: ChatIn, current_user: dict = Depends(get_current_user)):
                 elif isinstance(ev, StreamDone):
                     break
         except Exception as e:
-            logging.error(f"assistant stream error: {e}")
-            yield f"data: {json.dumps({'error': 'تعذر الاتصال بنموذج الذكاء الاصطناعي'}, ensure_ascii=False)}\n\n"
+            logging.error(f"assistant stream error [{st['provider']}/{st['model']} via {llm.key_source}]: {e}")
+            err_msg = f"تعذر الاتصال بنموذج {st['model']}: {_classify(str(e))}"
+            yield f"data: {json.dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
             return
         await persist("".join(buf))
         yield f"data: {json.dumps({'done': True, 'model': st['model']})}\n\n"
@@ -346,22 +412,14 @@ async def test_model(request: Request, current_user: dict = Depends(get_current_
         raise HTTPException(status_code=400, detail="النموذج غير مدعوم")
     from emergentintegrations.llm.chat import UserMessage
     st = await get_settings(get_db())
-    llm = _build_chat({**st, **m}, f"test-{current_user['id']}", "أجب بكلمة واحدة فقط.")
+    llm = _build_chat({**st, **m}, f"test-{current_user['id']}", "أجب بكلمة واحدة فقط.", timeout=40)
     source_ar = "مفتاحك الخاص" if llm.key_source == "own" else "المفتاح الشامل"
     t0 = _now()
     try:
         reply = await llm.send_message(UserMessage(text="قل: جاهز"))
     except Exception as e:
         err = str(e)
-        low = err.lower()
-        if "401" in low or "authentication" in low or "invalid api key" in low or "incorrect api key" in low:
-            hint = "المفتاح مرفوض من المزوّد (غير صحيح أو منتهي)"
-        elif "402" in low or "insufficient" in low or "balance" in low or "quota" in low or "429" in low:
-            hint = "الرصيد أو الحصة غير كافية لدى المزوّد"
-        elif "404" in low or "not found" in low or "model" in low and "not" in low:
-            hint = "النموذج غير متاح لهذا المفتاح/المزوّد"
-        else:
-            hint = "تعذر الاتصال بالمزوّد"
+        hint = _classify(err)
         logging.error(f"assistant test failed [{m['provider']}/{m['model']} via {llm.key_source}]: {err[:300]}")
         raise HTTPException(status_code=424, detail=f"فشل الاختبار ({source_ar}): {hint}\n{err[:160]}")
     return {"ok": True, "reply": str(reply)[:80], "ms": int((_now() - t0).total_seconds() * 1000), "key_source": llm.key_source, "key_source_label": source_ar}

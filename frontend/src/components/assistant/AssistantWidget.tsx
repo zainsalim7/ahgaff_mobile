@@ -47,7 +47,12 @@ export const AssistantWidget: React.FC = () => {
         return;
       }
       const res = await fetch(`${base}/assistant/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body });
-      if (!res.ok || !res.body) { const j = await res.json().catch(() => ({})); patch(() => j.detail || 'تعذر الاتصال بالمرشد', true); return; }
+      if (!res.ok || !res.body) {
+        const j = await res.json().catch(() => ({}));
+        const hint = res.status === 404 ? 'خدمة المرشد غير موجودة على هذا الخادم — يلزم نشر آخر نسخة من الباكند' : res.status === 502 || res.status === 504 ? 'الخادم لم يستجب في الوقت المحدد' : '';
+        patch(() => (typeof j.detail === 'string' && j.detail) || `تعذر الاتصال بالمرشد (HTTP ${res.status})${hint ? ' — ' + hint : ''}`, true);
+        return;
+      }
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
       while (true) {
         const { value, done } = await reader.read();
@@ -64,7 +69,8 @@ export const AssistantWidget: React.FC = () => {
       }
       patch((prev) => prev, true);
     } catch (e: any) {
-      patch(() => e?.response?.data?.detail || 'تعذر الاتصال بالمرشد', true);
+      const st = e?.response?.status;
+      patch(() => e?.response?.data?.detail || `تعذر الاتصال بالمرشد${st ? ` (HTTP ${st})` : ' — تحقق من الاتصال بالإنترنت'}`, true);
     } finally { setBusy(false); }
   };
 
