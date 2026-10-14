@@ -394,45 +394,19 @@ export default function CourseLecturesScreen() {
       .catch(() => setGroupInfo([]));
   }, [courseId, course?.groups?.length]);
 
-  // حفظ محاضرة جديدة باستخدام المكون الموحد
+  // حفظ محاضرة جديدة باستخدام المكون الموحد (التعارض 409 يُعالج داخل النافذة بشريط تحذير)
   const handleSaveLecture = async (data: LectureFormData, force: boolean = false) => {
-    try {
-      await lecturesAPI.create(courseId!, {
-        date: data.date,
-        start_time: data.start_time,
-        end_time: data.end_time,
-        room: data.room,
-        notes: data.notes || '',
-        force,
-        group: data.group || undefined,
-      });
-      Alert.alert('نجاح', 'تم إضافة المحاضرة');
-      showNotification('success', 'تم إضافة المحاضرة بنجاح');
-      fetchData(1);
-    } catch (error: any) {
-      const status = error.response?.status;
-      const message = error.response?.data?.detail || 'حدث خطأ';
-      
-      // تحذير: تعارض شعب من نفس المقرر - السماح بالمتابعة
-      if (status === 409 && !force) {
-        if (Platform.OS === 'web') {
-          const confirmed = window.confirm(message + '\n\nهل تريد المتابعة وإنشاء المحاضرة؟');
-          if (confirmed) {
-            await handleSaveLecture(data, true);
-            return;
-          }
-        } else {
-          Alert.alert('تنبيه', message, [
-            { text: 'إلغاء', style: 'cancel' },
-            { text: 'متابعة', onPress: () => handleSaveLecture(data, true) }
-          ]);
-        }
-        return;
-      }
-      
-      showNotification('error', message);
-      throw error;
-    }
+    await lecturesAPI.create(courseId!, {
+      date: data.date,
+      start_time: data.start_time,
+      end_time: data.end_time,
+      room: data.room,
+      notes: data.notes || '',
+      force,
+      group: data.group || undefined,
+    });
+    showNotification('success', 'تم إضافة المحاضرة بنجاح');
+    fetchData(1);
   };
 
   // فتح نموذج التوليد مباشرة بدون أي شروط
@@ -1425,6 +1399,14 @@ export default function CourseLecturesScreen() {
               <Ionicons name="calendar" size={22} color="#00838f" />
             </View>
 
+            {generateError ? (
+              <TouchableOpacity onPress={() => setGenerateError('')} style={styles.genTopErrorBanner} testID="generate-error-box">
+                <Ionicons name="alert-circle" size={20} color="#fff" />
+                <Text style={styles.genTopErrorText}>{generateError}</Text>
+                <Ionicons name="close" size={18} color="#fff" />
+              </TouchableOpacity>
+            ) : null}
+
             <ScrollView style={styles.generateModalContent}>
               {/* فترة توليد المحاضرات - Date Pickers */}
               <View style={styles.generateSection}>
@@ -1741,11 +1723,6 @@ export default function CourseLecturesScreen() {
 
             {/* المعاينة + الأخطاء + الأزرار */}
             <View style={styles.generateModalFooter}>
-              {generateError ? (
-                <View style={styles.genErrorBox} testID="generate-error-box">
-                  <Text style={styles.genErrorText}>{generateError}</Text>
-                </View>
-              ) : null}
               {genPreview ? (
                 <View style={styles.genPreviewBox} testID="generate-preview-box">
                   <Text style={styles.genPreviewTitle}>📊 المعاينة</Text>
@@ -2602,6 +2579,25 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8,
     width: '100%',
+  },
+  genTopErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#d32f2f',
+    marginHorizontal: 16,
+    marginTop: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  genTopErrorText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'right',
+    lineHeight: 20,
   },
   genErrorText: {
     color: '#c62828',

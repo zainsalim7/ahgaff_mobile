@@ -29,7 +29,7 @@ interface Course {
 interface AddLectureModalProps {
   visible: boolean;
   onClose: () => void;
-  onSave: (data: LectureFormData) => Promise<void>;
+  onSave: (data: LectureFormData, force?: boolean) => Promise<void>;
   courses?: Course[];
   selectedCourseId?: string;
   showCourseSelector?: boolean;
@@ -67,6 +67,7 @@ export default function AddLectureModal({
   facultyId,
 }: AddLectureModalProps) {
   const [saving, setSaving] = useState(false);
+  const [banner, setBanner] = useState<{ type: 'error' | 'warning'; message: string; canForce?: boolean } | null>(null);
   const [semesterDates, setSemesterDates] = useState<{ start: string; end: string } | null>(null);
   const [groups, setGroups] = useState<Array<{ key: string; name: string; count: number; teacher_name?: string }>>([]);
   
@@ -113,6 +114,7 @@ export default function AddLectureModal({
   // إعادة تعيين النموذج عند الفتح
   useEffect(() => {
     if (visible) {
+      setBanner(null);
       setFormData({
         course_id: selectedCourseId || (courses.length > 0 ? courses[0].id : ''),
         date: '',
@@ -125,15 +127,12 @@ export default function AddLectureModal({
     }
   }, [visible]);
 
-  const showAlert = (title: string, message: string) => {
-    if (Platform.OS === 'web') {
-      window.alert(`${title}\n${message}`);
-    } else {
-      Alert.alert(title, message);
-    }
+  const showAlert = (_title: string, message: string) => {
+    setBanner({ type: 'error', message });
   };
 
-  const handleSave = async () => {
+  const handleSave = async (force: boolean = false) => {
+    setBanner(null);
     if (!formData.date) {
       showAlert('تنبيه', 'يرجى اختيار التاريخ');
       return;
@@ -170,17 +169,18 @@ export default function AddLectureModal({
 
     setSaving(true);
     try {
-      await onSave(formData);
+      await onSave(formData, force);
       onClose();
     } catch (error: any) {
       console.error('Error saving lecture:', error);
-      const detail = error?.response?.data?.detail || '';
       const status = error?.response?.status;
-      // رسالة خطأ واضحة عند رفض التاريخ من الخادم (احتياطي)
-      if (status === 400 && typeof detail === 'string' && detail.includes('ماضي')) {
-        showAlert('تاريخ غير صالح', detail);
+      const rawDetail = error?.response?.data?.detail;
+      const detail = typeof rawDetail === 'string' ? rawDetail : (rawDetail ? JSON.stringify(rawDetail) : 'حدث خطأ أثناء حفظ المحاضرة');
+      if (status === 409 && !force) {
+        setBanner({ type: 'warning', message: detail, canForce: true });
+      } else {
+        setBanner({ type: 'error', message: detail });
       }
-      // باقي رسائل الخطأ تُعرض من المكون الأب (course-lectures)
     } finally {
       setSaving(false);
     }
@@ -201,9 +201,10 @@ export default function AddLectureModal({
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{title}</Text>
           <TouchableOpacity 
-            onPress={handleSave} 
+            onPress={() => handleSave()} 
             disabled={saving || !formData.date || !formData.room}
             style={styles.headerBtn}
+            testID="add-lecture-save-btn"
           >
             {saving ? (
               <ActivityIndicator size="small" color="#4caf50" />
@@ -215,6 +216,28 @@ export default function AddLectureModal({
             )}
           </TouchableOpacity>
         </View>
+
+        {banner && (
+          <View style={[styles.banner, banner.type === 'warning' ? styles.bannerWarning : styles.bannerError]} testID="add-lecture-banner">
+            <View style={styles.bannerRow}>
+              <Ionicons name={banner.type === 'warning' ? 'warning' : 'alert-circle'} size={22} color="#fff" />
+              <Text style={styles.bannerText}>{banner.message}</Text>
+              <TouchableOpacity onPress={() => setBanner(null)} hitSlop={8} testID="add-lecture-banner-close">
+                <Ionicons name="close" size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            {banner.canForce && (
+              <View style={styles.bannerActions}>
+                <TouchableOpacity style={styles.bannerBtnPrimary} onPress={() => handleSave(true)} disabled={saving} testID="add-lecture-force-btn">
+                  <Text style={styles.bannerBtnPrimaryText}>متابعة رغم التعارض</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.bannerBtnGhost} onPress={() => setBanner(null)} testID="add-lecture-cancel-force-btn">
+                  <Text style={styles.bannerBtnGhostText}>إلغاء</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Course Selector */}
@@ -496,6 +519,21 @@ export default function AddLectureModal({
 }
 
 const styles = StyleSheet.create({
+  banner: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 12,
+    padding: 14,
+  },
+  bannerError: { backgroundColor: '#d32f2f' },
+  bannerWarning: { backgroundColor: '#ef6c00' },
+  bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  bannerText: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '700', textAlign: 'right', lineHeight: 21 },
+  bannerActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 },
+  bannerBtnPrimary: { backgroundColor: '#fff', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
+  bannerBtnPrimaryText: { color: '#ef6c00', fontWeight: '800', fontSize: 14 },
+  bannerBtnGhost: { borderWidth: 1.5, borderColor: '#fff', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
+  bannerBtnGhostText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   groupChip: { borderWidth: 1.5, borderColor: '#dfe5ee', borderRadius: 10, paddingVertical: 7, paddingHorizontal: 12, alignItems: 'center', backgroundColor: '#fff' },
   groupChipText: { fontSize: 13, fontWeight: '700', color: '#334155' },
   container: {
