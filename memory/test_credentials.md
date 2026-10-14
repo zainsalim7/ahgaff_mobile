@@ -95,3 +95,6 @@
 - الوصول: صلاحية `issue_letters` (مزروعة في أدوار dean/department_head/registrar/registration_manager) أو `hr_manage_correspondence`/`hr_manage_employees`. تعديل الكليشة/القوالب: `manage_letter_settings` (admin فقط افتراضياً).
 - Salim: يرى خطابات طلاب كلية الشريعة + موظفي نطاق HR (كلية البنات) + ما أصدره + العامة. Saeed: بلا كلية → العامة + ما أصدره + موظفو كلية البنات.
 - الكليشات/السلاسل: `/api/letterheads`, `/api/letter-series` — المالك أو الأدمن يعدّل؛ الافتراضية العامة «الكليشة العامة»/«الترقيم العام» (system_key=general).
+
+## تبادل المحاضرات (2026-10-14)
+- اختبار E2E: `python backend/tests/test_lecture_swaps_flow.py` — يستخدم teacher180156/teacher123 (طالب التبادل)، 9999/teacher123 (الزميل)، Saeed/test1234 (رئيس القسم المعتمد). يزرع محاضرتين مؤقتتين ويحذفهما.

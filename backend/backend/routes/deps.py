@@ -330,6 +330,7 @@ async def build_user_context(db, user: dict) -> dict:
             [user.get("department_id")] if user.get("department_id") else []
         ),
         "student_id": user.get("student_id"),
+        "teacher_record_id": user.get("teacher_record_id"),
         "role_id": user.get("role_id"),
         "custom_permissions": user.get("custom_permissions", [])
     }

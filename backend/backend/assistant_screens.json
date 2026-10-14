@@ -209,6 +209,18 @@
   ]
  },
  {
+  "id": "lecture-swaps",
+  "label": "تبادل / إنابة المحاضرات 🔁",
+  "path": "/lecture-swaps",
+  "permissions": [],
+  "roles": [
+   "admin",
+   "dean",
+   "department_head",
+   "teacher"
+  ]
+ },
+ {
   "id": "student-excuses",
   "label": "أعذار غياب الطلاب",
   "path": "/student-excuses",

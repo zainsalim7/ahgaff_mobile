@@ -18341,6 +18341,8 @@ app.include_router(course_groups_tools_router, prefix="/api")
 app.include_router(assistant_router, prefix="/api")
 app.include_router(course_groups_router, prefix="/api")
 app.include_router(student_excuses_router, prefix="/api")
+from routes.lecture_swaps import router as lecture_swaps_router  # noqa: E402
+app.include_router(lecture_swaps_router, prefix="/api")
 app.include_router(hr_appraisals_router, prefix="/api")
 app.include_router(hr_verify_router, prefix="/api")
 app.include_router(hr_documents_router, prefix="/api")
